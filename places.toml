@@ -131,3 +131,63 @@ angle = "코인"
 covers = []
 official = true
 added = 2026-10-21
+
+# 2026-10-21 첫 실행에서 새로 시도해 쓸 만했던 곳
+[[place]]
+id = "P_investing_fed_monitor"
+name = "Investing.com 연준 금리 모니터 (금리 선물로 본 결정 확률)"
+url = "https://www.investing.com/central-banks/fed-rate-monitor"
+angle = "금리·환율·정책"
+covers = ["S_q_rate_up"]
+official = false
+added = 2026-10-21
+note = "CME FedWatch가 503으로 막힌 날 같은 종류의 확률을 줬다"
+
+[[place]]
+id = "P_naver_fx_api"
+name = "네이버 증권 환율 일별 값 (api.stock.naver.com)"
+url = "https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/prices?page=1&pageSize=30"
+angle = "금리·환율·정책"
+covers = ["S_q_home_currency_weak"]
+official = false
+added = 2026-10-21
+note = "매매기준율 일별 값. 화면(P_naver_fx)은 읽기 도구가 못 열지만 이 주소는 열린다. 메인 대조 통과"
+
+[[place]]
+id = "P_fred_vixcls"
+name = "FRED VIX 종가 시계열 (세인트루이스 연준)"
+url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
+angle = "미국 시장"
+covers = ["S_q_risk_off"]
+official = true
+added = 2026-10-21
+note = "1년 평균·한 달 범위를 직접 셀 수 있다. 하루 늦게 갱신된다. 여러 id를 한 번에 받으면 zip으로 온다"
+
+[[place]]
+id = "P_bea_schedule"
+name = "미국 경제분석국 발표 일정 (GDP·PCE, bea.gov)"
+url = "https://www.bea.gov/news/schedule"
+angle = "금리·환율·정책"
+covers = ["S_q_event_soon"]
+official = true
+added = 2026-10-21
+
+[[place]]
+id = "P_investing_kospi200"
+name = "Investing.com 코스피200 일별 값"
+url = "https://kr.investing.com/indices/kospi-200-historical-data"
+angle = "한국 시장"
+covers = []
+official = false
+added = 2026-10-21
+note = "KRX 화면이 숫자를 안 보여 줄 때 지수 일별 종가를 줬다"
+
+[[place]]
+id = "P_fng_api"
+name = "코인 공포·탐욕 지수 30일 값 (alternative.me API)"
+url = "https://api.alternative.me/fng/?limit=30"
+angle = "코인"
+covers = ["S_q_risk_off"]
+official = false
+added = 2026-10-21
+note = "페이지(P_crypto_fng)에 없는 날짜별 값이 있다"
