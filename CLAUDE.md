@@ -87,6 +87,7 @@ Claude가 세션 시작 때 읽는 작업 문서다. 매일 도는 클라우드 
   - 조각 8개 중 7개가 방향 시험에서 반박됐다. '어제 큰 움직임 뒤 큰 움직임'만 지지됐다.
   - 맞추기 기간(~2026-06)이 오르는 시기였고, 재생 기간은 내리는 시기(KODEX 200 −35%)였다. 계산기는 90%를 '오른다'로 말했다. **시기가 바뀌는 것을 시세 모양 조각만으로는 못 알아봤다.** 상세: [docs/replay-2026-07-10.md](docs/replay-2026-07-10.md).
 - 논리집(2026-10-21): 목표 6, 상태 11(시세 7 + 조사 4), 사실 19(근거 문헌 17 — 2026-10-20·21 웹 검색으로 실재 확인, 재생 기록 1, 시세 출처 1), 살아 있는 계산 조각 8(기준값 포함, C_above_ma200은 세운 숫자 없음) + 이전 버전 1(C_trend_20), 조사 조각 4, 가설 2(H_hand_vs_calc, H_place_official), 규칙 1(R_weights).
+- **매일 예약 실행** `stock-rader 매일 실행`(routine `trig_018Jr1V7Tubftrt7M9UrY8fC`, 매일 07:37 KST = cron `37 22 * * *` UTC, Opus 5.5, 두 저장소, 환경 「stock-rader」). 지시는 [docs/routine-prompt.md](docs/routine-prompt.md)를 읽어 따른다. **첫 실행 2026-10-21 07:37 = 계좌 시작일.**
 - **클라우드 환경 「stock-rader」(네트워크 Full, 비밀값 없음)**: 2026-10-21 시험 실행에서 시세 3곳·업비트 현재가·두 저장소 함께 받기·GitHub·웹 검색·웹 읽기가 모두 통과했다. 기본 환경에서는 시세 3곳이 막혔고(2026-10-20), 시세 3곳만 허용한 Custom에서는 웹 읽기가 막혔다.
 - **2단계(매일 실행) 코드와 지시문이 있다**(2026-10-21, 보고서 [docs/worklog/2026-10-21-phase2.md](docs/worklog/2026-10-21-phase2.md)). 진짜 1,000만 원 계좌 기록은 아직 없다 — **첫 예약 실행 날이 계좌 시작일**이다.
   - 조사 기록과 볼 곳 성적표(`places.toml` 14곳, `python -m market.research places`), 조사 조각 4개(Q_rate_up 금리 오르는 쪽, Q_home_currency_weak 계좌 통화 약세, Q_risk_off 겁먹은 시장, Q_event_soon 큰 일정 직전; 근거 문헌 6개 웹으로 실재 확인), 손 예측·조사 범위 가설 둘(H_hand_vs_calc, H_place_official).
