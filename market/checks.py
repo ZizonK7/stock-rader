@@ -133,9 +133,10 @@ def _names_in(text: str) -> list[str]:
     return [w for w in C.ASSET_WORDS if re.search(re.escape(w), text, re.IGNORECASE)]
 
 
-def audit(kn) -> tuple[list[str], list[str]]:
+def audit(kn, want: dict[str, list[dict]] | None = None) -> tuple[list[str], list[str]]:
     """오류: 조각 수 상한, 조각 이름·문장의 대상 이름, 기록에서 맞춘 값과 다른 효과(손으로 넣은 숫자), 효과 칸 모양.
-    경고: 세운 효과가 하나도 없는 조각, 세운 뒤 기록에서 방향이 틀린 조각(돌아보기 대상)."""
+    경고: 세운 효과가 하나도 없는 조각, 세운 뒤 기록에서 방향이 틀린 조각(돌아보기 대상).
+    want = 맞추기를 다시 돌린 결과(조각 id → 효과 목록). 없으면 지금 시세로 다시 맞춘다(테스트는 직접 넘긴다)."""
     errors, warns = [], []
     live = [n for n in kn.claims(alive_only=True) if n.data.get("claims")]
     if len(live) > MAX_PIECES:
@@ -159,10 +160,11 @@ def audit(kn) -> tuple[list[str], list[str]]:
             seen.add(key)
         if not node.data.get("effect"):
             warns.append(f"[계산 조각] {node.id}: 세운 효과가 하나도 없음 — 모든 대상·기간에서 맞춘 시세가 방향을 받쳐 주지 않았다(not_set)")
-    try:
-        want = F.expected()
-    except Exception as exc:  # 시세 파일이 없는 등
-        return errors + [f"[계산 조각] 맞추기를 다시 돌릴 수 없음: {exc}"], warns
+    if want is None:
+        try:
+            want = F.expected()
+        except Exception as exc:  # 시세 파일이 없는 등
+            return errors + [f"[계산 조각] 맞추기를 다시 돌릴 수 없음: {exc}"], warns
     for node in live:
         have = node.data.get("effect", [])
         need = want.get(node.id, [])

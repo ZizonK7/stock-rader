@@ -216,8 +216,9 @@ def _x(reading: dict[str, str], cl: Claim) -> int:
 def _violation(b: float, se: float, cl: Claim) -> tuple[float, str] | None:
     """(나쁨 정도, 까닭) 또는 None. 나쁨이 클수록 먼저 뺀다."""
     t = (b if cl.dir == "up" else -b) / se if se > 0 else float("inf")
-    if math.exp(2 * se) > MAX_RATIO:
-        return (100 + 2 * se, f"너무 불확실(범위 폭 {math.exp(2 * se):.2f}배 > 상한 {MAX_RATIO:g}배)")
+    if 2 * se > math.log(MAX_RATIO):  # 로그로 비교한다: 조각 값이 표본에서 늘 같으면 표준오차가 매우 커서 exp가 넘친다
+        width = f"{math.exp(2 * se):.2f}배" if se < 300 else "끝없이 넓음"
+        return (100 + min(2 * se, 1e6), f"너무 불확실(범위 폭 {width} > 상한 {MAX_RATIO:g}배)")
     if t < 1:
         return (10 - t, f"방향이 데이터와 안 맞음(값 {math.exp(b):.3f}, 표준오차 안쪽이거나 반대쪽)")
     return None
