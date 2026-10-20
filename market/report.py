@@ -21,11 +21,17 @@ from . import scoring as S
 
 MARK = "[[채울 것"
 DISCLAIM = "실제 돈이 아닌 가상 투자 실험이며 투자 권유가 아니다."
+REPO_URL = "https://github.com/ZizonK7/stock-rader/blob/main"
 
 
 def won(x: float, sign: bool = True) -> str:
     s = f"{abs(x):,.0f}원"
     return (("+" if x >= 0 else "−") + s) if sign else s
+
+
+def won_about(x: float) -> str:
+    """글 속 금액: 블로그로도 읽히므로 만 원 단위로 반올림한다(정확한 숫자는 계좌 표와 기록에)."""
+    return f"약 {round(abs(x) / 10_000):,}만 원" if abs(x) >= 10_000 else f"약 {abs(x):,.0f}원"
 
 
 def pct(x: float) -> str:
@@ -91,21 +97,22 @@ def daily(folder: Path, day: dt.date) -> str:
     if orders:
         parts = []
         for side, verb in (("buy", "사는"), ("sell", "파는")):
-            mine = [f"{C.ASSETS[o['asset']].name} 약 {won(o['qty_units'] * o['ref_price'] / C.ASSETS[o['asset']].unit, False)}어치"
+            mine = [f"{C.ASSETS[o['asset']].name} {won_about(o['qty_units'] * o['ref_price'] / C.ASSETS[o['asset']].unit)}어치"
                     for o in orders if o["side"] == side]
             if mine:
                 parts.append(", ".join(mine) + f"를 {verb} 주문")
-        first = "오늘 " + "과 ".join(parts) + "을 냈다(판단 뒤 첫 공식 가격에 체결된다)."
+        first = ("오늘 " + "과 ".join(parts) + "을 냈다(값은 주문 뒤 처음 정해지는 공식 가격으로 치른다:"
+                 " 비트코인은 다음 09:00 시가, ETF는 장 마감 가격).")
     else:
         first = "오늘은 거래하지 않았다."
     v = me["value"]
     if pa is None:
-        second = f"오늘 1,000만 원 현금으로 계좌를 시작했다. 계좌는 {won(v, False)}이다."
+        second = "오늘 가상 1,000만 원으로 계좌를 시작했다."
     else:
         d = v - pa["value"]
         second = (f"계좌는 {won(d)}({pct(d / pa['value'])}) {'늘어' if d >= 0 else '줄어'} {won(v, False)}"
                   f"(시작 이후 {pct(v / start - 1)})이 됐다.")
-    if eq:
+    if eq and pa is not None:  # 첫날은 견줄 것이 없다
         gap = (v / start - 1) - (eq["value"] / start - 1)
         second += (f" 셋을 나눠 사 두기만 했을 때({pct(eq['value'] / start - 1)})보다 {abs(gap) * 100:.2f}%p "
                    f"{'앞섰다' if gap >= 0 else '뒤졌다'}.")
@@ -131,7 +138,7 @@ def daily(folder: Path, day: dt.date) -> str:
               _ref(ref_why),
               f"**잘된 것** [[채울 것: 없으면 '없음']]", _ref(good),
               f"**잘못된 것** [[채울 것: 틀린 예측 → 틀린 조각 → 까닭 → 바꾼 것. 없으면 '없음']]", _ref(bad),
-              f"**조사 메모** [[채울 것: 쓸모 있던 곳, 정보가 없던 곳, 새로 시도한 곳]]",
+              f"**조사 메모** [[채울 것: 한두 줄. 오늘 판단에 쓸모 있던 곳과 끝내 못 찾은 것(막힌 곳 목록은 기록에만)]]",
               _ref([f"찾음: {', '.join(found) or '없음'}", f"없음·막힘: {', '.join(none) or '없음'}",
                     f"늦음(판단 뒤에 나옴): {', '.join(late) or '없음'}", f"새로 시도: {', '.join(new) or '없음'}"]),
               f"**내일 볼 것** [[채울 것: 숫자 조건 + 확신도]]", ""]
@@ -160,8 +167,10 @@ def daily(folder: Path, day: dt.date) -> str:
         lines.append(f"| 참고: 계산기 계좌 | | {won(calc_acc['value'], False)} | | {pct(calc_acc['value'] / start - 1)} |")
     lines += ["", f"평가 가격은 07:37에 알려진 마지막 끝난 종가다({', '.join(f'{C.ASSETS[a].name} {d}' for a, (d, _) in me['prices'].items())})."
               " 수수료 가정(ETF 0.015%, 업비트 0.05%)을 넣었고 세금은 계산하지 않았다.", ""]
-    srcs = sorted({lk["url"] for r in research for lk in r["looked"] if lk["result"] in ("찾음", "늦음") and lk.get("url")})
-    lines.append("출처: 시세 — 네이버 차트·업비트 공개 API(data/prices/). 조사 — " + (", ".join(srcs) if srcs else "없음"))
+    # 링크 전체 목록은 블로그 글에서 본문보다 길어진다(2026-10-21). 근거로 쓴 링크는 '왜'에 달고, 나머지는 기록을 가리킨다.
+    srcs = {lk["url"] for r in research for lk in r["looked"] if lk["result"] in ("찾음", "늦음") and lk.get("url")}
+    lines.append("출처: 시세 — 네이버 차트·업비트 공개 API. 조사 — " + (
+        f"오늘 본 곳 {len(srcs)}곳의 링크는 [조사 기록]({REPO_URL}/records/research.jsonl)에 있다." if srcs else "없음"))
     lines += [DISCLAIM, ""]
     return "\n".join(lines)
 
@@ -217,7 +226,7 @@ def weekly(folder: Path, day: dt.date, places_path: Path | None = None) -> str:
     week_orders = [o for o in b.recs["order"] if o["account"] == "live:hand" and mon <= o["run"] <= run]
     for o in week_orders:
         amt = o["qty_units"] * o["ref_price"] / C.ASSETS[o["asset"]].unit
-        lines.append(f"- {o['run']} {C.ASSETS[o['asset']].name} {'샀다' if o['side'] == 'buy' else '팔았다'} 약 {won(amt, False)}"
+        lines.append(f"- {o['run']} {C.ASSETS[o['asset']].name} {'샀다' if o['side'] == 'buy' else '팔았다'} {won_about(amt)}"
                      f" — {o['reason']}")
     if not week_orders:
         lines.append("- 거래 없음")
