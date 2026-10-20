@@ -1,0 +1,636 @@
+# stock-rader 논리집 — Claude가 혼자 하는 가상 투자로 논리 조각화를 시험한다 (PROVISO 지식 양식)
+# 검사: python -m market.logic validate | check | audit   (PROVISO 코어를 불러 쓴다: market/logic.py)
+# 쌓는 방식은 PROVISO-Nesy domains/agent_usage/CLAUDE.md를 따른다: 모든 주장은 성적 붙은 가설, 세운 뒤의 날들로만 시험,
+# 틀리면 조건을 더해 쪼갠다(새 버전), 이전 버전은 retired + replaced_by로 남긴다.
+# 계산 조각의 모양(무엇에·어떻게·언제·방향·이유)은 손으로 적고(claims 칸), 숫자(effect의 range)는 `python -m market.fit --write`가
+# 2026-06-30까지의 시세로 기계적으로 맞춘다. 손으로 숫자를 넣거나 넓히면 audit 오류.
+# 조각 id·문장·이유에는 대상(상품·코인) 이름을 쓰지 않는다 — 다른 대상·분야에서 다시 쓴다. effect의 asset·horizon 칸은
+# '어느 대상·기간의 숫자인가'만 가리킨다(성적과 숫자는 대상별로 따로 쌓는다).
+
+[domain]
+id = "market"
+name = "가상 투자 — 시세로 계산하는 조각 (stock-rader)"
+# 효과가 작용하는 것: up_odds = 오를 확률의 승산(오를 확률 ÷ 내릴 확률), move = 기간 동안 움직임 크기(수익률 절댓값, %)
+quantities = ["up_odds", "move"]
+situation_values = ["예", "아니오", "모름"]
+max_ratio = 2  # 효과 범위와 계산한 범위의 폭 상한(상한/하한). 넓혀서 맞추지 않는다
+
+# ---------- 목표 (사용자 의도: CLAUDE.md "사용자 의도", 2026-10-20) ----------
+[[goal]]
+id = "G_test"
+text = "논리 조각화를 시험한다: 틀리면 원인을 쪼갠 논리가 쪼개기 전 버전과 기준선보다 앞으로 더 잘 맞히는지 본다 (돈을 버는 것이 목표가 아니다)"
+
+[[goal]]
+id = "G_predict"
+text = "대상마다 다음 거래일·1주·4주 뒤를 이유와 함께 예측하고 시장 결과로 채점받는다 ('모든 에이전트 작업이 시험')"
+parent = "G_test"
+
+[[goal]]
+id = "G_timing"
+text = "'지금이 어떤 시기냐'(추세, 겁먹은 시기 등)가 중요하다는 것도 조각으로 잡히는지 본다"
+parent = "G_test"
+
+[[goal]]
+id = "G_research"
+text = "조사 범위도 논리집에 쌓는다: 어디를 봤더니 좋았다, 어디는 정보가 없었다 (2단계)"
+parent = "G_test"
+
+[[goal]]
+id = "G_record"
+text = "기록을 꼼꼼히 남긴다: 덧붙이기만 하고, 결과 전에 말했다는 증거를 남긴다"
+parent = "G_test"
+
+[[goal]]
+id = "G_report"
+text = "매일 투자하는 사람이 쓰듯 무엇을 왜 샀고 얼마를 벌고 잃었는지 보고서를 쓴다"
+parent = "G_test"
+
+# ---------- 상태: 가격으로 대 보는 조각의 조건 (계산: market/pieces.py, '봉' = 그 대상의 일봉 하나) ----------
+[[state]]
+id = "S_trend_20"
+text = "최근 20봉 수익률이 양수다"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_trend_60"
+text = "최근 60봉 수익률이 양수다"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_above_ma200"
+text = "종가가 최근 200봉 평균보다 위다"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_drop_5"
+text = "최근 5봉에 평소 한 주 움직임(60봉 하루 변동성 × √5)보다 크게 내렸다"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_vol_high"
+text = "최근 20봉 하루 변동성이 최근 250봉 하루 변동성보다 크다 (흔들림이 평소보다 큰 시기)"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_deep_drawdown"
+text = "최근 250봉 고점보다 평소 한 달 움직임의 두 배(250봉 하루 변동성 × √20 × 2)보다 깊이 빠져 있다"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_big_move"
+text = "마지막 봉의 움직임이 평소 하루 움직임(60봉 하루 변동성)의 두 배를 넘었다"
+known_before = true
+serves = "G_timing"
+
+# ---------- 사실: 근거 문헌 (2026-10-20 웹 검색으로 실재 확인. 본문은 옮기지 않고 요지만) ----------
+# kind = 출처 종류(연구 / 통념 / 실험 결과 / 이 저장소의 기록), strength = 근거 강도(낮음 / 보통 / 높음): 이 분야(지수·코인의 시계열)에 바로 맞는 정도
+[[fact]]
+id = "F_lit_tsmom"
+text = "시계열 모멘텀: 58개 선물(주가지수·통화·원자재·채권)에서 지난 1~12개월 수익률이 다음 수익률을 같은 방향으로 예측했다(긴 기간에서는 일부 되돌림)"
+checked = 2026-10-20
+source = "연구 — Moskowitz, Ooi, Pedersen (2012), Time Series Momentum, Journal of Financial Economics 104(2), 228–250, doi:10.1016/j.jfineco.2011.11.003"
+url = "https://papers.ssrn.com/abstract=2089463"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_tsmom_weak"
+text = "반대 근거: 자산마다 따로 회귀하면 시계열 모멘텀의 증거가 약하고, 수익은 과거 평균만 쓰는 전략과 거의 같다"
+checked = 2026-10-20
+source = "연구 — Huang, Li, Wang, Zhou (2020), Time series momentum: Is it there?, Journal of Financial Economics 135(3), 774–794, doi:10.1016/j.jfineco.2019.08.004"
+url = "https://ideas.repec.org/a/eee/jfinec/v135y2020i3p774-794.html"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_crypto_mom"
+text = "코인 시장에서 강한 시계열 모멘텀(한 주 오르면 다음 주도 오르는 경향)과 관심 지표의 예측력이 보고됐다"
+checked = 2026-10-20
+source = "연구 — Liu, Tsyvinski (2021), Risks and Returns of Cryptocurrency, Review of Financial Studies 34(6), 2689–2727"
+url = "https://ideas.repec.org/a/oup/rfinst/v34y2021i6p2689-2727..html"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_ma_rules"
+text = "이동평균 규칙: 1897–1986 다우지수에서 이동평균 위(사기 신호) 뒤 수익이 아래(팔기 신호) 뒤보다 높았고, 팔기 신호 뒤 수익은 음수였다"
+checked = 2026-10-20
+source = "연구 — Brock, Lakonishok, LeBaron (1992), Simple Technical Trading Rules and the Stochastic Properties of Stock Returns, Journal of Finance 47(5), 1731–1764"
+url = "https://ideas.repec.org/a/bla/jfinan/v47y1992i5p1731-64.html"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_faber"
+text = "10개월 이동평균 위에서만 들고 있는 단순 규칙이 여러 자산군에서 수익은 비슷하게, 변동과 낙폭은 작게 했다"
+checked = 2026-10-20
+source = "연구(실무 논문) — Faber (2007), A Quantitative Approach to Tactical Asset Allocation, Journal of Wealth Management (Spring 2007), SSRN 962461"
+url = "https://papers.ssrn.com/abstract=962461"
+kind = "연구"
+strength = "낮음"
+
+[[fact]]
+id = "F_lit_weekly_reversal"
+text = "한 주 동안 크게 오르거나 내린 개별 주식은 다음 주에 되돌아가는 경향이 있었다 (지수·코인이 아니라 개별 종목 연구)"
+checked = 2026-10-20
+source = "연구 — Lehmann (1990), Fads, Martingales, and Market Efficiency, Quarterly Journal of Economics 105(1), 1–28"
+url = "https://www.nber.org/papers/w2533"
+kind = "연구"
+strength = "낮음"
+
+[[fact]]
+id = "F_lit_arch"
+text = "변동성 뭉침: 수익률의 흔들림 크기는 지난 흔들림을 따라간다(크게 흔들린 뒤엔 크게, 잔잔한 뒤엔 잔잔하게)"
+checked = 2026-10-20
+source = "연구 — Engle (1982), Autoregressive Conditional Heteroscedasticity with Estimates of the Variance of United Kingdom Inflation, Econometrica 50(4), 987–1008"
+url = "https://ideas.repec.org/a/ecm/emetrp/v50y1982i4p987-1007.html"
+kind = "연구"
+strength = "높음"
+
+[[fact]]
+id = "F_lit_52w_high"
+text = "다우지수가 52주 고점에 가까울수록 이후 시장 수익이 높았다(고점에서 멀면 낮았다). G7 나라에서도 같은 결과"
+checked = 2026-10-20
+source = "연구 — Li, Yu (2012), Investor attention, psychological anchors, and stock return predictability, Journal of Financial Economics 104(2), 401–419, doi:10.1016/j.jfineco.2011.04.003"
+url = "https://academicnewsletter.sufe.edu.cn/info/356820"
+kind = "연구"
+strength = "낮음"
+
+[[fact]]
+id = "F_lit_leverage"
+text = "주가가 내리면 그 뒤 변동성이 커지는 경향(레버리지 효과)"
+checked = 2026-10-20
+source = "연구 — Christie (1982), The stochastic behavior of common stock variances: Value, leverage and interest rate effects, Journal of Financial Economics 10(4), 407–432, doi:10.1016/0304-405X(82)90018-6"
+url = "https://doi.org/10.1016/0304-405X(82)90018-6"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_prices"
+text = "시세 출처 3곳(네이버 차트, 야후 차트, 업비트 공개 API)이 키 없이 응답하고, 끝난 일봉만 data/prices/에 저장된다. 네이버는 최대 3,000줄을 줘서 대형주 묶음 상품은 2014-07부터 있다"
+checked = 2026-10-20
+source = "자동 확인 — python -m market.prices backfill (2026-10-20)"
+
+# ---------- 규칙 (방법이 붙은 가설) ----------
+[[rule]]
+id = "R_weights"
+method = "1주 기간(5거래일 / 7일) 계산기의 오를 확률 p로 대상마다 목표 비중 = 1/3 × clamp((p − 0.40) ÷ 0.20, 0, 1), 나머지는 현금. 확률이 '모름'이면 지금 비중을 그대로 둔다. 목표 금액과 지금(체결 안 된 주문 포함) 금액의 차이가 계좌의 2%보다 작으면 거래하지 않는다"
+reason = "셋을 똑같이 나눠 사 두기(기준선)와 같은 상한(1/3)에서 출발해, 계산기가 비관적일 때만 덜 들고 낙관적일 때 다 채운다. 그래서 기준선과의 차이가 곧 계산기의 '때 고르기' 성적이다. 2% 문턱은 작은 흔들림마다 수수료를 내지 않으려는 것"
+status = "hypothesis"
+version = 1
+serves = "G_predict"
+check = ["account_vs_equal"]
+note = "2026-10-20 1단계에서 정함(재생 계좌용). 숫자 0.40·0.20·1/3·2%는 기록에서 맞춘 값이 아니라 미리 정한 모양이다. 진짜 계좌의 비중은 2단계에서 손 예측이 정한다(docs/design.md)"
+
+# ---------- 계산 조각 (python -m market.fit --write가 effect·fit·not_set 칸을 다시 쓴다; 모양은 손으로) ----------
+[[hypothesis]]
+id = "C_base"
+text = "아무 조각도 켜지지 않았을 때의 오를 확률(승산)과 움직임 크기"
+source = "이 저장소의 기록 — 2026-06-30까지의 시세"
+reason = "계산의 출발점. 대상과 기간마다 오르는 날의 비율과 흔들림 크기가 다르므로 대상·기간마다 따로 맞춘다"
+check = ["piece_size"]
+seen_until = "2026-06-30"
+claims = [{ on = "up_odds", op = "base", reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)" }, { on = "move", op = "base", reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 18/18 (069500:1, 069500:1, 069500:5, 069500:5, 069500:20, 069500:20, 360750:1, 360750:1, 360750:5, 360750:5, 360750:20, 360750:20, KRW-BTC:1, KRW-BTC:1, KRW-BTC:7, KRW-BTC:7, KRW-BTC:28, KRW-BTC:28)"
+not_set = []
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.05, 1.2]
+asset = "069500"
+horizon = 1
+n = 2675
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [0.559, 1.11]
+asset = "069500"
+horizon = 1
+n = 2655
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.23, 1.47]
+asset = "069500"
+horizon = 5
+n = 2671
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [1.43, 2.86]
+asset = "069500"
+horizon = 5
+n = 2663
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.23, 1.77]
+asset = "069500"
+horizon = 20
+n = 2656
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [2.29, 4.58]
+asset = "069500"
+horizon = 20
+n = 2653
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.17, 1.33]
+asset = "360750"
+horizon = 1
+n = 1192
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [0.451, 0.902]
+asset = "360750"
+horizon = 1
+n = 1173
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.01, 1.6]
+asset = "360750"
+horizon = 5
+n = 1188
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [1.11, 2.22]
+asset = "360750"
+horizon = 5
+n = 1179
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.53, 2.69]
+asset = "360750"
+horizon = 20
+n = 1173
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [3.21, 6.42]
+asset = "360750"
+horizon = 20
+n = 1171
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [0.874, 0.987]
+asset = "KRW-BTC"
+horizon = 1
+n = 2950
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [0.898, 1.79]
+asset = "KRW-BTC"
+horizon = 1
+n = 2947
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [0.814, 1.09]
+asset = "KRW-BTC"
+horizon = 7
+n = 2944
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [3.35, 6.7]
+asset = "KRW-BTC"
+horizon = 7
+n = 2943
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [0.992, 1.48]
+asset = "KRW-BTC"
+horizon = 28
+n = 2923
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [8.66, 17.3]
+asset = "KRW-BTC"
+horizon = 28
+n = 2923
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+
+[[hypothesis]]
+id = "C_trend_20"
+text = "최근 20봉 동안 올랐으면 앞으로도 오를 확률이 높다"
+source = "연구 — 시계열 모멘텀 (F_lit_tsmom, F_lit_crypto_mom)"
+reason = "새 소식에 사람들이 천천히 반응해(덜 반응) 값이 한동안 같은 쪽으로 이어진다"
+conditions = ["S_trend_20"]
+evidence = ["F_lit_tsmom", "F_lit_crypto_mom"]
+against = ["F_lit_tsmom_weak"]
+strength = "보통"
+check = ["piece_direction"]
+seen_until = "2026-06-30"
+claims = [{ on = "up_odds", op = "mul", dir = "up", when = "예", reason = "한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 4/9 (069500:1, 360750:5, KRW-BTC:1, KRW-BTC:7)"
+not_set = ["069500:5 up_odds: 방향이 데이터와 안 맞음(값 1.045, 표준오차 안쪽이거나 반대쪽)", "069500:20 up_odds: 너무 불확실(범위 폭 2.17배 > 상한 2배)", "360750:1 up_odds: 방향이 데이터와 안 맞음(값 1.121, 표준오차 안쪽이거나 반대쪽)", "360750:20 up_odds: 너무 불확실(범위 폭 3.20배 > 상한 2배)", "KRW-BTC:28 up_odds: 너무 불확실(범위 폭 2.20배 > 상한 2배)"]
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.03, 1.22]
+dir = "up"
+when = { S_trend_20 = "예" }
+asset = "069500"
+horizon = 1
+n = 2675
+reason = "한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.09, 1.93]
+dir = "up"
+when = { S_trend_20 = "예" }
+asset = "360750"
+horizon = 5
+n = 1188
+reason = "한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.04, 1.24]
+dir = "up"
+when = { S_trend_20 = "예" }
+asset = "KRW-BTC"
+horizon = 1
+n = 2950
+reason = "한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.14, 1.71]
+dir = "up"
+when = { S_trend_20 = "예" }
+asset = "KRW-BTC"
+horizon = 7
+n = 2944
+reason = "한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+
+[[hypothesis]]
+id = "C_trend_60"
+text = "최근 60봉 동안 올랐으면 앞으로도 오를 확률이 높다"
+source = "연구 — 시계열 모멘텀 (F_lit_tsmom)"
+reason = "몇 달 단위의 추세가 문헌에서 가장 꾸준히 보고된 길이다(1~12개월)"
+conditions = ["S_trend_60"]
+evidence = ["F_lit_tsmom", "F_lit_crypto_mom"]
+against = ["F_lit_tsmom_weak"]
+strength = "보통"
+check = ["piece_direction"]
+seen_until = "2026-06-30"
+claims = [{ on = "up_odds", op = "mul", dir = "up", when = "예", reason = "석 달 남짓 이어진 오름은 추세가 살아 있다는 신호" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 1/9 (KRW-BTC:1)"
+not_set = ["069500:1 up_odds: 방향이 데이터와 안 맞음(값 0.997, 표준오차 안쪽이거나 반대쪽)", "069500:5 up_odds: 방향이 데이터와 안 맞음(값 1.088, 표준오차 안쪽이거나 반대쪽)", "069500:20 up_odds: 너무 불확실(범위 폭 2.51배 > 상한 2배)", "360750:1 up_odds: 방향이 데이터와 안 맞음(값 1.073, 표준오차 안쪽이거나 반대쪽)", "360750:5 up_odds: 방향이 데이터와 안 맞음(값 1.079, 표준오차 안쪽이거나 반대쪽)", "360750:20 up_odds: 너무 불확실(범위 폭 3.76배 > 상한 2배)", "KRW-BTC:7 up_odds: 방향이 데이터와 안 맞음(값 1.027, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:28 up_odds: 너무 불확실(범위 폭 2.61배 > 상한 2배)"]
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.03, 1.22]
+dir = "up"
+when = { S_trend_60 = "예" }
+asset = "KRW-BTC"
+horizon = 1
+n = 2950
+reason = "석 달 남짓 이어진 오름은 추세가 살아 있다는 신호"
+
+[[hypothesis]]
+id = "C_above_ma200"
+text = "종가가 200봉 평균보다 위면 오를 확률이 높다"
+source = "연구 — 이동평균 규칙 (F_lit_ma_rules, F_lit_faber)"
+reason = "긴 평균 위는 오르는 시기, 아래는 내리는 시기의 거친 표시다. 아래일 때 뒤 수익이 낮았다는 기록이 길다"
+conditions = ["S_above_ma200"]
+evidence = ["F_lit_ma_rules", "F_lit_faber"]
+strength = "보통"
+check = ["piece_direction"]
+seen_until = "2026-06-30"
+claims = [{ on = "up_odds", op = "mul", dir = "up", when = "예", reason = "긴 평균 위는 오르는 시기라는 표시" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 0/9"
+not_set = ["069500:1 up_odds: 방향이 데이터와 안 맞음(값 1.002, 표준오차 안쪽이거나 반대쪽)", "069500:5 up_odds: 너무 불확실(범위 폭 2.02배 > 상한 2배)", "069500:20 up_odds: 너무 불확실(범위 폭 4.11배 > 상한 2배)", "360750:1 up_odds: 방향이 데이터와 안 맞음(값 0.753, 표준오차 안쪽이거나 반대쪽)", "360750:5 up_odds: 너무 불확실(범위 폭 2.53배 > 상한 2배)", "360750:20 up_odds: 너무 불확실(범위 폭 7.40배 > 상한 2배)", "KRW-BTC:1 up_odds: 방향이 데이터와 안 맞음(값 0.936, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:7 up_odds: 너무 불확실(범위 폭 2.23배 > 상한 2배)", "KRW-BTC:28 up_odds: 너무 불확실(범위 폭 5.07배 > 상한 2배)"]
+
+[[hypothesis]]
+id = "C_drop_5"
+text = "최근 5봉에 평소보다 크게 내렸으면 되오를 확률이 높다"
+source = "연구(다른 대상) — 한 주 되돌림 (F_lit_weekly_reversal); 이 대상들에는 통념 수준"
+reason = "짧은 기간의 큰 하락에는 겁먹은 매도(지나친 반응)가 섞여 있어 일부 되돌아간다"
+conditions = ["S_drop_5"]
+evidence = ["F_lit_weekly_reversal"]
+strength = "낮음"
+check = ["piece_direction"]
+seen_until = "2026-06-30"
+claims = [{ on = "up_odds", op = "mul", dir = "up", when = "예", reason = "지나친 반응의 일부가 되돌아간다" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 0/9"
+not_set = ["069500:1 up_odds: 방향이 데이터와 안 맞음(값 0.997, 표준오차 안쪽이거나 반대쪽)", "069500:5 up_odds: 방향이 데이터와 안 맞음(값 1.242, 표준오차 안쪽이거나 반대쪽)", "069500:20 up_odds: 너무 불확실(범위 폭 3.03배 > 상한 2배)", "360750:1 up_odds: 방향이 데이터와 안 맞음(값 1.131, 표준오차 안쪽이거나 반대쪽)", "360750:5 up_odds: 너무 불확실(범위 폭 2.44배 > 상한 2배)", "360750:20 up_odds: 너무 불확실(범위 폭 6.07배 > 상한 2배)", "KRW-BTC:1 up_odds: 방향이 데이터와 안 맞음(값 1.112, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:7 up_odds: 방향이 데이터와 안 맞음(값 1.045, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:28 up_odds: 너무 불확실(범위 폭 3.62배 > 상한 2배)"]
+
+[[hypothesis]]
+id = "C_drawdown"
+text = "1년 고점보다 깊이 빠져 있으면 오를 확률은 낮고 움직임은 크다"
+source = "연구 — 52주 고점 기준점 (F_lit_52w_high), 레버리지 효과 (F_lit_leverage)"
+reason = "사람들은 1년 고점을 기준점으로 삼아 고점에서 먼 시장의 나쁜 소식을 덜 반영한다(뒤 수익이 낮다). 그리고 값이 내린 뒤에는 흔들림이 커진다"
+conditions = ["S_deep_drawdown"]
+evidence = ["F_lit_52w_high", "F_lit_leverage"]
+strength = "낮음"
+check = ["piece_direction", "piece_size"]
+seen_until = "2026-06-30"
+claims = [{ on = "up_odds", op = "mul", dir = "down", when = "예", reason = "고점에서 먼 시장은 이후 수익이 낮았다" }, { on = "move", op = "mul", dir = "up", when = "예", reason = "내린 뒤에는 흔들림이 커진다" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 3/18 (069500:1, 360750:1, 360750:5)"
+not_set = ["069500:1 up_odds: 방향이 데이터와 안 맞음(값 0.968, 표준오차 안쪽이거나 반대쪽)", "069500:5 up_odds: 방향이 데이터와 안 맞음(값 0.970, 표준오차 안쪽이거나 반대쪽)", "069500:5 move: 방향이 데이터와 안 맞음(값 1.039, 표준오차 안쪽이거나 반대쪽)", "069500:20 up_odds: 너무 불확실(범위 폭 2.05배 > 상한 2배)", "069500:20 move: 방향이 데이터와 안 맞음(값 0.892, 표준오차 안쪽이거나 반대쪽)", "360750:1 up_odds: 방향이 데이터와 안 맞음(값 0.965, 표준오차 안쪽이거나 반대쪽)", "360750:5 up_odds: 너무 불확실(범위 폭 3.39배 > 상한 2배)", "360750:20 up_odds: 너무 불확실(범위 폭 13.41배 > 상한 2배)", "360750:20 move: 너무 불확실(범위 폭 2.52배 > 상한 2배)", "KRW-BTC:1 up_odds: 방향이 데이터와 안 맞음(값 1.040, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:1 move: 방향이 데이터와 안 맞음(값 1.021, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:7 up_odds: 방향이 데이터와 안 맞음(값 0.987, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:7 move: 방향이 데이터와 안 맞음(값 1.027, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:28 up_odds: 너무 불확실(범위 폭 2.28배 > 상한 2배)", "KRW-BTC:28 move: 방향이 데이터와 안 맞음(값 0.932, 표준오차 안쪽이거나 반대쪽)"]
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.02, 1.12]
+dir = "up"
+when = { S_deep_drawdown = "예" }
+asset = "069500"
+horizon = 1
+n = 2655
+reason = "내린 뒤에는 흔들림이 커진다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.4, 1.71]
+dir = "up"
+when = { S_deep_drawdown = "예" }
+asset = "360750"
+horizon = 1
+n = 1173
+reason = "내린 뒤에는 흔들림이 커진다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.14, 1.77]
+dir = "up"
+when = { S_deep_drawdown = "예" }
+asset = "360750"
+horizon = 5
+n = 1179
+reason = "내린 뒤에는 흔들림이 커진다"
+
+[[hypothesis]]
+id = "C_vol_high"
+text = "최근 흔들림이 1년 평균보다 크면 앞으로의 움직임도 크다"
+source = "연구 — 변동성 뭉침 (F_lit_arch)"
+reason = "흔들림 크기는 지난 흔들림을 따라간다"
+conditions = ["S_vol_high"]
+evidence = ["F_lit_arch"]
+strength = "높음"
+check = ["piece_direction", "piece_size"]
+seen_until = "2026-06-30"
+claims = [{ on = "move", op = "mul", dir = "up", when = "예", reason = "최근 흔들림이 크면 다음 흔들림도 크다" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 7/9 (069500:1, 069500:5, 069500:20, 360750:1, 360750:5, KRW-BTC:1, KRW-BTC:7)"
+not_set = ["360750:20 move: 방향이 데이터와 안 맞음(값 1.215, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:28 move: 방향이 데이터와 안 맞음(값 1.024, 표준오차 안쪽이거나 반대쪽)"]
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.16, 1.29]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "069500"
+horizon = 1
+n = 2655
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.06, 1.32]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "069500"
+horizon = 5
+n = 2663
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.12, 1.72]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "069500"
+horizon = 20
+n = 2653
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.12, 1.28]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "360750"
+horizon = 1
+n = 1173
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.21, 1.61]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "360750"
+horizon = 5
+n = 1179
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.37, 1.53]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "KRW-BTC"
+horizon = 1
+n = 2947
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.02, 1.34]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "KRW-BTC"
+horizon = 7
+n = 2943
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+
+[[hypothesis]]
+id = "C_big_move"
+text = "마지막 봉이 평소의 두 배 넘게 움직였으면 앞으로의 움직임도 크다"
+source = "연구 — 변동성 뭉침 (F_lit_arch)"
+reason = "큰 충격 하나 뒤에는 흔들림이 한동안 이어진다"
+conditions = ["S_big_move"]
+evidence = ["F_lit_arch"]
+strength = "보통"
+check = ["piece_direction", "piece_size"]
+seen_until = "2026-06-30"
+claims = [{ on = "move", op = "mul", dir = "up", when = "예", reason = "큰 충격 뒤 흔들림이 이어진다" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 4/9 (069500:1, 069500:5, 360750:1, KRW-BTC:1)"
+not_set = ["069500:20 move: 너무 불확실(범위 폭 2.31배 > 상한 2배)", "360750:5 move: 방향이 데이터와 안 맞음(값 1.136, 표준오차 안쪽이거나 반대쪽)", "360750:20 move: 너무 불확실(범위 폭 3.20배 > 상한 2배)", "KRW-BTC:7 move: 방향이 데이터와 안 맞음(값 1.141, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:28 move: 너무 불확실(범위 폭 2.62배 > 상한 2배)"]
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.04, 1.25]
+dir = "up"
+when = { S_big_move = "예" }
+asset = "069500"
+horizon = 1
+n = 2655
+reason = "큰 충격 뒤 흔들림이 이어진다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.11, 1.69]
+dir = "up"
+when = { S_big_move = "예" }
+asset = "069500"
+horizon = 5
+n = 2663
+reason = "큰 충격 뒤 흔들림이 이어진다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.35, 1.74]
+dir = "up"
+when = { S_big_move = "예" }
+asset = "360750"
+horizon = 1
+n = 1173
+reason = "큰 충격 뒤 흔들림이 이어진다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.42, 1.74]
+dir = "up"
+when = { S_big_move = "예" }
+asset = "KRW-BTC"
+horizon = 1
+n = 2947
+reason = "큰 충격 뒤 흔들림이 이어진다"
+# ---------- 계산 조각 끝 ----------
