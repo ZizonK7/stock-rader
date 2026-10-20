@@ -49,11 +49,33 @@ Claude가 세션 시작 때 읽는 작업 문서다. 매일 도는 클라우드 
 - 문서는 사용자에게 일상어로 쓴다. 전문용어는 처음 쓸 때 풀어 쓴다.
 - 새 폴더를 만들면 `CLAUDE.md`를 같이 만든다(역할, 결정과 이유, 규칙, 다른 폴더와의 관계). 구조나 결정이 바뀌면 같은 작업 안에서 이 파일을 갱신한다. 이 파일은 시간순 기록이 아니라 **현재 기준**으로 유지한다.
 
+## 구조와 명령 (저장소 루트, 외부 패키지 없음, Python 3.11+)
+| 폴더 | 역할 |
+|---|---|
+| `market/` | 시세·기록·정산·채점·조각·계산기·맞추기·재생·논리집 감싸기 ([market/CLAUDE.md](market/CLAUDE.md)) |
+| `data/prices/` | 끝난 일봉 CSV, 덧붙이기만 ([data/CLAUDE.md](data/CLAUDE.md)) |
+| `records/` | 덧붙이기만 하는 기록. `records/replay/` = 7~10월 재생 원본 ([records/CLAUDE.md](records/CLAUDE.md)) |
+| `knowledge.toml` | 논리집(PROVISO 양식): 목표·상태·근거 문헌·계산 조각·R_weights |
+| `tests/` | unittest ([tests/CLAUDE.md](tests/CLAUDE.md)) |
+| `docs/` | 설계, 보고서 문체, 재생 결과, 작업 보고서(`worklog/`) |
+
+- `python -m unittest discover -s tests -t .` — 시험(몇 초)
+- `python -m market.records check` — 기록 검사(칸 + git HEAD와 비교). 커밋 전에
+- `python -m market.logic validate|check|audit` — 논리집 검사·성적표·점검(PROVISO 코어: 환경변수 `PROVISO_PATH` 또는 형제 폴더 `../PROVISO-Nesy`)
+- `python -m market.prices update|show` — 시세 덧붙이기(네트워크, 시간 제한 30초)
+- `python -m market.calc [날짜]` — 그날 07:37 계산기 답 보기(기록하지 않음)
+- `python -m market.fit [--write]` — 조각 숫자를 2026-06-30까지의 시세로 맞추기
+- `python -m market.replay report` — 재생 결과 표. 재생 자체(`python -m market.replay`)는 한 번 돌렸고 다시 돌리지 않는다
+- 한글이 깨지면 `PYTHONIOENCODING=utf-8`
+
 ## 지금 상태 (2026-10-20)
-- main에는 설계와 보고서 문체(잠정)만 있다.
-- **1단계 구현은 브랜치 `phase1-wip`에서 진행 중이다.** 로컬 에이전트가 시세 3종 과거 데이터, `market/` 모듈, 논리집 초안까지 만들고 멈췄다. 그 뒤를 클라우드 한 번 실행(routine `trig_01QKPVvkbBETSHzqzTakEahh`, 2026-10-20 15:41 KST)이 이어서 마치고 같은 브랜치에 push한다. 다음 세션의 메인이 할 일: 그 브랜치를 검토하고, 재생 결과를 확인한 뒤 main에 합친다.
-- 시세 출처 3곳(업비트, 네이버, 야후)은 이 PC에서 키 없이 응답하는 것을 확인했다. 클라우드에서는 확인 전이다.
+- **1단계(시세만으로 계산하는 부분)가 브랜치 `phase1-wip`에 있다.** 로컬 에이전트가 시세·`market/`·논리집 초안을 만들고, 클라우드 한 번 실행(2026-10-20)이 테스트 보강·버그 하나(맞추기의 넘침)·문서·재생을 마쳤다. 보고서: [docs/worklog/2026-10-20-phase1.md](docs/worklog/2026-10-20-phase1.md). **다음 메인이 할 일: 검토하고 main에 합친다.**
+- 재생(2026-07-01~10-19, 계산기만, 한 번): 계산기 확률 점수 0.2755 > 늘 50% 0.25(동전보다 못함), 방향 41%, 재생 계좌 −10.3% vs 셋 나눠 사 두기 −6.7% vs 현금 0%. 조각 8개 중 7개가 방향 시험에서 반박, '어제 큰 움직임 뒤 큰 움직임'만 지지. 상세: [docs/replay-2026-07-10.md](docs/replay-2026-07-10.md).
+- 논리집: 목표 6, 상태 7, 근거 문헌 9(2026-10-20 웹 검색으로 실재 확인), 계산 조각 8(기준값 포함, 둘은 맞출 때 세운 숫자 없음), 규칙 1(R_weights). validate·audit 오류 없음.
+- 시세 출처 3곳은 로컬 PC에서는 키 없이 응답했다. **클라우드 기본 환경에서는 세 곳 모두 막혔다**(프록시 403, 2026-10-20) → 예약 실행용 환경의 허용 목록에 `api.upbit.com`, `fchart.stock.naver.com`, `query1.finance.yahoo.com`을 넣어야 한다.
+- 진짜 1,000만 원 계좌 기록은 아직 없다(2단계).
 
 ## 다음 할 일
-1. 구현: 7~10월 재생, 시세 받기·정산·채점·계산기·기록 검사 코드와 테스트. 첫날 조각(일반 지식, 출처 확인), 예약 실행 지시문 원본 `docs/routine-prompt.md`.
-2. 예약 실행 만들기: 전용 클라우드 환경(네트워크 허용 목록), main push, PROVISO-Nesy를 같이 받을 수 있는지 확인. 첫 실행은 직접 돌려서 확인한다.
+1. `phase1-wip` 검토 → main에 합치기. 작업 보고서의 '메인 판단 필요'를 정한다.
+2. 2단계: 조사 에이전트, 볼 곳 성적표, 손 예측, 돌아보기 기록, 일지 글쓰기, 예약 실행 지시문 원본 `docs/routine-prompt.md`. 재생에서 반박된 조각의 돌아보기(까닭 가르기)는 세운 뒤의 날들로만 시험하는 규칙을 지키며 한다.
+3. 예약 실행 만들기: 전용 클라우드 환경(네트워크 허용 목록), main push, PROVISO-Nesy를 같이 받을 수 있는지 확인(이 클라우드 세션에서는 두 저장소가 함께 클론되어 형제 폴더로 찾았다). 첫 실행은 직접 돌려서 확인한다.
