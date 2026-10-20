@@ -28,10 +28,22 @@ class Order:
     qty_units: int
     ref_price: float   # 판단 때 알려진 마지막 종가
     reason: str = ""
+    # 판단한 실제 시각(2단계 진짜 계좌). 있으면 이 시각 **뒤에** 정해지는 첫 공식 가격에 체결한다(늦은 실행에서 이미 나온
+    # 가격으로 사는 일을 막는다). 없으면(1단계 재생) 판단 시각 07:37 기준의 옛 규칙 그대로.
+    decided_at: dt.datetime | None = None
 
     def record(self) -> dict:
-        return {"id": self.id, "run": self.run.isoformat(), "account": self.account, "asset": self.asset,
-                "side": self.side, "qty_units": self.qty_units, "ref_price": self.ref_price, "reason": self.reason}
+        d = {"id": self.id, "run": self.run.isoformat(), "account": self.account, "asset": self.asset,
+             "side": self.side, "qty_units": self.qty_units, "ref_price": self.ref_price, "reason": self.reason}
+        if self.decided_at is not None:
+            d["decided_at"] = self.decided_at.isoformat(timespec="seconds")
+        return d
+
+    @classmethod
+    def from_record(cls, d: dict) -> "Order":
+        at = d.get("decided_at")
+        return cls(d["id"], dt.date.fromisoformat(d["run"]), d["account"], d["asset"], d["side"], d["qty_units"],
+                   d["ref_price"], d.get("reason", ""), dt.datetime.fromisoformat(at) if at else None)
 
 
 @dataclass
@@ -68,7 +80,8 @@ class Account:
 
     # ---------- 주문 ----------
     def plan(self, run: dt.date, targets: dict[str, float | None], prices: dict[str, float],
-             band: float = 0.02, reasons: dict[str, str] | None = None) -> list[Order]:
+             band: float = 0.02, reasons: dict[str, str] | None = None,
+             decided_at: dt.datetime | None = None) -> list[Order]:
         """목표 비중(대상 → 0~1, None은 그대로 둠)으로 주문을 낸다. 차이가 계좌의 band보다 작으면 거래하지 않는다."""
         units, cash = self.expected(prices)
         total = cash + sum(units[a] * prices[a] / C.ASSETS[a].unit for a in C.ASSET_IDS if a in prices)
@@ -88,7 +101,7 @@ class Account:
             q = min(units[a], math.floor(-diff / prices[a] * spec.unit))
             if q > 0:
                 orders.append(Order(f"{self.id}:{run.isoformat()}:{a}", run, self.id, a, "sell", q, prices[a],
-                                    (reasons or {}).get(a, "")))
+                                    (reasons or {}).get(a, ""), decided_at))
                 cash += q * prices[a] / spec.unit * (1 - spec.fee)
         for a, diff in buys:
             spec = C.ASSETS[a]
@@ -96,7 +109,7 @@ class Account:
             q = math.floor(spend / (prices[a] * (1 + spec.fee)) * spec.unit)
             if q > 0:
                 orders.append(Order(f"{self.id}:{run.isoformat()}:{a}", run, self.id, a, "buy", q, prices[a],
-                                    (reasons or {}).get(a, "")))
+                                    (reasons or {}).get(a, ""), decided_at))
                 cash -= q * prices[a] / spec.unit * (1 + spec.fee)
         self.pending += orders
         return orders
@@ -149,7 +162,14 @@ class Account:
 
 
 def fill_row(o: Order, hist: History) -> Row | None:
-    """주문이 체결되는 일봉 (아직 모르면 None). ETF: 주문일과 같거나 뒤인 첫 거래일, 코인: 주문일 일봉."""
+    """주문이 체결되는 일봉 (아직 모르면 None). ETF: 주문일과 같거나 뒤인 첫 거래일, 코인: 주문일 일봉.
+    판단 시각(decided_at)이 있으면: 주문일과 같거나 뒤이고 체결 가격 시각이 판단 시각 뒤인 첫 일봉."""
+    if o.decided_at is not None:
+        spec = C.ASSETS[o.asset]
+        for r in hist.rows:
+            if r.date >= o.run and C.fill_dt(spec, r.date) > o.decided_at:
+                return r
+        return None
     if C.ASSETS[o.asset].kind == "etf":
         return hist.on_or_after(o.run)
     return hist.on(o.run)
@@ -174,3 +194,20 @@ def target_weight(p: float | None) -> float | None:
     if p is None:
         return None
     return (1 / 3) * min(max((p - 0.40) / 0.20, 0.0), 1.0)
+
+
+def rebuild(account_id: str, accounts: list[dict], orders: list[dict]) -> Account:
+    """기록에서 계좌를 되살린다: 마지막 계좌 상태(현금·보유·체결 안 된 주문) + 그날 그 뒤에 낸 주문.
+    계좌 기록이 없으면 시작 금액의 빈 계좌."""
+    mine = [a for a in accounts if a["account"] == account_id]
+    acc = Account(account_id)
+    if not mine:
+        return acc
+    last = mine[-1]
+    acc.cash = last["cash"]
+    acc.units = {a: int(last["positions"].get(a, 0)) for a in C.ASSET_IDS}
+    by_id = {o["id"]: o for o in orders if o["account"] == account_id}
+    pend = [by_id[i] for i in last["pending"] if i in by_id]
+    pend += [o for o in by_id.values() if o["run"] == last["run"] and o["id"] not in last["pending"]]
+    acc.pending = [Order.from_record(o) for o in pend]
+    return acc

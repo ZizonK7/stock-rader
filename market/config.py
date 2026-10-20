@@ -13,6 +13,10 @@ PRICES = ROOT / "data" / "prices"
 RECORDS = ROOT / "records"
 REPLAY = RECORDS / "replay"
 KNOWLEDGE = ROOT / "knowledge.toml"
+PLACES = ROOT / "places.toml"          # 볼 곳(조사 출처) 노드 목록 — market/research.py
+VERSIONS = ROOT / "versions"           # 이전 버전 조각 모음 — market/versions.py
+REPORTS = ROOT / "reports"             # 매일 일지·주간 결산 — market/report.py
+OUT = ROOT / "out"                     # git 제외: 매일 실행의 중간 파일(prepare 결과, 메인 입력)
 
 KST = dt.timezone(dt.timedelta(hours=9))
 DECISION_TIME = dt.time(7, 37)
@@ -46,6 +50,33 @@ ASSET_IDS = tuple(ASSETS)
 # 대상 이름에 쓰이는 낱말. 조각 id·문장에 나오면 audit 오류 (조각은 다른 대상·분야에서 다시 쓴다)
 ASSET_WORDS = ("KODEX", "TIGER", "069500", "360750", "KRW-BTC", "BTC", "비트코인", "코인", "S&P", "코스피", "KOSPI",
                "업비트", "나스닥", "ETF")
+
+# 대상의 성질 (조사 조각의 주장이 어디에 걸리는지: 조각 문장에는 대상 이름 대신 이 성질을 쓴다)
+#   equity = 기업 이익에 묶인 주식 묶음, home = 값이 계좌 통화(원화)로 국내 시장에서 정해진다,
+#   priced_abroad = 값이 해외에서 외화로 정해지고 원화 값은 환율을 같이 탄다, no_cashflow = 이자·배당 같은 현금흐름이 없다
+TRAITS: dict[str, tuple[str, ...]] = {
+    "069500": ("equity", "home"),
+    "360750": ("equity", "priced_abroad"),
+    "KRW-BTC": ("priced_abroad", "no_cashflow"),
+}
+TRAIT_LABEL = {"all": "모든 대상", "equity": "주식 묶음", "home": "국내에서 원화로 값이 정해지는 것",
+               "priced_abroad": "해외에서 외화로 값이 정해지는 것", "no_cashflow": "현금흐름이 없는 것"}
+
+
+def in_scope(asset: str, scope: str | list | tuple | None) -> bool:
+    """조각 주장의 범위(성질 이름 하나나 목록, 'all')에 대상이 드는가."""
+    if not scope or scope == "all":
+        return True
+    names = [scope] if isinstance(scope, str) else list(scope)
+    return any(n == "all" or n in TRAITS[asset] for n in names)
+
+
+# 진짜 계좌 (2단계, 매일 예약 실행): 손 예측이 비중을 정하는 계좌와 계산기(R_weights) 계좌, 기준선 둘
+LIVE_ACCOUNTS = ("live:hand", "live:calc", "baseline:equal_hold", "baseline:cash")
+# 조사 조각을 세운 날. 조사 조각은 이 날 뒤의 판단(run)으로만 시험한다
+RESEARCH_SINCE = "2026-10-21"
+# 잡음: 움직임이 그 기간의 평소 움직임(60봉 하루 변동성 × √기간)의 이만큼보다 작으면 돌아보기에서 '잡음'으로 거를 수 있다
+NOISE_SHARE = 0.25
 
 # 기간 이름: 다음 거래일 / 1주 / 4주 (자리 순서)
 HORIZON_LABEL = ("다음", "1주", "4주")

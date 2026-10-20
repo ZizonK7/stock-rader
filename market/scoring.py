@@ -96,3 +96,49 @@ def piece_table(preds: list[dict], scores: list[dict], states: list[str]) -> dic
                       "abs_med": round(sorted(abs(r) for r in rets)[len(rets) // 2] * 100, 3) if rets else None}
         out[k] = row
     return out
+
+
+# ---------- 한 번만 세기 (결정 1, 2026-10-21) ----------
+# 예측은 날마다 적는다(주말·휴일에도). 그런데 새 일봉이 없는 날의 ETF 예측은 기준 종가가 같아서 같은 결과로 여러 번
+# 채점된다. 채점·성적표에서는 같은 (예측기·대상·기간·기준 날짜)를 **처음 말한 것 하나만** 센다.
+# 처음 것을 고른 까닭: 고르는 규칙이 결과를 보기 전에 정해지고, 나중 것을 고르면 '더 본 뒤의 말'에 무게가 쏠린다.
+def key_of(p: dict) -> tuple:
+    return (p["predictor"], p["asset"], p["horizon"], p["base_date"])
+
+
+def first_only(pairs: list[tuple]) -> list[tuple]:
+    """(…, 예측, 채점) 묶음 목록에서 같은 열쇠는 판단 날짜(run)가 가장 이른 예측 하나만 남긴다. 순서는 유지."""
+    best: dict[tuple, tuple[str, str]] = {}
+    for t in pairs:
+        p = t[-2]
+        k = key_of(p)
+        if k not in best or (p["run"], p["id"]) < best[k]:
+            best[k] = (p["run"], p["id"])
+    return [t for t in pairs if best[key_of(t[-2])] == (t[-2]["run"], t[-2]["id"])]
+
+
+def mark_counted(new_scores: list[dict], preds_by_id: dict[str, dict], counted_keys: set[tuple]) -> None:
+    """새 채점 줄에 counted 칸을 단다(같은 열쇠 중 판단 날짜가 가장 이른 것만 True). counted_keys에 더한다."""
+    order = sorted(new_scores, key=lambda s: (preds_by_id[s["prediction"]]["run"], s["prediction"]))
+    for s in order:
+        k = key_of(preds_by_id[s["prediction"]])
+        s["counted"] = k not in counted_keys
+        counted_keys.add(k)
+
+
+def typical_move(hist: History, h: int) -> float | None:
+    """평소 움직임(수익률, 비율): 60봉 하루 변동성 × √h. 시세가 모자라면 None."""
+    import math
+    c = hist.closes
+    if len(c) < 62:
+        return None
+    rets = [math.log(b / a) for a, b in zip(c[-61:], c[-60:]) if a > 0 and b > 0]
+    m = fmean(rets)
+    sd = math.sqrt(fmean([(r - m) ** 2 for r in rets]))
+    return sd * math.sqrt(h)
+
+
+def verdict_of(s: dict) -> str:
+    """돌아보기에 쓰는 맞음/틀림: 방향이나 크기 중 하나라도 틀리면 '틀림'. 말하지 않은 칸(None)은 빼고 본다."""
+    bad = s.get("direction_hit") is False or s.get("size_hit") is False
+    return "틀림" if bad else "맞음"

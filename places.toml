@@ -1,0 +1,133 @@
+# 볼 곳(조사 출처) 노드 — 조사 범위도 논리집에 넣는다 (사용자 제안 2026-10-20, docs/design.md "조사 범위도 논리집에")
+# 성적은 손으로 적지 않는다: 기록(records/research.jsonl, hand_reading, reading_check)에서 코드가 계산한다
+#   python -m market.research places
+# 칸: id(P_*), name(사람용 이름), url(들어가는 곳), angle(주로 쓰는 조사 각도), covers(주로 답하는 상태 id),
+#     official(공식 기관이 직접 내는 곳인가 — H_place_official이 쓴다), added(목록에 넣은 날), note
+# 새 곳을 시도해서 쓸 만했으면 여기에 더한다(조사 기록에는 new = true로 남는다). 지우지 않는다 — 안 쓰게 됐으면 note에 적는다.
+# 2026-10-21 첫 목록은 세운 사람이 알던 곳이다(써 본 성적 없음). 여기만 보지 않도록 매일 각도마다 새 곳을 하나 이상 시도한다.
+
+[[place]]
+id = "P_fed_calendar"
+name = "미국 연준 회의 일정·발표문 (federalreserve.gov)"
+url = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+angle = "금리·환율·정책"
+covers = ["S_q_rate_up", "S_q_event_soon"]
+official = true
+added = 2026-10-21
+
+[[place]]
+id = "P_bok"
+name = "한국은행 통화정책 (bok.or.kr)"
+url = "https://www.bok.or.kr/portal/singl/baseRate/list.do?dataSeCd=01&menuNo=200643"
+angle = "금리·환율·정책"
+covers = ["S_q_rate_up", "S_q_event_soon"]
+official = true
+added = 2026-10-21
+
+[[place]]
+id = "P_fedwatch"
+name = "CME FedWatch (금리 선물로 본 결정 확률)"
+url = "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html"
+angle = "금리·환율·정책"
+covers = ["S_q_rate_up"]
+official = false
+added = 2026-10-21
+
+[[place]]
+id = "P_bls_schedule"
+name = "미국 노동통계국 발표 일정 (물가·고용, bls.gov)"
+url = "https://www.bls.gov/schedule/news_release/"
+angle = "금리·환율·정책"
+covers = ["S_q_event_soon"]
+official = true
+added = 2026-10-21
+
+[[place]]
+id = "P_kostat"
+name = "통계청 공표 일정 (소비자물가 등, kostat.go.kr)"
+url = "https://kostat.go.kr/"
+angle = "금리·환율·정책"
+covers = ["S_q_event_soon"]
+official = true
+added = 2026-10-21
+
+[[place]]
+id = "P_naver_fx"
+name = "네이버 금융 시장지표 (환율)"
+url = "https://finance.naver.com/marketindex/"
+angle = "금리·환율·정책"
+covers = ["S_q_home_currency_weak"]
+official = false
+added = 2026-10-21
+
+[[place]]
+id = "P_ecos"
+name = "한국은행 경제통계시스템 ECOS (환율·금리 시계열)"
+url = "https://ecos.bok.or.kr/"
+angle = "금리·환율·정책"
+covers = ["S_q_home_currency_weak", "S_q_rate_up"]
+official = true
+added = 2026-10-21
+
+[[place]]
+id = "P_cboe_vix"
+name = "Cboe VIX 지수 페이지"
+url = "https://www.cboe.com/tradable_products/vix/"
+angle = "미국 시장"
+covers = ["S_q_risk_off"]
+official = true
+added = 2026-10-21
+
+[[place]]
+id = "P_cnn_fear_greed"
+name = "CNN 공포·탐욕 지수"
+url = "https://www.cnn.com/markets/fear-and-greed"
+angle = "미국 시장"
+covers = ["S_q_risk_off"]
+official = false
+added = 2026-10-21
+
+[[place]]
+id = "P_crypto_fng"
+name = "코인 공포·탐욕 지수 (alternative.me)"
+url = "https://alternative.me/crypto/fear-and-greed-index/"
+angle = "코인"
+covers = ["S_q_risk_off"]
+official = false
+added = 2026-10-21
+
+[[place]]
+id = "P_krx"
+name = "한국거래소 정보데이터시스템 (투자자별 매매, VKOSPI)"
+url = "http://data.krx.co.kr/"
+angle = "한국 시장"
+covers = ["S_q_risk_off"]
+official = true
+added = 2026-10-21
+
+[[place]]
+id = "P_yonhap"
+name = "연합뉴스 경제"
+url = "https://www.yna.co.kr/economy/all"
+angle = "한국 시장"
+covers = []
+official = false
+added = 2026-10-21
+
+[[place]]
+id = "P_reuters_markets"
+name = "Reuters 시장 기사"
+url = "https://www.reuters.com/markets/"
+angle = "미국 시장"
+covers = ["S_q_risk_off"]
+official = false
+added = 2026-10-21
+
+[[place]]
+id = "P_upbit_notice"
+name = "업비트 공지사항"
+url = "https://upbit.com/service_center/notice"
+angle = "코인"
+covers = []
+official = true
+added = 2026-10-21

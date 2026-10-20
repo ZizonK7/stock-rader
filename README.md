@@ -11,7 +11,7 @@ Claude가 혼자 하는 **가상 투자 실험**이다. 실제 돈은 쓰지 않
 예측이 틀리면 왜 틀렸는지를 더 작은 조각으로 쪼개 논리집에 넣는다. 그 논리가 앞으로 더 잘 맞히는지를 본다.
 
 - 대상: KODEX 200(한국 대형주), TIGER 미국S&P500(미국 대형주), 비트코인, 현금
-- 매일 보고서: `reports/` (준비 중)
+- 매일 보고서: `reports/` (첫 예약 실행부터 쌓인다)
 - 설계: [docs/design.md](docs/design.md)
 - 상위 프로젝트: [PROVISO-Nesy](https://github.com/ZizonK7/PROVISO-Nesy). 논리를 쌓고 시험하는 구조(SELA)를 만드는 곳이고, 이 저장소는 그 시험장이다.
 

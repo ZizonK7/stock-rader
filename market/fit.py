@@ -140,6 +140,7 @@ class Claim:
     dir: str | None = None
     state: str | None = None
     when: str | None = None
+    also: tuple[tuple[str, str], ...] = ()   # 더한 조건(쪼갠 새 버전): 상태 id = 값이 모두 맞을 때만 켜진다
 
 
 def claims_of(raws: list[dict]) -> list[Claim]:
@@ -150,7 +151,8 @@ def claims_of(raws: list[dict]) -> list[Claim]:
         conds = r.get("conditions", [])
         for c in r.get("claims", []):
             out.append(Claim(r["id"], c["on"], c.get("op", "mul"), c.get("reason", ""), c.get("dir"),
-                             conds[0] if conds and c.get("op", "mul") != "base" else None, c.get("when")))
+                             conds[0] if conds and c.get("op", "mul") != "base" else None, c.get("when"),
+                             tuple(sorted((c.get("also") or {}).items()))))
     return out
 
 
@@ -210,7 +212,7 @@ class Fitted:
 
 
 def _x(reading: dict[str, str], cl: Claim) -> int:
-    return 1 if reading.get(cl.state) == cl.when else 0
+    return 1 if reading.get(cl.state) == cl.when and all(reading.get(k) == v for k, v in cl.also) else 0
 
 
 def _violation(b: float, se: float, cl: Claim) -> tuple[float, str] | None:
@@ -321,7 +323,7 @@ def effects_for(raw: dict, fitted: list[Fitted], claims: list[Claim]) -> tuple[l
                     notset.append(f"{tag} {c.on}: {f.note}")
             elif c.piece in f.muls:
                 effs.append({"on": c.on, "op": "mul", "range": list(f.muls[c.piece]), "dir": c.dir,
-                             "when": {c.state: c.when}, "asset": f.asset, "horizon": f.horizon, "n": f.n,
+                             "when": {c.state: c.when, **dict(c.also)}, "asset": f.asset, "horizon": f.horizon, "n": f.n,
                              "reason": c.reason})
                 made.append(tag)
             elif c.piece in f.dropped:
@@ -359,6 +361,8 @@ def emit(raw: dict, effs: list[dict], fit_text: str, notset: list[str]) -> str:
     if raw.get("status", "hypothesis") != "retired":
         lines.append(f"fit = {_toml(fit_text)}")
         lines.append(f"not_set = {_toml(notset)}")
+    else:  # 이전 버전: 맞춘 기록을 지우지 않고 그대로 둔다
+        lines += [f"{k} = {_toml(raw[k])}" for k in ("fit", "not_set") if k in raw]
     for e in effs:
         lines.append("[[hypothesis.effect]]")
         lines += [f"{k} = {_toml(v)}" for k, v in e.items()]

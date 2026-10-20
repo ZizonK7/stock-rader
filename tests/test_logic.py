@@ -39,7 +39,7 @@ class Devices(unittest.TestCase):
         self.assertEqual(AUDIT.unaccepted_harms(kn), [])
 
     def test_hand_changed_range_is_an_audit_error(self):
-        text = TEXT.replace("range = [1.03, 1.22]", "range = [1.03, 1.25]", 1)
+        text = TEXT.replace("range = [1.16, 1.29]", "range = [1.16, 1.31]", 1)  # 살아 있는 조각(C_vol_high)의 효과
         self.assertNotEqual(text, TEXT)
         errors, _ = CH.audit(self.kn(text), fitted_now())
         self.assertTrue(any("맞춘 값과 다름" in e for e in errors), errors)
@@ -61,7 +61,7 @@ class Devices(unittest.TestCase):
         self.assertTrue(any("known_before" in e for e in SCHEMA.validate(self.kn(text))))
 
     def test_asset_name_in_piece_text_is_an_error(self):
-        text = TEXT.replace('text = "최근 20봉 동안 올랐으면', 'text = "비트코인이 최근 20봉 동안 올랐으면', 1)
+        text = TEXT.replace('text = "최근 20봉 동안 올랐고', 'text = "비트코인이 최근 20봉 동안 올랐고', 1)
         errors, _ = CH.audit(self.kn(text), fitted_now())
         self.assertTrue(any("대상 이름" in e for e in errors), errors)
 

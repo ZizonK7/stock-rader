@@ -71,10 +71,15 @@ def pieces_from(raw: dict) -> list[Piece]:
     return out
 
 
+def digest(data: bytes) -> str:
+    """지식 파일 지문. 줄바꿈을 LF로 맞춘 뒤 잰다(윈도 체크아웃의 CRLF와 클라우드의 LF가 같은 지문을 내게)."""
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()[:12]
+
+
 def load_pieces(path: Path = C.KNOWLEDGE) -> tuple[list[Piece], str]:
     """(조각들, 지식 파일 지문). 지문은 예측 기록에 남겨 어느 논리집으로 계산했는지 보인다."""
     data = path.read_bytes()
-    return pieces_from(tomllib.loads(data.decode("utf-8"))), hashlib.sha256(data).hexdigest()[:12]
+    return pieces_from(tomllib.loads(data.decode("utf-8"))), digest(data)
 
 
 def combine(ranges: list[tuple[float, float]]) -> tuple[float, float]:

@@ -70,7 +70,7 @@ def main(argv: list[str]) -> int:
         if missing:
             print(f"checks.py에 없는 검사: {', '.join(missing)}")
             return 1
-        print(f"[market] 성적표 (자동 검사 출처: {schema.SOURCES.get(checks.SOURCE, checks.SOURCE)})\n")
+        print("[market] 성적표 (출처는 검사마다: 재생 기록 = '실제 기록 재생', 진짜 계좌 기록 = '실측')\n")
         print(score.report(kn, checks.CHECKS, checks.SOURCE))
         return 0
     extra = checks.AUDIT(kn)

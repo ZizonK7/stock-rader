@@ -38,7 +38,22 @@ FIELDS: dict[str, dict[str, tuple]] = {
                 "pending": (list,)},
     "review": {"prediction": (str,), "wrong": (list,), "why": (str,), "reason": (str,)},
     "correction": {"target": (str,), "note": (str,)},
+    # 2단계 (매일 예약 실행)
+    "research": {"question": (str,), "state": (str,), "angle": (str,), "asked": (str,), "answer": (str,),
+                 "looked": (list,), "agent": (str,)},
+    "hand_reading": {"values": (dict,), "why": (dict,), "places": (dict,), "research": (list,)},
+    "reading_check": {"target": (str,), "state": (str,), "then": (str,), "now": (str,), "hit": OPT_BOOL,
+                      "late": (list,), "reason": (str,)},
 }
+# 있을 때만 검사하는 칸 (1단계 재생 기록에는 없다)
+OPTIONAL: dict[str, dict[str, tuple]] = {
+    "score": {"counted": OPT_BOOL},
+    "order": {"decided_at": (str,)},
+    "prediction": {"confidence": (str,)},
+}
+WHY = ("맞음", "잡음", "대 보기 틀림", "조건 흐림", "이유 틀림", "바깥 상황")
+LOOK_RESULT = ("찾음", "없음", "늦음", "막힘")
+SUMMARY_MAX = 300  # 조사 기록의 요약 칸 최대 글자 수 — 기사 본문을 옮기지 않는다(요약 + 링크)
 DESCRIBE = {
     "run": "실행 한 번: mode(replay/live), steps(단계별 결과·실패), notes",
     "reading": "대 보기: 대상 하나의 조각 값(values: 상태 id → 예/아니오/모름)과 계산에 쓴 숫자(numbers), known_through = 본 마지막 일봉 날짜",
@@ -49,6 +64,9 @@ DESCRIBE = {
     "account": "계좌 상태: 현금(원), 보유(최소 단위), 평가 가격(대상 → [날짜, 가격]), 평가액, 아직 체결 안 된 주문",
     "review": "돌아보기(2단계): 예측 id, 틀린 조각 id, 까닭(조건 흐림/이유 틀림/바깥 상황/잡음/대 보기 틀림), 이유",
     "correction": "정정: 고칠 기록 id(target)와 설명. 지난 줄은 고치지 않는다",
+    "research": "조사(질문 하나): 대 볼 상태 id(열린 질문이면 ''), 각도, 질문, 답 요약, 본 곳마다 결과(찾음/없음/늦음/막힘)·새 곳 여부·링크·날짜, 맡은 에이전트",
+    "hand_reading": "손 대 보기(하루 하나): 조사로 대 본 상태 값(예/아니오/일부/모름 또는 값), 상태마다 이유와 쓴 볼 곳, 근거 조사 id",
+    "reading_check": "대 보기 다시 보기: 지난 손 대 보기의 상태 값을 나중에 알게 된 것으로 다시 봄(맞음/틀림/모름), 판단 뒤에야 정보가 나온 볼 곳(late)",
 }
 
 
@@ -87,12 +105,42 @@ def line_errors(kind: str, d: dict, where: str) -> list[str]:
             errs.append(f"{where}: '{k}' 타입이 {[t.__name__ for t in types]}가 아님")
     if kind == "prediction" and isinstance(d.get("p_up"), NUM) and not 0 <= d["p_up"] <= 1:
         errs.append(f"{where}: p_up은 0~1")
+    for k, types in OPTIONAL.get(kind, {}).items():
+        if k in d and (not isinstance(d[k], types) or (isinstance(d[k], bool) and bool not in types)):
+            errs.append(f"{where}: '{k}' 타입이 {[t.__name__ for t in types]}가 아님")
+    if kind == "review" and d.get("why") not in WHY:
+        errs.append(f"{where}: why는 {list(WHY)} 중 하나")
+    if kind == "research":
+        errs += _research_errors(d, where)
     if kind == "order" and d.get("side") not in ("buy", "sell"):
         errs.append(f"{where}: side는 buy/sell")
     if kind == "account" and isinstance(d.get("cash"), int) and d["cash"] < 0:
         errs.append(f"{where}: 현금이 음수")
     if kind == "fill" and isinstance(d.get("cash_after"), int) and d["cash_after"] < 0:
         errs.append(f"{where}: 체결 뒤 현금이 음수")
+    return errs
+
+
+def _research_errors(d: dict, where: str) -> list[str]:
+    errs = []
+    for k in ("asked", "answer"):
+        if isinstance(d.get(k), str) and len(d[k]) > SUMMARY_MAX:
+            errs.append(f"{where}: '{k}'가 {SUMMARY_MAX}자를 넘음 — 기사 본문을 옮기지 않는다(요약 + 링크)")
+    for i, lk in enumerate(d.get("looked") or []):
+        w = f"{where} looked[{i}]"
+        if not isinstance(lk, dict):
+            errs.append(f"{w}: 사전이 아님")
+            continue
+        if not isinstance(lk.get("place"), str) or not lk.get("place"):
+            errs.append(f"{w}: place(볼 곳 id)가 없음")
+        if lk.get("result") not in LOOK_RESULT:
+            errs.append(f"{w}: result는 {list(LOOK_RESULT)} 중 하나")
+        if not isinstance(lk.get("new"), bool):
+            errs.append(f"{w}: new(새로 시도한 곳인가)는 true/false")
+        if lk.get("result") in ("찾음", "늦음") and not str(lk.get("url", "")).startswith("http"):
+            errs.append(f"{w}: 찾았으면 출처 링크(url)가 있어야 함")
+        if isinstance(lk.get("note"), str) and len(lk["note"]) > SUMMARY_MAX:
+            errs.append(f"{w}: note가 {SUMMARY_MAX}자를 넘음 — 요약만")
     return errs
 
 

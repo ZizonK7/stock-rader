@@ -20,5 +20,7 @@
 - 덧붙이기만 한다(`python -m market.prices update`). 이미 있는 날의 값이 새로 받은 값과 다르면 고치지 않고 경고만 낸다. 지난 줄이 바뀌면 `python -m market.records check`가 실패한다.
 - 2026-06-30까지의 시세는 조각 숫자를 맞추는 재료, 2026-07-01~10-19는 재생(홀드아웃) 재료다. 지난 시세로 진짜 계좌를 채점하지 않는다.
 
+- 2단계부터는 매일 예약 실행의 `python -m market.daily prepare`가 덧붙인다. 받기에 실패한 날 판단 시각까지 끝났어야 할 일봉이 없으면 그 대상은 그날 예측·주문하지 않는다(market/CLAUDE.md).
+
 ## 다른 폴더와의 관계
-- 쓰는 코드: `market/prices.py`. 읽는 코드: `market/` 전체(fit·replay·calc·checks).
+- 쓰는 코드: `market/prices.py`(매일 실행은 `market/daily.py`가 부른다). 읽는 코드: `market/` 전체(fit·replay·calc·checks).

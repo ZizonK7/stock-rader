@@ -1,0 +1,12 @@
+# 이전 버전 조각 모음 목록 (market/versions.py). 조각을 고치기 **전에** 지금 논리집을 통째로 떠 두고 여기에 적는다:
+#   python -m market.versions save <id> "<왜 떠 두나>"
+# active = true인 것(최대 3개)은 매일 실행이 같은 날의 대 보기 값으로 다시 계산해 predictor "version:<id>"로 같이 채점한다.
+# 떠 둔 파일은 고치지 않는다(지문 digest가 다르면 audit 오류). 그만 돌릴 때는 active = false로만 바꾼다.
+
+[[version]]
+id = "v1"
+file = "v1.toml"
+saved = 2026-10-21
+digest = "3a322e89980b"
+active = true
+why = "1단계 재생(2026-07-01~10-19)에 쓴 조각 모음 그대로. 2026-10-21 첫 돌아보기에서 C_trend_20을 쪼개기 전의 것 — 쪼갠 새 버전(계산기 calc)과 같은 날들로 나란히 채점한다"
