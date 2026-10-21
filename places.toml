@@ -191,3 +191,53 @@ covers = ["S_q_risk_off"]
 official = false
 added = 2026-10-21
 note = "페이지(P_crypto_fng)에 없는 날짜별 값이 있다"
+
+[[place]]
+id = "P_cboe_vix_csv"
+name = "Cboe VIX 일별 종가 CSV"
+url = "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+angle = "미국 시장"
+covers = ["S_q_risk_off"]
+official = true
+added = 2026-10-22
+note = "Cboe 페이지와 FRED가 막힌 날 VIX 1년 평균·한 달 범위를 계산할 수 있었다"
+
+[[place]]
+id = "P_yahoo_chart"
+name = "야후 파이낸스 차트 값 (VIX·S&P500·금리·환율)"
+url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=1y&interval=1d"
+angle = "미국 시장"
+covers = ["S_q_risk_off"]
+official = false
+added = 2026-10-22
+note = "판단 직전 미국 장 마감값(VIX, S&P500, 10년물 금리, 원/달러)을 한 곳에서 받았다"
+
+[[place]]
+id = "P_fntimes"
+name = "한국금융신문 (금통위 전망·설문)"
+url = "https://www.fntimes.com/"
+angle = "금리·환율·정책"
+covers = ["S_q_rate_up", "S_q_event_soon"]
+official = false
+added = 2026-10-22
+note = "한은 금통위 날짜와 채권 전문가 설문(동결·인상 비율)을 판단 전에 줬다"
+
+[[place]]
+id = "P_pointdaily"
+name = "포인트데일리 증시 마감 기사"
+url = "https://www.pointdaily.co.kr/"
+angle = "한국 시장"
+covers = []
+official = false
+added = 2026-10-22
+note = "코스피 마감·투자자별 매매·사이드카를 숫자로 줬다(KRX가 로그인 필요로 막힐 때)"
+
+[[place]]
+id = "P_upbit_api"
+name = "업비트 현재가 API (비트코인·테더)"
+url = "https://api.upbit.com/v1/ticker?markets=KRW-BTC,KRW-USDT"
+angle = "코인"
+covers = []
+official = true
+added = 2026-10-22
+note = "테더 원화 값으로 국내외 가격 차(김치 프리미엄)를 계산할 수 있었다"
