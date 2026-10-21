@@ -107,9 +107,16 @@ class DailyLoop(unittest.TestCase):
             self.assertIn(RP.MARK, text)
             self.assertEqual(RP.check(root, dt.date(2025, 9, 5)), 1)
             self.assertEqual(RP.check(root, dt.date(2025, 9, 5)), 1)
-            filled = text.replace(RP.MARK, "채움")
+            # 붙은 물결표는 Markdown에서 취소선이 된다 → 점검이 막는다(주석 안은 괜찮다)
+            (root.reports / "2025-09-05.md").write_text(text.replace(RP.MARK, "확률 47~49%"), encoding="utf-8")
+            self.assertEqual(RP.check(root, dt.date(2025, 9, 5)), 1)
+            filled = text.replace(RP.MARK, "채움 47–49% <!-- 0.6~1.2% -->")
             (root.reports / "2025-09-05.md").write_text(filled, encoding="utf-8")
             self.assertEqual(RP.check(root, dt.date(2025, 9, 5)), 0)
+            # 첫날: 견줄 기준선 문장 없음, 아직 정산 안 된 주문이 표 아래에 보인다
+            first = (root.reports / "2025-09-02.md").read_text(encoding="utf-8")
+            self.assertNotIn("셋을 나눠 사 두기만 했을 때", first.split("|")[0])
+            self.assertIn("체결을 기다리는 주문", first)
 
     def test_sunday_writes_weekly(self):
         with tempfile.TemporaryDirectory() as tmp:

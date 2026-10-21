@@ -22,6 +22,8 @@ from . import scoring as S
 MARK = "[[채울 것"
 DISCLAIM = "실제 돈이 아닌 가상 투자 실험이며 투자 권유가 아니다."
 REPO_URL = "https://github.com/ZizonK7/stock-rader/blob/main"
+# 붙어 있는 물결표 둘(47~49%, 0.6~1.2%)은 GitHub·블로그 Markdown에서 그 사이 글을 취소선으로 바꾼다(2026-10-21 첫 블로그 글).
+TILDE = re.compile(r"(?<![\\\s])~(?!\s)")
 
 
 def won(x: float, sign: bool = True) -> str:
@@ -134,7 +136,7 @@ def daily(folder: Path, day: dt.date) -> str:
     none = sorted({lk["place"] for r in research for lk in r["looked"] if lk["result"] in ("없음", "막힘")})
     late = sorted({lk["place"] for r in research for lk in r["looked"] if lk["result"] == "늦음"})
     new = sorted({lk["place"] for r in research for lk in r["looked"] if lk.get("new")})
-    lines += [f"**왜** [[채울 것: 근거 조각 1~3개(짧은 이름과 성적), 조사에서 나온 새 사실과 출처, 확신도]]",
+    lines += [f"**왜** [[채울 것: 근거 조각 1–3개(짧은 이름과 성적), 조사에서 나온 새 사실과 출처, 확신도]]",
               _ref(ref_why),
               f"**잘된 것** [[채울 것: 없으면 '없음']]", _ref(good),
               f"**잘못된 것** [[채울 것: 틀린 예측 → 틀린 조각 → 까닭 → 바꾼 것. 없으면 '없음']]", _ref(bad),
@@ -162,9 +164,16 @@ def daily(folder: Path, day: dt.date) -> str:
         de = eq["value"] - pe["value"] if pe else 0.0
         lines.append(f"| 기준선: 셋을 나눠 사 두기만 | | {won(eq['value'], False)} | {won(de)} | "
                      f"{won(eq['value'] - start)} ({pct(eq['value'] / start - 1)}) |")
+    filled = {f["order"] for f in b.recs["fill"]}
+    waiting = [o for o in b.recs["order"] if o["account"] == "live:hand" and o["run"] <= run and o["id"] not in filled]
     calc_acc = b.acc["live:calc"].get(run)
     if calc_acc:
         lines.append(f"| 참고: 계산기 계좌 | | {won(calc_acc['value'], False)} | | {pct(calc_acc['value'] / start - 1)} |")
+    if waiting:
+        # 체결은 그 가격의 일봉이 끝난 뒤 실행에서 정산된다(코인 D+2, ETF 대개 D+3) — 그때까지 표의 보유는 그대로다.
+        lines += ["", "체결을 기다리는 주문(값이 확정되는 날 실행에서 표에 들어간다): " + ", ".join(
+            f"{C.ASSETS[o['asset']].name} {won_about(o['qty_units'] * o['ref_price'] / C.ASSETS[o['asset']].unit)}어치 "
+            f"{'사기' if o['side'] == 'buy' else '팔기'}({int(o['run'][5:7])}월 {int(o['run'][8:])}일 주문)" for o in waiting) + "."]
     lines += ["", f"평가 가격은 07:37에 알려진 마지막 끝난 종가다({', '.join(f'{C.ASSETS[a].name} {d}' for a, (d, _) in me['prices'].items())})."
               " 수수료 가정(ETF 0.015%, 업비트 0.05%)을 넣었고 세금은 계산하지 않았다.", ""]
     # 링크 전체 목록은 블로그 글에서 본문보다 길어진다(2026-10-21). 근거로 쓴 링크는 '왜'에 달고, 나머지는 기록을 가리킨다.
@@ -294,9 +303,13 @@ def write(root, day: dt.date, force: bool = False) -> int:
 def check(root, day: dt.date) -> int:
     bad = []
     for p in sorted(root.reports.glob(f"{day.isoformat()}*.md")):
-        n = len(re.findall(re.escape(MARK), p.read_text(encoding="utf-8")))
+        text = p.read_text(encoding="utf-8")
+        n = len(re.findall(re.escape(MARK), text))
         if n:
             bad.append(f"{p.name}: 채우지 않은 자리 {n}곳")
+        tildes = TILDE.findall(re.sub(r"<!--.*?-->", "", text, flags=re.S))
+        if tildes:
+            bad.append(f"{p.name}: 붙은 물결표(~) {len(tildes)}곳 — 취소선으로 보인다. 범위는 '47–49%'처럼 줄표(–)로 쓴다")
     if not list(root.reports.glob(f"{day.isoformat()}*.md")):
         bad.append(f"{day} 일지가 없다")
     for b in bad:
