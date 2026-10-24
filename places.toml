@@ -381,3 +381,13 @@ covers = ["S_q_risk_off"]
 official = false
 added = 2026-10-24
 note = "2026-10-23·24 새 곳으로 써서 목록에 더함: VKOSPI 현물 마감 값이 기사에 나온 적이 있다(10-15). 이번 주 값은 없었다"
+
+[[place]]
+id = "P_marketwatch_rss"
+name = "MarketWatch 속보 RSS (미국 장 마감·유가 제목)"
+url = "https://feeds.content.dowjones.io/public/rss/mw_bulletins"
+angle = "미국 시장"
+covers = ["S_q_risk_off"]
+official = false
+added = 2026-10-25
+note = "2026-10-25 새로 시도: 야후 기사 화면이 스크립트라 제목이 안 뽑힐 때 미국 장 마감 속보 제목과 시각을 읽을 수 있었다"
