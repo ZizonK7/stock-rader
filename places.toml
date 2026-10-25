@@ -391,3 +391,33 @@ covers = ["S_q_risk_off"]
 official = false
 added = 2026-10-25
 note = "2026-10-25 새로 시도: 야후 기사 화면이 스크립트라 제목이 안 뽑힐 때 미국 장 마감 속보 제목과 시각을 읽을 수 있었다"
+
+[[place]]
+id = "P_kalshi_api"
+name = "Kalshi 연준 결정 계약 가격 API (예측시장)"
+url = "https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXFEDDECISION-26OCT"
+angle = "금리·환율·정책"
+covers = ["S_q_rate_up"]
+official = false
+added = 2026-10-26
+note = "2026-10-26 새로 시도: 다음 연준 회의의 동결·인상 계약 매수·매도 가격을 그대로 읽을 수 있었다(동결 0.93–0.94). 회의마다 event_ticker가 바뀐다"
+
+[[place]]
+id = "P_investing_vkospi"
+name = "Investing.com 국내 공포 지수(VKOSPI) 페이지"
+url = "https://kr.investing.com/indices/kospi-volatility"
+angle = "한국 시장"
+covers = ["S_q_risk_off"]
+official = false
+added = 2026-10-26
+note = "2026-10-26 새로 시도: VKOSPI 마감 값(10-23 52.05)이 바로 나왔다. curl은 403, 웹 읽기 도구로는 열렸다. 거래소 공식 값과는 아직 대조 못 함"
+
+[[place]]
+id = "P_cnbc_rss"
+name = "CNBC 기사 RSS (미국 시장·채권 제목)"
+url = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069"
+angle = "미국 시장"
+covers = ["S_q_risk_off"]
+official = false
+added = 2026-10-26
+note = "2026-10-26 새로 시도: 안전 자산(국채) 쏠림 기사 제목과 날짜를 읽을 수 있었다. 제목만 보고 본문은 보지 않았다"
