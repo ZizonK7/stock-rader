@@ -421,3 +421,23 @@ covers = ["S_q_risk_off"]
 official = false
 added = 2026-10-26
 note = "2026-10-26 새로 시도: 안전 자산(국채) 쏠림 기사 제목과 날짜를 읽을 수 있었다. 제목만 보고 본문은 보지 않았다"
+
+[[place]]
+id = "P_einfomax"
+name = "연합인포맥스 (서울 외환시장 종가·외환 마감 기사)"
+url = "https://news.einfomax.co.kr/"
+angle = "금리·환율·정책"
+covers = ["S_q_home_currency_weak"]
+official = false
+added = 2026-10-27
+note = "2026-10-27 새로 시도: 서울장 달러-원 종가(10-26 1,323.10원)와 마감 까닭이 바로 나왔다. 네이버 고시 값과는 2–4원 다르다"
+
+[[place]]
+id = "P_tradingeconomics_kr"
+name = "Trading Economics 한국 경제 일정표"
+url = "https://tradingeconomics.com/south-korea/calendar"
+angle = "금리·환율·정책"
+covers = ["S_q_event_soon"]
+official = false
+added = 2026-10-27
+note = "2026-10-27 새로 시도: 한국 GDP 속보·소비자물가 발표 날짜를 UTC 시각으로 확인했다"
