@@ -441,3 +441,63 @@ covers = ["S_q_event_soon"]
 official = false
 added = 2026-10-27
 note = "2026-10-27 새로 시도: 한국 GDP 속보·소비자물가 발표 날짜를 UTC 시각으로 확인했다"
+
+[[place]]
+id = "P_ing_think"
+name = "ING Think (연준 미리보기·외환 일일)"
+url = "https://think.ing.com/"
+angle = "금리·환율·정책"
+covers = ["S_q_rate_up", "S_q_home_currency_weak"]
+official = false
+added = 2026-10-28
+note = "2026-10-28 새로 시도: 연준 10월 동결·12월 인상 전망과 FOMC 앞 달러 흐름이 날짜와 함께 나왔다. 은행 의견이라 확률 근거는 예측시장으로 대조"
+
+[[place]]
+id = "P_nasdaq_earnings_api"
+name = "나스닥 실적 발표 일정 API"
+url = "https://api.nasdaq.com/api/calendar/earnings?date=2026-10-28"
+angle = "미국 시장"
+covers = []
+official = false
+added = 2026-10-28
+note = "2026-10-28 새로 시도: 날짜별 대형주 실적 발표(장 전/장 마감 뒤)가 인증 없이 나왔다"
+
+[[place]]
+id = "P_deribit_api"
+name = "Deribit 공개 API(코인 옵션 미결제약정)"
+url = "https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency=BTC&kind=option"
+angle = "코인"
+covers = []
+official = false
+added = 2026-10-28
+note = "2026-10-28 새로 시도: 만기별 옵션 미결제약정 규모를 직접 셀 수 있다(10-30 만기 약 13.6만 개)"
+
+[[place]]
+id = "P_coingecko_api"
+name = "CoinGecko 공개 시세 API"
+url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,krw&include_24hr_change=true"
+angle = "코인"
+covers = []
+official = false
+added = 2026-10-28
+note = "2026-10-28 새로 시도: 달러·원화 가격과 24시간 변화가 한 번에 나온다"
+
+[[place]]
+id = "P_bizwatch"
+name = "비즈니스워치 증시 마감 기사"
+url = "https://news.bizwatch.co.kr/"
+angle = "한국 시장"
+covers = []
+official = false
+added = 2026-10-28
+note = "2026-10-28 새로 시도: 장 마감 기사에 투자자별 순매수와 까닭이 같이 나왔다"
+
+[[place]]
+id = "P_yahoo_ewy"
+name = "야후 차트 — 미국 상장 한국 묶음(EWY)"
+url = "https://query1.finance.yahoo.com/v8/finance/chart/EWY?range=5d&interval=1d"
+angle = "한국 시장"
+covers = []
+official = false
+added = 2026-10-28
+note = "2026-10-28 새로 시도: 밤사이 미국 장에서 한국 묶음의 움직임. 30분 값으로 한국 장 마감 뒤 몫만 따로 볼 수 있다"
