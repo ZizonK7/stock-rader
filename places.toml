@@ -110,7 +110,7 @@ id = "P_yonhap"
 name = "연합뉴스 경제"
 url = "https://www.yna.co.kr/economy/all"
 angle = "한국 시장"
-covers = []
+covers = ["S_q_bigcap_earnings"]
 official = false
 added = 2026-10-21
 
@@ -457,7 +457,7 @@ id = "P_nasdaq_earnings_api"
 name = "나스닥 실적 발표 일정 API"
 url = "https://api.nasdaq.com/api/calendar/earnings?date=2026-10-28"
 angle = "미국 시장"
-covers = []
+covers = ["S_q_bigcap_earnings"]
 official = false
 added = 2026-10-28
 note = "2026-10-28 새로 시도: 날짜별 대형주 실적 발표(장 전/장 마감 뒤)가 인증 없이 나왔다"
@@ -487,7 +487,7 @@ id = "P_bizwatch"
 name = "비즈니스워치 증시 마감 기사"
 url = "https://news.bizwatch.co.kr/"
 angle = "한국 시장"
-covers = []
+covers = ["S_q_bigcap_earnings"]
 official = false
 added = 2026-10-28
 note = "2026-10-28 새로 시도: 장 마감 기사에 투자자별 순매수와 까닭이 같이 나왔다"
@@ -501,3 +501,23 @@ covers = []
 official = false
 added = 2026-10-28
 note = "2026-10-28 새로 시도: 밤사이 미국 장에서 한국 묶음의 움직임. 30분 값으로 한국 장 마감 뒤 몫만 따로 볼 수 있다"
+
+[[place]]
+id = "P_opinionnews"
+name = "오피니언뉴스 — 장 마감 기사"
+url = "http://www.opinionnews.co.kr/"
+angle = "한국 시장"
+covers = []
+official = false
+added = 2026-10-29
+note = "2026-10-29 새로 시도: 10-28 장 마감 기사에 투자자별 순매수(확정치)와 직전 6000 위 마감 날짜가 같이 나왔다"
+
+[[place]]
+id = "P_fed_press_rss"
+name = "연준 보도자료 — 금리 결정 성명 원문"
+url = "https://www.federalreserve.gov/newsevents/pressreleases.htm"
+angle = "금리·환율·정책"
+covers = ["S_q_rate_up"]
+official = true
+added = 2026-10-29
+note = "2026-10-29 새로 시도: 결정 당일 성명 원문(표결, 반대표의 방향)이 바로 열렸다"

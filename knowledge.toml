@@ -129,6 +129,15 @@ read_by = "조사"
 angle = "금리·환율·정책"
 ask = "오늘 판단 시각부터 다음 거래일 장 마감까지 미국·한국의 금리 결정, 소비자물가(CPI) 발표, 고용 발표가 있나? 날짜와 한국 시간, 공식 일정표 링크"
 
+[[state]]
+id = "S_q_bigcap_earnings"
+text = "다음 거래일(또는 다음 하루) 안에 지수의 큰 몫을 차지하는 종목(지수 비중 상위 몇 종목)의 실적 발표가 있거나, 판단 직전 하루 안에 나왔다"
+known_before = true
+serves = "G_timing"
+read_by = "조사"
+angle = "한국 시장"
+ask = "오늘 판단 시각부터 다음 거래일 장 마감까지, 또는 판단 직전 하루 안에 한국 지수(KOSPI200)와 미국 지수(S&P500)의 비중 상위 종목 실적 발표가 있나? 회사, 발표 날짜와 한국 시간, 지수 비중(대략), 출처"
+
 # ---------- 사실: 근거 문헌 (2026-10-20 웹 검색으로 실재 확인. 본문은 옮기지 않고 요지만) ----------
 # kind = 출처 종류(연구 / 통념 / 실험 결과 / 이 저장소의 기록), strength = 근거 강도(낮음 / 보통 / 높음): 이 분야(지수·코인의 시계열)에 바로 맞는 정도
 [[fact]]
@@ -279,6 +288,16 @@ kind = "연구"
 strength = "보통"
 
 [[fact]]
+id = "F_lit_earnings_systematic"
+text = "실적을 발표하는 회사의 주식은 발표 기간에 시장 위험(베타)이 커지고 초과 수익이 컸다. 큰 회사들의 실적 발표는 시장 전체에 대한 정보를 담는다"
+checked = 2026-10-29
+source = "연구 — Savor, Wilson (2016), Earnings Announcements and Systematic Risk, Journal of Finance 71(1), 83–138, doi:10.1111/jofi.12361"
+url = "https://doi.org/10.1111/jofi.12361"
+kind = "연구"
+strength = "낮음"
+note = "2026-10-29 Crossref로 실재 확인. 개별 주식 연구라 지수 묶음의 움직임 크기에 바로 맞지는 않는다(강도 낮음)"
+
+[[fact]]
 id = "F_lit_pre_fomc"
 text = "미국 주식은 미국 중앙은행 금리 결정 발표 직전 24시간에 큰 초과 수익을 냈다(다른 나라 주가 지수도 비슷, 다른 경제 발표 전에는 없음)"
 checked = 2026-10-21
@@ -365,6 +384,20 @@ strength = "보통"
 check = ["research_direction"]
 seen_until = "2026-10-21"
 claims = [{ on = "move", dir = "up", when = "예", scope = "all", span = ["다음"], reason = "발표 때 새 정보가 몰려 흔들림이 커진다" }, { on = "up_odds", dir = "up", when = "예", scope = "equity", span = ["다음"], reason = "발표 위험을 지는 대가로 발표일 주식 수익이 컸다" }]
+
+[[hypothesis]]
+id = "Q_bigcap_earnings"
+text = "다음 하루 안에 지수의 큰 몫을 차지하는 종목의 실적 발표가 있으면 주식 묶음의 다음 날 움직임이 크다"
+source = "연구 — 실적 발표와 시장 위험 (F_lit_earnings_systematic); 이 저장소의 기록 — 2026-10-27·28 한국 묶음 하루 +3.38%·+7.59% (근거 1건)"
+reason = "지수가 몇 종목에 쏠려 있으면 그 종목의 실적이 곧 지수의 새 정보다. 정해진 날에 정보가 한꺼번에 들어오므로 그날 흔들림이 커진다. 금리·물가·고용만 보는 '큰 일정 직전'(Q_event_soon)은 이 날을 놓친다"
+read_by = "조사"
+conditions = ["S_q_bigcap_earnings"]
+evidence = ["F_lit_earnings_systematic"]
+strength = "낮음"
+check = ["research_direction"]
+seen_until = "2026-10-29"
+note = "2026-10-29 세움: 2026-10-28 손 예측(한국 묶음 1일)이 반도체 대형주 실적일에 크기 1.2–2.4%를 말했는데 +7.59%였다. 실적 날짜는 판단 때 알 수 있었다. 방향 주장은 하지 않는다(실적이 좋고 나쁨은 판단 때 모른다)"
+claims = [{ on = "move", dir = "up", when = "예", scope = "equity", span = ["다음"], reason = "지수 큰 몫 종목의 실적이 나오는 날 지수 흔들림이 커진다" }]
 
 [[hypothesis]]
 id = "H_hand_vs_calc"
