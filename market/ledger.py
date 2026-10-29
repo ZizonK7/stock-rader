@@ -18,6 +18,10 @@ from . import config as C
 from .prices import History, Row
 
 
+# 종목 1주 반올림 때 상한을 넘어도 되는 폭(계좌 대비). 1주가 비싼 종목을 아예 못 사는 일과, 상한을 크게 넘는 일 사이의 타협
+STOCK_SLACK = 0.05
+
+
 @dataclass
 class Order:
     id: str
@@ -107,7 +111,8 @@ class Account:
             (buys if diff > 0 else sells).append((a, diff))
         for a, diff in sells:
             spec = C.ASSETS[a]
-            q = min(units.get(a, 0), math.floor(-diff / prices[a] * spec.unit))
+            n = -diff / prices[a] * spec.unit
+            q = min(units.get(a, 0), round(n) if C.is_stock(a) else math.floor(n))
             if q > 0:
                 orders.append(Order(f"{self.id}:{run.isoformat()}:{a}", run, self.id, a, "sell", q, prices[a],
                                     (reasons or {}).get(a, ""), decided_at))
@@ -116,6 +121,14 @@ class Account:
             spec = C.ASSETS[a]
             spend = min(diff, max(cash, 0.0))
             q = math.floor(spend / (prices[a] * (1 + spec.fee)) * spec.unit)
+            if C.is_stock(a):
+                # 종목은 1주 값이 계좌의 몇 %나 되기도 한다(1주 150만 원 = 약 15%). 내림만 하면 목표 10%로는 영영 못 산다.
+                # 그래서 가까운 주 수로 맞춘다. 다만 그 종목이 상한 + 5%p를 넘게 되거나 현금이 모자라면 내림 그대로.
+                near = round(diff / prices[a])
+                after = (units.get(a, 0) + near) * prices[a] / total if total else 1.0
+                afford = math.floor(max(cash, 0.0) / (prices[a] * (1 + spec.fee)))
+                if near > q and near <= afford and after <= C.STOCK_MAX_WEIGHT + STOCK_SLACK:
+                    q = near
             if q > 0:
                 orders.append(Order(f"{self.id}:{run.isoformat()}:{a}", run, self.id, a, "buy", q, prices[a],
                                     (reasons or {}).get(a, ""), decided_at))

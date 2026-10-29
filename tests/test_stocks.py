@@ -185,6 +185,22 @@ class LedgerStocks(unittest.TestCase):
         self.assertIn("360750", line2["positions"])
         self.assertNotIn("005930", line2["prices"])
 
+    def test_expensive_stock_rounds_to_nearest_share_within_slack(self):
+        """1주가 계좌의 15%쯤인 종목: 목표 10%면 1주(가까운 주 수), 4%면 0주, 1주가 상한 + 5%p를 넘으면 안 산다."""
+        def qty(price, target):
+            acc = L.Account("live:hand")
+            orders = acc.plan(dt.date(2026, 7, 1), {"005930": target}, {"005930": price}, 0.02)
+            return orders[0].qty_units if orders else 0
+        self.assertEqual(qty(1_500_000.0, 0.10), 1)
+        self.assertEqual(qty(1_500_000.0, 0.04), 0)
+        self.assertEqual(qty(2_200_000.0, 0.15), 0)
+        self.assertEqual(qty(100_000.0, 0.10), 10)  # 싼 종목도 가까운 주 수
+        # 1주를 든 채 목표 10%면 반 주보다 작은 차이라 거래하지 않는다, 목표 0이면 다 판다
+        acc = L.Account("live:hand", cash=8_500_000, units={"069500": 0, "360750": 0, "KRW-BTC": 0, "005930": 1})
+        self.assertEqual(acc.plan(dt.date(2026, 7, 2), {"005930": 0.10}, {"005930": 1_500_000.0}, 0.02), [])
+        sell = acc.plan(dt.date(2026, 7, 2), {"005930": 0.0}, {"005930": 1_500_000.0}, 0.02)
+        self.assertEqual((sell[0].side, sell[0].qty_units), ("sell", 1))
+
     def test_lagging_unrelated_stock_does_not_block_settlement(self):
         days = [dt.date(2026, 7, 1) + dt.timedelta(days=i) for i in range(6)]
         etf = tuple(srow(d, 100, 100) for d in days if d.weekday() < 5)
