@@ -12,7 +12,7 @@ from market.prices import Row
 def series(asset: str, start: dt.date, end: dt.date, seed: int = 7, drift: float = 0.0003,
            vol: float = 0.012, price: float = 10000.0) -> tuple[Row, ...]:
     rng = random.Random(f"{asset}:{seed}")
-    etf = C.ASSETS[asset].kind == "etf"
+    etf = C.on_exchange(asset)
     rows, d, c = [], start, price
     while d <= end:
         if not (etf and d.weekday() >= 5):

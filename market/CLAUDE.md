@@ -5,7 +5,8 @@
 
 | 파일 | 하는 일 | 명령 (저장소 루트) |
 |---|---|---|
-| `config.py` | 대상·수수료·기간·시각·경로, 판단 시각(07:37 KST), 맞추기 끝 날짜(`FIT_UNTIL` 2026-06-30), 재생 기간, 대상의 성질(`TRAITS`), 진짜 계좌 id, 조사 조각 세운 날(`RESEARCH_SINCE`), 잡음 기준 | – |
+| `config.py` | 대상·수수료·기간·시각·경로, 판단 시각(07:37 KST), 맞추기 끝 날짜(`FIT_UNTIL` 2026-06-30), 재생 기간, 대상의 성질(`TRAITS`, 종목 `STOCK_TRAITS`), 진짜 계좌 id, 조사 조각 세운 날(`RESEARCH_SINCE`), 잡음 기준, 종목 장치(`STOCK_MAX_WEIGHT`·`STOCK_MAX_COUNT`). `ASSETS[코드]`는 종목 코드면 종목 명세를 만든다(반복·`in`에는 세 대상만) | – |
+| `stocks.py` | 종목 목록(`stocks.toml`) 읽기·검사·더하기, 종목 시세 받기(네이버 차트, 받은 이름 확인, 처음이면 최근 600줄) | `python -m market.stocks [add <코드> <이름> "<왜>"]` |
 | `prices.py` | 시세 받기(네이버·야후·업비트, 시간 제한 30초)·덧붙이기·읽기, `view`(그 시각에 끝나 있던 일봉만) | `python -m market.prices update / backfill / show` |
 | `records.py` | 기록 종류별 칸(있을 때만 보는 칸 `OPTIONAL` 포함), 쓰기(칸이 틀리면 아무것도 안 씀), 검사(칸·id·날짜 순서·git HEAD와 비교) | `python -m market.records check` |
 | `ledger.py` | 계좌: 목표 비중 → 주문, 체결(정산), 평가, 기록에서 되살리기(`rebuild`). `target_weight` = R_weights | – |
@@ -33,6 +34,7 @@
 - **손 예측 검사**(`hand.py`): 쓴 조각의 값은 그날 대 본 값과 같아야 하고, 크기 범위 폭 2배 이하, 이유·확신도 필수, 비중 합 1 이하. '잡음'은 움직임이 평소(60봉 하루 변동성 × √기간)의 0.25배보다 작을 때만.
 - **판단 때 가격**(결정 3): prepare가 07:37 업비트 현재가를 받아 run 기록과 briefing에 남기고, 주문 수량을 잡는 데 쓴다. 채점 기준(끝난 일봉 종가)은 그대로.
 - 예측 기록의 `predictor`: `calc` / `hand` / `version:<id>` / `baseline:half` / `baseline:base_rate`.
+- **개별 종목**(2026-10-29, 루트 CLAUDE.md '개별 종목'): 종목은 `config.is_stock`(6자리 코드, 세 대상 아님), kind `stock`, ETF와 같은 끝남·체결 시각(`config.on_exchange`). `daily.compute`가 목록 + 기록에 나온 종목의 시세를 읽어 정산·채점·평가하고, 손 계좌가 든 종목과 그날 입력에 나온 종목(focus)만 시세 대 보기·계산기('모름')·기준선 둘 줄을 쓴다(이전 버전 줄은 없음). 계산기 계좌·셋 나눠 사 두기는 세 대상만. 정산의 시간 순서는 세 대상 + 그 계좌가 기다리는 종목만 본다(다른 종목 시세가 늦어도 막히지 않게). 계좌 기록의 보유 칸에는 세 대상(늘)과 든 종목, 평가 가격에는 세 대상과 든·기다리는 종목. `hand.validate`가 종목 장치(상한·결론 조각·든 종목 매일 예측)와 종목마다 대 보는 조사 상태(`per_asset`, 입력 `stock_readings` → 기록 `hand_reading.by_asset`)를 검사한다. `checks`: 계산 조각 시험은 세 대상만, `research_direction`은 by_asset을 그 종목에 짝지음, audit는 종목 이름·코드를 조각 문장에서 막고 종목 조각(상한 3, scope single)을 따로 센다.
 
 ## 규칙
 - 모든 네트워크 호출에 시간 제한(`config.NET_TIMEOUT` 30초). 네이버는 User-Agent가 없으면 응답 없이 걸린다(`prices.UA`).
@@ -42,6 +44,6 @@
 - 기본 저장소에서 `daily`에 `--day`/`--at`을 쓰지 못한다(지난 날짜로 예측하지 않는다). 흉내 내기는 `--root <임시 폴더>`(`daily.copy_for_simulation`).
 
 ## 다른 폴더와의 관계
-- 읽음: `data/prices/*.csv`, `knowledge.toml`, `places.toml`, `versions/`, PROVISO-Nesy 코어(`PROVISO_PATH` 또는 형제 폴더 `../PROVISO-Nesy`).
-- 씀: `data/prices/`(prices update), `records/`(재생은 `records/replay/`, 진짜 계좌는 `daily record`), `reports/`(daily report), `knowledge.toml`의 계산 조각 구역(fit --write), `versions/`(versions save), `out/daily/<날짜>/`(prepare의 중간 파일, git 제외).
+- 읽음: `data/prices/*.csv`, `knowledge.toml`, `places.toml`, `stocks.toml`, `versions/`, PROVISO-Nesy 코어(`PROVISO_PATH` 또는 형제 폴더 `../PROVISO-Nesy`).
+- 씀: `data/prices/`(prices update, prepare의 종목 시세), `stocks.toml`(stocks add — 끝에 덧붙임), `records/`(재생은 `records/replay/`, 진짜 계좌는 `daily record`), `reports/`(daily report), `knowledge.toml`의 계산 조각 구역(fit --write), `versions/`(versions save), `out/daily/<날짜>/`(prepare의 중간 파일, git 제외).
 - 시험: `tests/`.

@@ -55,7 +55,12 @@ class Account:
 
     # ---------- 평가 ----------
     def value(self, prices: dict[str, float]) -> float:
-        return self.cash + sum(self.units[a] * prices[a] / C.ASSETS[a].unit for a in C.ASSET_IDS if a in prices)
+        return self.cash + sum(n * prices[a] / C.ASSETS[a].unit for a, n in self.units.items() if a in prices)
+
+    def held(self) -> set[str]:
+        """세 대상이 아닌 것 중 들고 있거나 체결을 기다리는 것(개별 종목)."""
+        return ({a for a, n in self.units.items() if n and a not in C.CORE}
+                | {o.asset for o in self.pending if o.asset not in C.CORE})
 
     def expected(self, prices: dict[str, float]) -> tuple[dict[str, int], float]:
         """체결 안 된 주문까지 더한 (예상 보유, 예상 현금). 가격은 판단 때 알려진 마지막 종가."""
@@ -65,17 +70,21 @@ class Account:
             a = C.ASSETS[o.asset]
             amount = o.qty_units * prices.get(o.asset, o.ref_price) / a.unit
             if o.side == "buy":
-                units[o.asset] += o.qty_units
+                units[o.asset] = units.get(o.asset, 0) + o.qty_units
                 cash -= amount * (1 + a.fee)
             else:
-                units[o.asset] -= o.qty_units
+                units[o.asset] = units.get(o.asset, 0) - o.qty_units
                 cash += amount * (1 - a.fee)
         return units, cash
 
     def record(self, run: dt.date, prices: dict[str, tuple[dt.date, float]]) -> dict:
+        # 보유 칸: 세 대상은 늘 적고(0이어도), 종목은 들고 있을 때만. 평가 가격: 세 대상 + 들고 있거나 기다리는 종목
+        keep = set(C.ASSET_IDS) | self.held()
+        prices = {a: v for a, v in prices.items() if a in keep}
         p = {a: v for a, (_, v) in prices.items()}
+        pos = {a: n for a, n in self.units.items() if a in C.CORE or n}
         return {"id": f"{self.id}:{run.isoformat()}", "run": run.isoformat(), "account": self.id, "cash": self.cash,
-                "positions": dict(self.units), "prices": {a: [d.isoformat(), v] for a, (d, v) in prices.items()},
+                "positions": pos, "prices": {a: [d.isoformat(), v] for a, (d, v) in prices.items()},
                 "value": round(self.value(p), 2), "pending": [o.id for o in self.pending]}
 
     # ---------- 주문 ----------
@@ -84,21 +93,21 @@ class Account:
              decided_at: dt.datetime | None = None) -> list[Order]:
         """목표 비중(대상 → 0~1, None은 그대로 둠)으로 주문을 낸다. 차이가 계좌의 band보다 작으면 거래하지 않는다."""
         units, cash = self.expected(prices)
-        total = cash + sum(units[a] * prices[a] / C.ASSETS[a].unit for a in C.ASSET_IDS if a in prices)
+        total = cash + sum(n * prices[a] / C.ASSETS[a].unit for a, n in units.items() if a in prices)
         orders: list[Order] = []
         sells, buys = [], []
         for a, w in targets.items():
             if w is None or a not in prices or prices[a] <= 0:
                 continue
             spec = C.ASSETS[a]
-            now = units[a] * prices[a] / spec.unit
+            now = units.get(a, 0) * prices[a] / spec.unit
             diff = w * total - now
             if abs(diff) < band * total:
                 continue
             (buys if diff > 0 else sells).append((a, diff))
         for a, diff in sells:
             spec = C.ASSETS[a]
-            q = min(units[a], math.floor(-diff / prices[a] * spec.unit))
+            q = min(units.get(a, 0), math.floor(-diff / prices[a] * spec.unit))
             if q > 0:
                 orders.append(Order(f"{self.id}:{run.isoformat()}:{a}", run, self.id, a, "sell", q, prices[a],
                                     (reasons or {}).get(a, ""), decided_at))
@@ -117,7 +126,9 @@ class Account:
     # ---------- 정산 ----------
     def settle(self, hists: dict[str, History], run: dt.date) -> list[dict]:
         """판단 시각에 알려진 일봉으로 체결할 수 있는 주문을 시간 순서대로 체결한다. 체결 기록 목록."""
-        cutoff = settle_cutoff(hists)
+        # 시간 순서를 지킬 대상: 세 대상 + 이 계좌가 체결을 기다리는 것(종목). 다른 종목의 시세가 늦어도 이 계좌는 기다리지 않는다
+        need = set(C.ASSET_IDS) | {o.asset for o in self.pending}
+        cutoff = settle_cutoff({a: h for a, h in hists.items() if a in need})
         ready = []
         for o in self.pending:
             row = fill_row(o, hists[o.asset])
@@ -137,8 +148,8 @@ class Account:
         price = getattr(row, spec.fill_field)
         q, note = o.qty_units, ""
         if o.side == "sell":
-            if q > self.units[o.asset]:
-                q, note = self.units[o.asset], "가진 만큼만 팖"
+            if q > self.units.get(o.asset, 0):
+                q, note = self.units.get(o.asset, 0), "가진 만큼만 팖"
             value = math.floor(q * price / spec.unit)
             fee = math.ceil(value * spec.fee)
             self.units[o.asset] -= q
@@ -154,7 +165,7 @@ class Account:
                     q -= 1
                 value, fee = cost(q)
                 note = "현금이 모자라 수량을 줄임"
-            self.units[o.asset] += q
+            self.units[o.asset] = self.units.get(o.asset, 0) + q
             self.cash -= value + fee
         return {"id": f"fill:{o.id}", "run": run.isoformat(), "account": self.id, "order": o.id, "asset": o.asset,
                 "side": o.side, "fill_date": row.date.isoformat(), "price": price, "qty_units": q, "value": value,
@@ -170,7 +181,7 @@ def fill_row(o: Order, hist: History) -> Row | None:
             if r.date >= o.run and C.fill_dt(spec, r.date) > o.decided_at:
                 return r
         return None
-    if C.ASSETS[o.asset].kind == "etf":
+    if C.on_exchange(o.asset):
         return hist.on_or_after(o.run)
     return hist.on(o.run)
 
@@ -206,6 +217,7 @@ def rebuild(account_id: str, accounts: list[dict], orders: list[dict]) -> Accoun
     last = mine[-1]
     acc.cash = last["cash"]
     acc.units = {a: int(last["positions"].get(a, 0)) for a in C.ASSET_IDS}
+    acc.units.update({a: int(n) for a, n in last["positions"].items() if a not in C.CORE and n})
     by_id = {o["id"]: o for o in orders if o["account"] == account_id}
     pend = [by_id[i] for i in last["pending"] if i in by_id]
     pend += [o for o in by_id.values() if o["run"] == last["run"] and o["id"] not in last["pending"]]

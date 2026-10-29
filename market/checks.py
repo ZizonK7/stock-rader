@@ -22,6 +22,7 @@ from . import fit as F
 from . import records as R
 from . import research as RS
 from . import scoring as S
+from . import stocks as ST
 from . import versions as V
 
 # 기본 출처: 출처 하나로만 판정하는 검사(2-튜플)에 붙는다. 진짜 계좌 기록만 보는 검사들이다.
@@ -38,6 +39,10 @@ MAX_PIECES = 8    # 장치(조각 수 상한): 살아 있는 계산 조각 수 (
 # 방향 시험(양쪽 5개 이상)에 몇 주가 걸리는데, 조각이 많으면 각 조각의 '예' 날이 흩어져 시험이 더 늦어지고, 메인이
 # 하루에 대 보는 수가 늘면 대 보기가 엉성해진다. 첫 묶음 4개 + 쪼갤 여유 2개.
 MAX_RESEARCH_PIECES = 6
+# 종목 조각 상한 3 (2026-10-29): 종목마다 대 보는 조사 조각(조건 상태에 per_asset = true)은 시장 전체 조각과 따로 센다.
+# 매일 모든 날이 아니라 든 종목·살 후보에만 묻고, 시장 조각의 쪼갤 여유(6 중 남은 몫)를 종목 조각이 먹지 않게 하려는 것.
+# 3은 손 계좌 종목 수 상한과 같다: 종목 하나에 조각 하나쯤이면 같은 날 대 보는 양이 시장 조각만큼에서 멈춘다.
+MAX_STOCK_PIECES = 3
 SPANS = dict(zip(C.HORIZON_LABEL, range(3)))   # 다음/1주/4주 → 기간 자리
 
 
@@ -49,9 +54,13 @@ def _raw() -> dict:
     return tomllib.loads(C.KNOWLEDGE.read_text(encoding="utf-8"))
 
 
-def _node(node_id: str) -> dict | None:
+def _raw_node(node_id: str) -> dict | None:
     raw = _raw()
     return next((h for h in raw.get("hypothesis", []) + raw.get("rule", []) if h.get("id") == node_id), None)
+
+
+def _node(node_id: str) -> dict | None:
+    return _raw_node(node_id)
 
 
 def _scored(folder: Path, keep) -> list[tuple[dict, dict]]:
@@ -115,7 +124,8 @@ def piece_direction(node_id: str):
         return "시험 전 (방향 주장이 없는 기준값 조각)", ""
     out = []
     for src, folder in _folders():
-        pairs = _scored(folder, lambda p: p["predictor"] == "calc" and p["base_date"] > cut)
+        # 종목(2026-10-29)은 빼다: 계산 조각 숫자는 세 대상에만 맞췄고 종목의 계산기는 '모름'이다
+        pairs = _scored(folder, lambda p: p["predictor"] == "calc" and p["base_date"] > cut and p["asset"] in C.CORE)
         if src == "replay" and not pairs:
             continue  # 세운 날이 재생 뒤면 재생 줄은 없다
         cells: dict = {}
@@ -137,7 +147,7 @@ def piece_size(node_id: str):
     cut = node.get("seen_until", "9999")
     out = []
     for src, folder in _folders():
-        rows = _scored(folder, lambda p: p["base_date"] > cut)
+        rows = _scored(folder, lambda p: p["base_date"] > cut and p["asset"] in C.CORE)
         if src == "replay" and not rows:
             continue
         base = {(p["run"], p["asset"], p["horizon"]): s for p, s in rows if p["predictor"] == "baseline:base_rate"}
@@ -185,12 +195,15 @@ def research_direction(node_id: str) -> tuple[str, str]:
     cut = node.get("seen_until", C.RESEARCH_SINCE)
     state = (node.get("conditions") or [None])[0]
     claims = node.get("claims", [])
-    readings = {h["run"]: h["values"] for h in R.read(C.RECORDS, "hand_reading")}
+    hrs = {h["run"]: h for h in R.read(C.RECORDS, "hand_reading")}
     cells: dict = {}
     for p, s in _scored(C.RECORDS, lambda p: p["predictor"] == "calc" and p["run"] > cut):
-        vals = readings.get(p["run"])
-        if vals is None:
+        h = hrs.get(p["run"])
+        if h is None:
             continue
+        # 종목마다 대 본 값(by_asset)은 그 종목에만 (2026-10-29). 종목의 결과는 그날 종목 계산기('모름') 줄의 채점에서 온다
+        by = (h.get("by_asset") or {}).get(p["asset"], {})
+        vals = {**h["values"], **{k: v["value"] if isinstance(v, dict) else v for k, v in by.items()}}
         hz = C.ASSETS[p["asset"]].horizons.index(p["horizon"])
         for c in claims:
             if not C.in_scope(p["asset"], c.get("scope")):
@@ -249,7 +262,8 @@ CHECKS = {"piece_direction": piece_direction, "piece_size": piece_size, "account
 
 # ---------- 점검 (audit의 분야 점검) ----------
 def _names_in(text: str) -> list[str]:
-    return [w for w in C.ASSET_WORDS if re.search(re.escape(w), text, re.IGNORECASE)]
+    words = C.ASSET_WORDS + ST.name_words()  # 종목 이름·코드도 조각 문장에 쓰지 않는다(2026-10-29)
+    return [w for w in words if re.search(re.escape(w), text, re.IGNORECASE)]
 
 
 def is_research(node) -> bool:
@@ -265,6 +279,15 @@ def audit(kn, want: dict[str, list[dict]] | None = None) -> tuple[list[str], lis
     alive = [n for n in kn.claims(alive_only=True) if n.data.get("claims")]
     live = [n for n in alive if not is_research(n)]
     research = [n for n in alive if is_research(n)]
+    per_asset = {s.id for s in kn.of("state") if s.data.get("per_asset")}
+    stock_pieces = [n for n in research if (n.refs("conditions") or [None])[0] in per_asset]
+    research = [n for n in research if n not in stock_pieces]
+    if len(stock_pieces) > MAX_STOCK_PIECES:
+        errors.append(f"[종목 조각] 살아 있는 종목 조각 {len(stock_pieces)}개가 상한 {MAX_STOCK_PIECES}개를 넘음")
+    for n in stock_pieces:
+        for c in n.data.get("claims", []):
+            if c.get("scope") != "single":
+                errors.append(f"[종목 조각] {n.id}: 종목마다 대 보는 조각의 주장은 scope = \"single\"(한 회사 주식)이어야 함")
     if len(live) > MAX_PIECES:
         errors.append(f"[계산 조각] 살아 있는 조각 {len(live)}개가 상한 {MAX_PIECES}개를 넘음 — 외워서 맞추는 쪽이다")
     if len(research) > MAX_RESEARCH_PIECES:
@@ -289,7 +312,8 @@ def audit(kn, want: dict[str, list[dict]] | None = None) -> tuple[list[str], lis
             seen.add(key)
         if not node.data.get("effect"):
             warns.append(f"[계산 조각] {node.id}: 세운 효과가 하나도 없음 — 모든 대상·기간에서 맞춘 시세가 방향을 받쳐 주지 않았다(not_set)")
-    errors += _research_errors(kn, research)
+    errors += _research_errors(kn, research + stock_pieces)
+    errors += ST.check(ST.load())
     errors += V.check()
     errors += RS.check_places(RS.load_places(), {s.id for s in kn.of("state")})
     if want is None:

@@ -186,10 +186,10 @@ def parse_yahoo(data: dict, fetched_at: str) -> list[Row]:
     return out
 
 
-def fetch_yahoo(symbol: str, start: dt.date) -> list[Row]:
+def fetch_yahoo(symbol: str, start: dt.date, suffix: str = ".KS") -> list[Row]:
     p1 = int(dt.datetime.combine(start, dt.time(), C.KST).timestamp())
     p2 = int(C.now_kst().timestamp())
-    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}.KS?period1={p1}&period2={p2}"
+    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}{suffix}?period1={p1}&period2={p2}"
            f"&interval=1d&events=history")
     return parse_yahoo(json.loads(_get(url)), C.now_kst().isoformat(timespec="seconds"))
 
@@ -241,7 +241,7 @@ def fetch_recent(asset_id: str, count: int = 40) -> list[Row]:
         return fetch_naver(asset_id, count)
     except Exception as exc:  # 보조 출처
         print(f"[{asset_id}] 네이버 실패({exc}) → 야후로", file=sys.stderr)
-        return fetch_yahoo(asset_id, dt.date.today() - dt.timedelta(days=count * 2))
+        return fetch_yahoo(asset_id, dt.date.today() - dt.timedelta(days=count * 2), asset.yahoo_suffix)
 
 
 def fetch_history(asset_id: str) -> list[Row]:
@@ -252,7 +252,7 @@ def fetch_history(asset_id: str) -> list[Row]:
         return fetch_naver(asset_id, 10000)  # 네이버는 최대 3,000줄을 준다
     except Exception as exc:
         print(f"[{asset_id}] 네이버 실패({exc}) → 야후로", file=sys.stderr)
-        return fetch_yahoo(asset_id, dt.date(2000, 1, 1))
+        return fetch_yahoo(asset_id, dt.date(2000, 1, 1), asset.yahoo_suffix)
 
 
 def backfill(asset_id: str, folder: Path | None = None, now: dt.datetime | None = None) -> int:

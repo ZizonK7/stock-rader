@@ -10,6 +10,10 @@
   쓴 조각은 '조각 id=값'이고 값은 그날 대 본 값과 같아야 한다(조사 조각은 손 대 보기, 계산 조각은 시세 대 보기).
   결론을 바꾼 조각(decisive)은 쓴 조각 안에서.
 - 목표 비중: 0~1, 합 1 이하, 대상마다 이유.
+- 종목(2026-10-29): 손 계좌가 든 종목은 매일 손 예측 셋과 비중을 낸다(팔려면 0). 목표 > 0이면 손 예측 셋이 있고, 1주
+  오를 확률 > 0.5이고, 1주 예측에 결론 조각(decisive)이 있어야 한다(이유 없이 사지 않는다). 한 종목 상한
+  config.STOCK_MAX_WEIGHT, 종목 수 상한 config.STOCK_MAX_COUNT. 종목마다 대 보는 조사 상태(per_asset)는 stock_readings에
+  종목마다 값을 적고, 그 조각을 쓴 손 예측의 값은 그 종목의 값과 같아야 한다.
 - 돌아보기: 기한이 된 손 예측(한 번만 세는 것)마다. 까닭 낱말, 틀렸는데 '맞음' 금지, '잡음'은 코드가 잡음이라 본 것만,
   조건 흐림·이유 틀림·바깥 상황·대 보기 틀림이면 틀린 조각·상태 id.
 - 대 보기 다시 보기: 다시 볼 차례인 것만.
@@ -34,15 +38,32 @@ def load_input(path: Path) -> dict:
 
 
 def _piece_index(raw: dict) -> dict[str, dict]:
-    """살아 있는 조각 id → {'state': 첫 조건 상태, 'research': bool}. 기준값 조각(조건 없음)은 state None."""
+    """살아 있는 조각 id → {'state': 첫 조건 상태, 'research': bool, 'per_asset': 종목마다 대 보는 상태인가}.
+    기준값 조각(조건 없음)은 state None."""
+    per_asset = {st["id"] for st in raw.get("state", []) if st.get("per_asset")}
     out = {}
     for h in raw.get("hypothesis", []) + raw.get("rule", []):
         if h.get("status", "hypothesis") == "retired" or not h.get("claims"):
             continue
         conds = h.get("conditions") or []
         out[h["id"]] = {"state": conds[0] if conds else None, "research": h.get("read_by") == "조사",
+                        "per_asset": bool(conds) and conds[0] in per_asset,
                         "scope": [c.get("scope", "all") for c in h.get("claims", [])]}
     return out
+
+
+def _reading_errors(where: str, r, *, need_place: bool = True) -> list[str]:
+    if not isinstance(r, dict):
+        return [f"{where}: 대 보기가 없음 (모르면 value = \"모름\"과 이유)"]
+    errs = []
+    v = r.get("value")
+    if v is None or (isinstance(v, str) and not v.strip()):
+        errs.append(f"{where}: value가 비었음 (예/아니오/일부/모름 또는 값)")
+    if not str(r.get("why", "")).strip():
+        errs.append(f"{where}: why(이유)가 비었음")
+    if need_place and str(v) != "모름" and not r.get("places"):
+        errs.append(f"{where}: 값을 정했으면 쓴 볼 곳(places)이 있어야 함")
+    return errs
 
 
 def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
@@ -68,29 +89,36 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
     # 손 대 보기
     readings = inp.get("readings", {})
     for st in ctx["research_states"]:
-        r = readings.get(st)
-        if not isinstance(r, dict):
-            errs.append(f"readings: 조사 상태 '{st}'의 대 보기가 없음 (모르면 value = \"모름\"과 이유)")
-            continue
-        v = r.get("value")
-        if v is None or (isinstance(v, str) and not v.strip()):
-            errs.append(f"readings.{st}: value가 비었음 (예/아니오/일부/모름 또는 값)")
-        if not str(r.get("why", "")).strip():
-            errs.append(f"readings.{st}: why(이유)가 비었음")
-        if str(v) != "모름" and not r.get("places"):
-            errs.append(f"readings.{st}: 값을 정했으면 쓴 볼 곳(places)이 있어야 함")
+        errs += _reading_errors(f"readings.{st}", readings.get(st))
     for st in readings:
         if st not in ctx["research_states"]:
-            errs.append(f"readings: '{st}'는 살아 있는 조사 조각의 상태가 아님")
+            errs.append(f"readings: '{st}'는 살아 있는 조사 조각의 (시장 전체) 상태가 아님"
+                        + (" — 종목마다 대 보는 상태는 stock_readings에" if st in ctx.get("stock_states", []) else ""))
+    stocks = list(ctx.get("stocks", []))
+    stock_states = list(ctx.get("stock_states", []))
+    stock_readings = inp.get("stock_readings") or {}
+    for a, rs in stock_readings.items():
+        if a not in stocks:
+            errs.append(f"stock_readings: '{a}'는 오늘 쓸 수 있는 종목이 아님")
+            continue
+        for st in rs:
+            if st not in stock_states:
+                errs.append(f"stock_readings.{a}: '{st}'는 종목마다 대 보는 조사 상태가 아님")
+        for st in stock_states:
+            errs += _reading_errors(f"stock_readings.{a}.{st}", rs.get(st))
+    valid = list(ctx["predictable"]) + stocks
 
     # 손 예측
     seen = set()
     for i, h in enumerate(inp.get("hand", [])):
         w = f"hand[{i}]"
         a, hz = h.get("asset"), h.get("horizon")
-        if a not in ctx["predictable"]:
-            errs.append(f"{w}: 대상 '{a}'는 오늘 예측할 수 있는 대상이 아님 ({', '.join(ctx['predictable']) or '없음'})")
+        if a not in valid:
+            errs.append(f"{w}: 대상 '{a}'는 오늘 예측할 수 있는 대상이 아님 (세 대상 {', '.join(ctx['predictable']) or '없음'}"
+                        f"; 종목은 stocks.toml에 있고 시세가 낡지 않은 것 — briefing '종목')")
             continue
+        if a in stocks and stock_states and a not in stock_readings:
+            errs.append(f"{w}: 종목 {a}의 stock_readings가 없음 (종목마다 대 보는 조사 상태 {', '.join(stock_states)}; 모르면 '모름'과 이유)")
         if hz not in C.ASSETS[a].horizons:
             errs.append(f"{w}: 기간 {hz}은 {C.ASSETS[a].horizons} 중 하나")
             continue
@@ -122,8 +150,15 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
             used[pid] = val
             if info["state"] is None:
                 continue  # 기준값
-            today = (readings.get(info["state"], {}).get("value") if info["research"]
-                     else ctx["calc_values"].get(a, {}).get(info["state"]))
+            if info["per_asset"]:
+                if a not in stocks:
+                    errs.append(f"{w}: '{pid}'는 종목마다 대 보는 조각이라 종목에만 쓴다")
+                    continue
+                today = ((stock_readings.get(a) or {}).get(info["state"]) or {}).get("value")
+            elif info["research"]:
+                today = readings.get(info["state"], {}).get("value")
+            else:
+                today = ctx["calc_values"].get(a, {}).get(info["state"])
             if str(today) != val:
                 errs.append(f"{w}: '{pid}={val}'인데 오늘 대 본 값은 '{today}' — 쓴 조각의 값은 그날 대 본 값과 같아야 한다")
             if info["research"] and not any(C.in_scope(a, s) for s in info["scope"]):
@@ -131,15 +166,21 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
         for d in h.get("decisive", []):
             if str(d).partition("=")[0] not in used:
                 errs.append(f"{w}: decisive '{d}'는 used에 없음 (빼면 결론이 바뀌는 조각만, 쓴 조각 안에서)")
-    for a in ctx["predictable"]:
+    weights = inp.get("weights") or {}
+    held = list(ctx.get("held", []))
+    targeted = [a for a, wgt in weights.items() if a in stocks and isinstance(wgt, dict)
+                and isinstance(wgt.get("target"), (int, float)) and wgt["target"] > 0]
+    for a in list(ctx["predictable"]) + sorted(set(held) | set(targeted)):
         for hz in C.ASSETS[a].horizons:
             if (a, hz) not in seen:
-                errs.append(f"hand: {a}:{hz} 예측이 없음 (모르면 p_up = null과 이유)")
+                why = "모르면 p_up = null과 이유" if a in ctx["predictable"] else (
+                    "든 종목은 매일 예측한다" if a in held else "사려는 종목은 기간 셋을 다 예측한다")
+                errs.append(f"hand: {a}:{hz} 예측이 없음 ({why})")
 
     # 목표 비중
     total = 0.0
-    for a, wgt in (inp.get("weights") or {}).items():
-        if a not in ctx["predictable"]:
+    for a, wgt in weights.items():
+        if a not in valid:
             errs.append(f"weights: '{a}'는 오늘 주문할 수 있는 대상이 아님")
             continue
         t = wgt.get("target") if isinstance(wgt, dict) else None
@@ -151,6 +192,26 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
             errs.append(f"weights.{a}: 이유(reason)가 없음")
     if total > 1 + 1e-9:
         errs.append(f"weights: 비중 합 {total:.3f} > 1 — 빚을 내서 사지 않는다")
+    # 종목 장치
+    for a in held:
+        if a not in weights:
+            errs.append(f"weights: 든 종목 {a}가 없음 — 든 종목도 매일 비중을 다시 정한다(팔려면 target 0)")
+    hand_by = {(h.get("asset"), h.get("horizon")): h for h in inp.get("hand", []) if isinstance(h, dict)}
+    for a in targeted:
+        t = weights[a]["target"]
+        if t > C.STOCK_MAX_WEIGHT + 1e-9:
+            errs.append(f"weights.{a}: 종목 하나의 비중 {t} > 상한 {C.STOCK_MAX_WEIGHT} (한 회사 주식은 흔들림이 2~3배)")
+        if a not in held and a not in ctx.get("buyable", stocks):
+            errs.append(f"weights.{a}: 더 사지 않기로 한 종목(stocks.toml buy = false)")
+        wk = hand_by.get((a, C.ASSETS[a].horizons[1]))
+        if wk is not None:
+            p = wk.get("p_up")
+            if not (isinstance(p, (int, float)) and p > 0.5):
+                errs.append(f"weights.{a}: 종목을 들려면 1주 오를 확률이 0.5보다 커야 함(지금 {p}) — 모르면 종목 대신 묶음을 든다")
+            if not wk.get("decisive"):
+                errs.append(f"weights.{a}: 종목을 들려면 1주 예측에 결론 조각(decisive)이 있어야 함 — 조각에 묶인 판단만 채점·쪼개기가 된다")
+    if len(targeted) > C.STOCK_MAX_COUNT:
+        errs.append(f"weights: 종목 {len(targeted)}개 > 상한 {C.STOCK_MAX_COUNT}개")
 
     # 돌아보기
     got = set()
@@ -230,13 +291,18 @@ def lines(inp: dict, ctx: dict, digest: str, base: dict[str, dict]) -> dict[str,
         line.pop("kind")
         out["research"].append(line)
     readings = inp.get("readings", {})
-    if readings:
-        out["hand_reading"].append({
+    stock_readings = inp.get("stock_readings") or {}
+    if readings or stock_readings:
+        line = {
             "id": f"hand_reading:{day}", "run": day,
             "values": {k: v["value"] for k, v in readings.items()},
             "why": {k: v["why"] for k, v in readings.items()},
             "places": {k: list(v.get("places", [])) for k, v in readings.items()},
-            "research": [r["id"] for r in out["research"]]})
+            "research": [r["id"] for r in out["research"]]}
+        if stock_readings:  # 종목마다 대 본 값 (2026-10-29): 종목 → 상태 → {value, why, places}
+            line["by_asset"] = {a: {st: {"value": r["value"], "why": str(r["why"]), "places": list(r.get("places", []))}
+                                    for st, r in rs.items()} for a, rs in stock_readings.items()}
+        out["hand_reading"].append(line)
     hand_values = {k: v["value"] for k, v in readings.items()}
     for h in inp.get("hand", []):
         a, hz = h["asset"], h["horizon"]
@@ -244,7 +310,8 @@ def lines(inp: dict, ctx: dict, digest: str, base: dict[str, dict]) -> dict[str,
             "id": f"{day}:hand:{a}:{hz}", "run": day, "predictor": "hand", "asset": a, "horizon": hz,
             **base[a], "p_up": h.get("p_up"),
             "p_range": None, "size_lo": h.get("size_lo"), "size_hi": h.get("size_hi"),
-            "readings": {**ctx["calc_values"].get(a, {}), **hand_values},
+            "readings": {**ctx["calc_values"].get(a, {}), **hand_values,
+                         **{st: r["value"] for st, r in (stock_readings.get(a) or {}).items()}},
             "used": list(h.get("used", [])), "decisive": list(h.get("decisive", [])),
             "reason": str(h["reason"]), "knowledge": digest, "confidence": h["confidence"]})
     for rv in inp.get("reviews", []):

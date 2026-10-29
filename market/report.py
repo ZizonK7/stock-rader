@@ -18,6 +18,7 @@ from . import config as C
 from . import records as R
 from . import research as RS
 from . import scoring as S
+from . import stocks as ST
 
 MARK = "[[채울 것"
 DISCLAIM = "실제 돈이 아닌 가상 투자 실험이며 투자 권유가 아니다."
@@ -42,13 +43,19 @@ def pct(x: float) -> str:
 
 def units_text(asset: str, units: int) -> str:
     spec = C.ASSETS[asset]
-    return f"{units}주" if spec.kind == "etf" else f"{units / spec.unit:.8f}개"
+    return f"{units}주" if C.on_exchange(asset) else f"{units / spec.unit:.8f}개"
+
+
+def asset_label(asset: str) -> str:
+    """표·글 속 이름. 종목은 이름 뒤에 '(종목)'을 붙여 묶음 상품과 구별한다."""
+    return f"{C.ASSETS[asset].name}(종목)" if C.is_stock(asset) else C.ASSETS[asset].name
 
 
 class Book:
     """한 기록 폴더를 읽어 날짜별 계좌·체결·주문·채점을 꺼내는 도우미."""
 
     def __init__(self, folder: Path):
+        ST.register(folder.parent / "stocks.toml")  # 종목 이름 (기록 폴더의 저장소 루트)
         self.recs = {k: R.read(folder, k) for k in R.FIELDS}
         self.acc = defaultdict(dict)  # 계좌 → 날짜 → 기록
         for a in self.recs["account"]:
@@ -99,12 +106,13 @@ def daily(folder: Path, day: dt.date) -> str:
     if orders:
         parts = []
         for side, verb in (("buy", "사는"), ("sell", "파는")):
-            mine = [f"{C.ASSETS[o['asset']].name} {won_about(o['qty_units'] * o['ref_price'] / C.ASSETS[o['asset']].unit)}어치"
+            mine = [f"{asset_label(o['asset'])} {won_about(o['qty_units'] * o['ref_price'] / C.ASSETS[o['asset']].unit)}어치"
                     for o in orders if o["side"] == side]
             if mine:
                 parts.append(", ".join(mine) + f"를 {verb} 주문")
+        kinds = "ETF·종목은" if any(C.is_stock(o["asset"]) for o in orders) else "ETF는"
         first = ("오늘 " + "과 ".join(parts) + "을 냈다(값은 주문 뒤 처음 정해지는 공식 가격으로 치른다:"
-                 " 비트코인은 다음 09:00 시가, ETF는 장 마감 가격).")
+                 f" 비트코인은 다음 09:00 시가, {kinds} 장 마감 가격).")
     else:
         first = "오늘은 거래하지 않았다."
     v = me["value"]
@@ -126,7 +134,7 @@ def daily(folder: Path, day: dt.date) -> str:
     for p in hands:
         if p["horizon"] == C.ASSETS[p["asset"]].horizons[1]:
             rec = ", ".join(f"'{d}' {piece_record(b, d.partition('=')[0])}" for d in p["decisive"]) or "결론 조각 없음"
-            ref_why.append(f"{C.ASSETS[p['asset']].name} 1주 오를 확률 {p['p_up']}, 확신 {p.get('confidence', '?')}, {rec}")
+            ref_why.append(f"{asset_label(p['asset'])} 1주 오를 확률 {p['p_up']}, 확신 {p.get('confidence', '?')}, {rec}")
     reviews = [r for r in b.recs["review"] if r["run"] == run]
     good = [f"{r['prediction']}: {r['reason']}" for r in reviews if r["why"] == "맞음"]
     bad = [f"{r['prediction']}: {r['why']}, 틀린 조각 {', '.join(r['wrong']) or '–'} — {r['reason']}" for r in reviews
@@ -155,6 +163,16 @@ def daily(folder: Path, day: dt.date) -> str:
         cum = val - b.invested("live:hand", a, run)
         lines.append(f"| {C.ASSETS[a].name} | {units_text(a, me['positions'].get(a, 0))} | {won(val, False)} | "
                      f"{won(today)} | {won(cum)} |")
+    # 종목 (2026-10-29): 오늘 들고 있거나, 어제 들었거나, 오늘 체결된 것. 오늘 = 오늘 평가액 − 어제 평가액 − 오늘 체결 순투자
+    shown = sorted({a for a in [*me["positions"], *(pa["positions"] if pa else {})] if C.is_stock(a)}
+                   | {f["asset"] for f in b.recs["fill"] if f["account"] == "live:hand" and f["run"] == run and C.is_stock(f["asset"])})
+    for a in shown:
+        val = asset_value(me, a)
+        v0 = asset_value(pa, a) if pa else 0.0
+        today = val - v0 - b.invested("live:hand", a, run, since=prev or "")
+        cum = val - b.invested("live:hand", a, run)
+        lines.append(f"| {asset_label(a)} | {units_text(a, me['positions'].get(a, 0))} | {won(val, False)} | "
+                     f"{won(today)} | {won(cum)} |")
     lines.append(f"| 현금 | | {won(me['cash'], False)} | | |")
     d_me = v - pa["value"] if pa else 0.0
     lines.append(f"| **계좌 합계** | | **{won(v, False)}** | {won(d_me)} ({pct(d_me / pa['value']) if pa else '+0.00%'}) | "
@@ -172,10 +190,13 @@ def daily(folder: Path, day: dt.date) -> str:
     if waiting:
         # 체결은 그 가격의 일봉이 끝난 뒤 실행에서 정산된다(코인 D+2, ETF 대개 D+3) — 그때까지 표의 보유는 그대로다.
         lines += ["", "체결을 기다리는 주문(값이 확정되는 날 실행에서 표에 들어간다): " + ", ".join(
-            f"{C.ASSETS[o['asset']].name} {won_about(o['qty_units'] * o['ref_price'] / C.ASSETS[o['asset']].unit)}어치 "
+            f"{asset_label(o['asset'])} {won_about(o['qty_units'] * o['ref_price'] / C.ASSETS[o['asset']].unit)}어치 "
             f"{'사기' if o['side'] == 'buy' else '팔기'}({int(o['run'][5:7])}월 {int(o['run'][8:])}일 주문)" for o in waiting) + "."]
-    lines += ["", f"평가 가격은 07:37에 알려진 마지막 끝난 종가다({', '.join(f'{C.ASSETS[a].name} {d}' for a, (d, _) in me['prices'].items())})."
-              " 수수료 가정(ETF 0.015%, 업비트 0.05%)을 넣었고 세금은 계산하지 않았다.", ""]
+    has_stock = bool(shown) or any(C.is_stock(o["asset"]) for o in waiting)
+    fee = "ETF·종목 0.015%" if has_stock else "ETF 0.015%"
+    tax = "세금(종목을 팔 때의 거래세 포함)" if has_stock else "세금"
+    lines += ["", f"평가 가격은 07:37에 알려진 마지막 끝난 종가다({', '.join(f'{asset_label(a)} {d}' for a, (d, _) in me['prices'].items())})."
+              f" 수수료 가정({fee}, 업비트 0.05%)을 넣었고 {tax}은 계산하지 않았다.", ""]
     # 링크 전체 목록은 블로그 글에서 본문보다 길어진다(2026-10-21). 근거로 쓴 링크는 '왜'에 달고, 나머지는 기록을 가리킨다.
     srcs = {lk["url"] for r in research for lk in r["looked"] if lk["result"] in ("찾음", "늦음") and lk.get("url")}
     lines.append("출처: 시세 — 네이버 차트·업비트 공개 API. 조사 — " + (
@@ -220,22 +241,25 @@ def weekly(folder: Path, day: dt.date, places_path: Path | None = None) -> str:
     runs = sorted(r for r in b.acc["live:hand"] if r < mon)
     s_acc = b.acc["live:hand"][runs[-1]] if runs else None
     best = []
-    for a in C.ASSET_IDS:
+    week_stocks = sorted({a for acc in (me, s_acc) if acc for a in acc["positions"] if C.is_stock(a)}
+                         | {f["asset"] for f in b.recs["fill"] if f["account"] == "live:hand" and mon <= f["run"] <= run
+                            and C.is_stock(f["asset"])})
+    for a in [*C.ASSET_IDS, *week_stocks]:
         if not me:
             break
         v1 = asset_value(me, a)
         v0 = asset_value(s_acc, a) if s_acc else 0.0
         pnl = v1 - v0 - b.invested("live:hand", a, run, since=runs[-1] if runs else "")
         best.append((pnl, a))
-        lines.append(f"| {C.ASSETS[a].name} | {won(pnl)} | {won(v1, False)} |")
+        lines.append(f"| {asset_label(a)} | {won(pnl)} | {won(v1, False)} |")
     if best:
         hi, lo = max(best), min(best)
-        lines.append(f"\n가장 많이 번 것: {C.ASSETS[hi[1]].name} ({won(hi[0])}), 가장 많이 잃은 것: {C.ASSETS[lo[1]].name} ({won(lo[0])})")
+        lines.append(f"\n가장 많이 번 것: {asset_label(hi[1])} ({won(hi[0])}), 가장 많이 잃은 것: {asset_label(lo[1])} ({won(lo[0])})")
     lines += ["", "## 3. 이번 주 거래와 근거"]
     week_orders = [o for o in b.recs["order"] if o["account"] == "live:hand" and mon <= o["run"] <= run]
     for o in week_orders:
         amt = o["qty_units"] * o["ref_price"] / C.ASSETS[o["asset"]].unit
-        lines.append(f"- {o['run']} {C.ASSETS[o['asset']].name} {'샀다' if o['side'] == 'buy' else '팔았다'} {won_about(amt)}"
+        lines.append(f"- {o['run']} {asset_label(o['asset'])} {'샀다' if o['side'] == 'buy' else '팔았다'} {won_about(amt)}"
                      f" — {o['reason']}")
     if not week_orders:
         lines.append("- 거래 없음")

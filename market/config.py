@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,14 +39,46 @@ class Asset:
     # 체결: ETF는 판단일과 같거나 뒤인 첫 거래일 종가(15:30), 코인은 판단일 일봉(09:00 시작)의 시가
     fill_field: str     # "close" | "open"
     fill_time: dt.time
+    yahoo_suffix: str = ".KS"  # 야후 보조 출처의 시장 꼬리(코스피 .KS, 코스닥 .KQ). 코인은 쓰지 않는다
 
 
-ASSETS: dict[str, Asset] = {
+# 개별 종목(2026-10-29): 한국 거래소에 상장된 한 회사 주식. 코드는 6자리(숫자·대문자). 목록은 저장소 루트 stocks.toml
+# (market/stocks.py). 값은 ETF와 같은 네이버 차트에서 원화로 받고, 체결·끝남 시각도 ETF와 같다(15:30 종가, 16:00에 끝남).
+# 수수료는 ETF와 같은 0.015%를 가정한다. 팔 때의 증권거래세는 세금이라 계산하지 않는다(설계 '세금 제외'와 같다).
+STOCK_CODE = re.compile(r"[0-9][0-9A-Z]{5}")
+STOCK_FEE = 0.00015
+STOCK_NAMES: dict[str, str] = {}     # 코드 → 이름 (stocks.register가 채운다; 사람용, 조각에는 쓰지 않는다)
+STOCK_SUFFIX: dict[str, str] = {}    # 코드 → 야후 꼬리
+
+
+def is_stock(asset_id: str) -> bool:
+    """개별 종목인가 (세 대상이 아니고 종목 코드 꼴)."""
+    return asset_id not in CORE and bool(STOCK_CODE.fullmatch(str(asset_id)))
+
+
+class _Assets(dict):
+    """세 대상은 dict에 들어 있고, 종목 코드는 찾을 때 만든다(목록·반복에는 세 대상만 나온다 — ASSET_IDS와 같다).
+    `in`·get은 세 대상만 본다: 계산 조각의 효과 대상 검사 등은 종목을 받지 않는다."""
+
+    def __missing__(self, key: str) -> "Asset":
+        if not is_stock(key):
+            raise KeyError(key)
+        return Asset(key, STOCK_NAMES.get(key, key), "stock", STOCK_FEE, 1, (1, 5, 20), 0, dt.time(16, 0), "close",
+                     dt.time(15, 30), STOCK_SUFFIX.get(key, ".KS"))
+
+
+CORE: dict[str, Asset] = {
     "069500": Asset("069500", "KODEX 200", "etf", 0.00015, 1, (1, 5, 20), 0, dt.time(16, 0), "close", dt.time(15, 30)),
     "360750": Asset("360750", "TIGER 미국S&P500", "etf", 0.00015, 1, (1, 5, 20), 0, dt.time(16, 0), "close", dt.time(15, 30)),
     "KRW-BTC": Asset("KRW-BTC", "비트코인(업비트)", "coin", 0.0005, 100_000_000, (1, 7, 28), 1, dt.time(9, 0, 30), "open", dt.time(9, 0)),
 }
-ASSET_IDS = tuple(ASSETS)
+ASSET_IDS = tuple(CORE)
+ASSETS: dict[str, Asset] = _Assets(CORE)
+
+
+def on_exchange(asset_id: str) -> bool:
+    """거래소에서 거래일에만 일봉이 나오는 것(ETF·종목). 주말을 건너뛰고, 받았는데 없으면 휴장으로 본다."""
+    return ASSETS[asset_id].kind in ("etf", "stock")
 
 # 대상 이름에 쓰이는 낱말. 조각 id·문장에 나오면 audit 오류 (조각은 다른 대상·분야에서 다시 쓴다)
 ASSET_WORDS = ("KODEX", "TIGER", "069500", "360750", "KRW-BTC", "BTC", "비트코인", "코인", "S&P", "코스피", "KOSPI",
@@ -59,8 +92,16 @@ TRAITS: dict[str, tuple[str, ...]] = {
     "360750": ("equity", "priced_abroad"),
     "KRW-BTC": ("priced_abroad", "no_cashflow"),
 }
-TRAIT_LABEL = {"all": "모든 대상", "equity": "주식 묶음", "home": "국내에서 원화로 값이 정해지는 것",
-               "priced_abroad": "해외에서 외화로 값이 정해지는 것", "no_cashflow": "현금흐름이 없는 것"}
+# 종목: 주식이고 국내에서 원화로 값이 정해지며, 한 회사 주식이다(single). 주식 묶음(equity)에 걸리는 조사 조각 주장은
+# 종목에도 걸린다 — 한국 종목은 한국 묶음과 같이 움직이는 몫이 크다. 한 회사에만 걸리는 주장은 scope = "single".
+STOCK_TRAITS = ("equity", "home", "single")
+TRAIT_LABEL = {"all": "모든 대상", "equity": "주식(묶음·종목)", "home": "국내에서 원화로 값이 정해지는 것",
+               "priced_abroad": "해외에서 외화로 값이 정해지는 것", "no_cashflow": "현금흐름이 없는 것",
+               "single": "한 회사 주식(종목)"}
+
+
+def traits(asset: str) -> tuple[str, ...]:
+    return TRAITS.get(asset) or (STOCK_TRAITS if is_stock(asset) else ())
 
 
 def in_scope(asset: str, scope: str | list | tuple | None) -> bool:
@@ -68,11 +109,18 @@ def in_scope(asset: str, scope: str | list | tuple | None) -> bool:
     if not scope or scope == "all":
         return True
     names = [scope] if isinstance(scope, str) else list(scope)
-    return any(n == "all" or n in TRAITS[asset] for n in names)
+    return any(n == "all" or n in traits(asset) for n in names)
 
 
 # 진짜 계좌 (2단계, 매일 예약 실행): 손 예측이 비중을 정하는 계좌와 계산기(R_weights) 계좌, 기준선 둘
 LIVE_ACCOUNTS = ("live:hand", "live:calc", "baseline:equal_hold", "baseline:cash")
+# 손 계좌의 종목 장치(2026-10-29): 한 종목 목표 비중 상한, 동시에 들 수 있는 종목 수 상한.
+# 까닭: 한 회사 주식의 하루 흔들림은 한국 묶음의 2~3배다. 15%를 한 종목에 두면 묶음 30~45%만큼의 흔들림을 진다.
+# 세 종목까지면 종목 몫이 많아야 45%로, 묶음 1/3 기준선과 비슷한 무게에서 멈춘다. 숫자는 기록에서 맞춘 값이 아니라 미리 정한 모양이다.
+STOCK_MAX_WEIGHT = 0.15
+STOCK_MAX_COUNT = 3
+STOCKS = ROOT / "stocks.toml"           # 손 계좌가 살 수 있는 종목 목록 — market/stocks.py
+
 # 조사 조각을 세운 날. 조사 조각은 이 날 뒤의 판단(run)으로만 시험한다
 RESEARCH_SINCE = "2026-10-21"
 # 잡음: 움직임이 그 기간의 평소 움직임(60봉 하루 변동성 × √기간)의 이만큼보다 작으면 돌아보기에서 '잡음'으로 거를 수 있다

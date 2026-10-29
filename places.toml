@@ -521,3 +521,23 @@ covers = ["S_q_rate_up"]
 official = true
 added = 2026-10-29
 note = "2026-10-29 새로 시도: 결정 당일 성명 원문(표결, 반대표의 방향)이 바로 열렸다"
+
+[[place]]
+id = "P_dart"
+name = "금융감독원 전자공시 DART (dart.fss.or.kr) — 잠정 실적·주요 공시"
+url = "https://dart.fss.or.kr/"
+angle = "한국 시장"
+covers = ["S_q_earnings_beat", "S_q_bigcap_earnings"]
+official = true
+added = 2026-10-29
+note = "종목 조각(Q_earnings_beat)과 함께 더함(대화 세션). 회사가 직접 낸 실적 숫자. 증권사 전망 평균은 여기 없다"
+
+[[place]]
+id = "P_naver_item"
+name = "네이버 증권 종목 페이지 (finance.naver.com/item) — 종목 뉴스·실적 전망"
+url = "https://finance.naver.com/item/main.naver?code=005930"
+angle = "한국 시장"
+covers = ["S_q_earnings_beat"]
+official = false
+added = 2026-10-29
+note = "종목 조각과 함께 더함(대화 세션). 주소의 code를 종목 코드로 바꿔 본다. 전망 평균(컨센서스)과 뉴스 묶음이 있다"

@@ -140,6 +140,16 @@ ask = "오늘 판단 시각부터 다음 거래일 장 마감까지, 또는 판�
 
 # ---------- 사실: 근거 문헌 (2026-10-20 웹 검색으로 실재 확인. 본문은 옮기지 않고 요지만) ----------
 # kind = 출처 종류(연구 / 통념 / 실험 결과 / 이 저장소의 기록), strength = 근거 강도(낮음 / 보통 / 높음): 이 분야(지수·코인의 시계열)에 바로 맞는 정도
+
+[[state]]
+id = "S_q_earnings_beat"
+text = "이 종목의 회사가 판단 직전 열흘 안에 낸 실적(잠정 실적 포함)이 시장 예상(증권사 전망 평균)보다 뚜렷하게 좋았다"
+known_before = true
+serves = "G_timing"
+read_by = "조사"
+angle = "한국 시장"
+per_asset = true
+ask = "이 회사가 판단 직전 열흘 안에 실적(잠정 실적 포함)을 냈나? 냈다면 영업이익이 증권사 전망 평균(컨센서스)보다 몇 % 높거나 낮았나? 발표 날짜·시각, 전망 평균의 출처, 공시나 기사 링크"
 [[fact]]
 id = "F_lit_tsmom"
 text = "시계열 모멘텀: 58개 선물(주가지수·통화·원자재·채권)에서 지난 1~12개월 수익률이 다음 수익률을 같은 방향으로 예측했다(긴 기간에서는 일부 되돌림)"
@@ -288,6 +298,16 @@ kind = "연구"
 strength = "보통"
 
 [[fact]]
+id = "F_lit_pead"
+text = "실적이 예상보다 좋았던(나빴던) 회사의 주식은 발표 뒤 몇 주~몇 달 동안 같은 쪽으로 더 움직였다(실적 발표 뒤 표류). 위험 보상으로는 설명되지 않아 값이 늦게 반응하는 것으로 읽힌다"
+checked = 2026-10-29
+source = "연구 — Bernard, Thomas (1989), Post-Earnings-Announcement Drift: Delayed Price Response or Risk Premium?, Journal of Accounting Research 27 (Supplement), 1–36, doi:10.2307/2491062"
+url = "https://ideas.repec.org/a/bla/joares/v27y1989ip1-36.html"
+kind = "연구"
+strength = "보통"
+note = "2026-10-29 웹 검색(RePEc·EconPapers 서지)으로 실재 확인. 미국 주식, 1970~80년대 자료다. 뒤의 연구들은 큰 회사일수록, 최근일수록 표류가 작아졌다고 본다 — 한국 대형주에 그대로 맞는지는 이 저장소의 기록으로 시험한다"
+
+[[fact]]
 id = "F_lit_earnings_systematic"
 text = "실적을 발표하는 회사의 주식은 발표 기간에 시장 위험(베타)이 커지고 초과 수익이 컸다. 큰 회사들의 실적 발표는 시장 전체에 대한 정보를 담는다"
 checked = 2026-10-29
@@ -398,6 +418,20 @@ check = ["research_direction"]
 seen_until = "2026-10-29"
 note = "2026-10-29 세움: 2026-10-28 손 예측(한국 묶음 1일)이 반도체 대형주 실적일에 크기 1.2–2.4%를 말했는데 +7.59%였다. 실적 날짜는 판단 때 알 수 있었다. 방향 주장은 하지 않는다(실적이 좋고 나쁨은 판단 때 모른다)"
 claims = [{ on = "move", dir = "up", when = "예", scope = "equity", span = ["다음"], reason = "지수 큰 몫 종목의 실적이 나오는 날 지수 흔들림이 커진다" }]
+
+[[hypothesis]]
+id = "Q_earnings_beat"
+text = "회사의 실적이 예상보다 뚜렷하게 좋았으면 그 회사 주식은 그 뒤 1주·4주에 오를 확률이 높다"
+source = "연구 — 실적 발표 뒤 표류 (F_lit_pead)"
+reason = "예상보다 좋은 실적에 값이 한 번에 다 반응하지 않고, 몇 주에 걸쳐 따라간다"
+read_by = "조사"
+conditions = ["S_q_earnings_beat"]
+evidence = ["F_lit_pead"]
+strength = "낮음"
+check = ["research_direction"]
+seen_until = "2026-10-29"
+note = "2026-10-29 세움(대화 세션, 종목 사기를 더하면서). 종목마다 대 보는 첫 조각이다(조건 상태 per_asset). 손 계좌가 종목을 사는 까닭을 이 조각처럼 조각에 묶어야 채점·쪼개기가 된다. 대형주는 표류가 작다는 반대 근거가 있어 강도 낮음"
+claims = [{ on = "up_odds", dir = "up", when = "예", scope = "single", span = ["1주", "4주"], reason = "예상보다 좋은 실적에 값이 늦게 따라가 몇 주 더 오른다" }]
 
 [[hypothesis]]
 id = "H_hand_vs_calc"

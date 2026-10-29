@@ -1,0 +1,120 @@
+# 손 계좌(live:hand)가 세 대상 말고 살 수 있는 한국 상장 개별 종목 (2026-10-29 사용자 "개별 종목을 사게 만들고 싶어")
+# 읽는 코드: market/stocks.py. 시세는 매일 prepare가 네이버 차트에서 받는다(처음 쓰는 종목은 최근 600줄).
+# 칸: code(6자리), name(사람용 — 조각 id·문장에는 쓰지 않는다), market(KOSPI/KOSDAQ), added(더한 날), why(왜 목록에 넣었나),
+#     buy(없으면 true; false면 더 사지 않는다 — 들고 있으면 팔기·평가는 된다), note
+# 규칙: 지우지 않는다(기록이 코드를 가리킨다). 새 종목은 `python -m market.stocks add <코드> <이름> "<왜>"`.
+# 첫 목록(2026-10-29, 대화 세션): 코스피 대형주 중 업종이 겹치지 않게 16개. 한국 묶음(KODEX 200)의 큰 몫을 차지하는 회사들이라
+# 실적·소식이 묶음을 움직이는 날(10-28 반도체 실적 +7.6%)에 묶음 대신 그 회사를 직접 들 수 있게 했다. 코드와 이름은
+# 2026-10-29 네이버 차트 응답으로 확인했다. 시가총액 순위는 확인하지 않았다(목록은 후보일 뿐 순위가 아니다).
+
+[[stock]]
+code = "005930"
+name = "삼성전자"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 반도체 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "000660"
+name = "SK하이닉스"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 반도체(메모리) 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "373220"
+name = "LG에너지솔루션"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 2차전지 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "207940"
+name = "삼성바이오로직스"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 바이오 위탁생산 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "005380"
+name = "현대차"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 자동차 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "000270"
+name = "기아"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 자동차 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "068270"
+name = "셀트리온"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 바이오 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "105560"
+name = "KB금융"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 은행·금융지주 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "055550"
+name = "신한지주"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 은행·금융지주 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "035420"
+name = "NAVER"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 인터넷 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "012450"
+name = "한화에어로스페이스"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 방산·항공 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "329180"
+name = "HD현대중공업"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 조선 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "034020"
+name = "두산에너빌리티"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 발전 설비·원전 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "005490"
+name = "POSCO홀딩스"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 철강·소재 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "028260"
+name = "삼성물산"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 지주·건설 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "006400"
+name = "삼성SDI"
+market = "KOSPI"
+added = "2026-10-29"
+why = "코스피 대형주, 2차전지 업종 대표 — 첫 목록"

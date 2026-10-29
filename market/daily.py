@@ -38,6 +38,7 @@ from . import prices as PR
 from . import records as R
 from . import research as RS
 from . import scoring as S
+from . import stocks as ST
 from . import versions as V
 
 WEIGHT_HORIZON_INDEX = 1  # R_weights는 1주 기간의 오를 확률로
@@ -73,6 +74,10 @@ class Root:
     def versions(self) -> Path:
         return self.path / "versions"
 
+    @property
+    def stocks(self) -> Path:
+        return self.path / "stocks.toml"
+
     def day_dir(self, day: dt.date) -> Path:
         return self.path / "out" / "daily" / day.isoformat()
 
@@ -81,7 +86,7 @@ class Root:
 def expected_next(asset: str, last: dt.date) -> dt.date:
     """마지막 일봉 다음에 나올 일봉 날짜 (ETF는 주말만 건너뛴다 — 휴장일은 모른다)."""
     d = last + dt.timedelta(days=1)
-    while C.ASSETS[asset].kind == "etf" and d.weekday() >= 5:
+    while C.on_exchange(asset) and d.weekday() >= 5:
         d += dt.timedelta(days=1)
     return d
 
@@ -96,15 +101,16 @@ def skip_reason(asset: str, hist: PR.History, at: dt.datetime, fetch: dict) -> s
     if fin > at:
         return ""
     f = fetch.get(asset, {})
-    if (C.ASSETS[asset].kind == "etf" and f.get("status") == "ok" and f.get("at")
+    if (C.on_exchange(asset) and f.get("status") == "ok" and f.get("at")
             and dt.datetime.fromisoformat(f["at"]) >= fin):
-        return ""  # 받았는데 없다 = 휴장 (코인은 휴장이 없으니 건너뛴다)
+        return ""  # 받았는데 없다 = 휴장 (코인은 휴장이 없으니 건너뛴다; 종목은 거래 정지도 여기서 걸러지지 않는다)
     return (f"판단 시각({at:%m-%d %H:%M})까지 끝났어야 할 {nxt} 일봉이 시세 파일에 없음"
             f"(받기 {f.get('status', '안 함')}) — 낡은 시세로 예측하면 이미 나온 결과를 맞히는 셈이다")
 
 
 def fetch_prices(root: Root, at: dt.datetime) -> dict:
-    """세 대상 시세를 덧붙인다. 대상마다 {status, at, added, error, warns}. 한 곳이 막혀도 나머지는 받는다."""
+    """세 대상과 종목 목록(stocks.toml)의 시세를 덧붙인다. 대상마다 {status, at, added, error, warns}. 한 곳이 막혀도 나머지는
+    받는다. 처음 쓰는 종목은 최근 일봉을 받아 파일을 만든다(first = true)."""
     out = {}
     for a in C.ASSET_IDS:
         now = C.now_kst()
@@ -112,6 +118,14 @@ def fetch_prices(root: Root, at: dt.datetime) -> dict:
             n, warns = PR.update(a, root.prices, now=now)
             out[a] = {"status": "ok", "at": now.isoformat(timespec="seconds"), "added": n, "warns": warns}
         except BaseException as exc:  # SystemExit 포함: 파일 없음 등
+            out[a] = {"status": "fail", "at": now.isoformat(timespec="seconds"), "error": f"{type(exc).__name__}: {exc}"}
+    for s in ST.register(root.stocks):
+        a = str(s["code"])
+        now = C.now_kst()
+        try:
+            n, warns, first = ST.update(a, root.prices, now, str(s.get("name", "")))
+            out[a] = {"status": "ok", "at": now.isoformat(timespec="seconds"), "added": n, "warns": warns, "first": first}
+        except BaseException as exc:
             out[a] = {"status": "fail", "at": now.isoformat(timespec="seconds"), "error": f"{type(exc).__name__}: {exc}"}
     return out
 
@@ -157,14 +171,29 @@ class Day:
     stale: set = field(default_factory=set)
     prices: dict[str, float] = field(default_factory=dict)
     base: dict[str, dict] = field(default_factory=dict)
+    # 종목 (2026-10-29): 목록, 오늘 예측·주문할 수 있는 종목, 건너뛴 종목과 까닭, 손 계좌가 들고 있거나 기다리는 종목,
+    # 오늘 기록 줄(대 보기·계산기·기준선 예측)을 만든 종목
+    pool: list[dict] = field(default_factory=list)
+    stock_ok: list[str] = field(default_factory=list)
+    stock_skipped: dict[str, str] = field(default_factory=dict)
+    held: list[str] = field(default_factory=list)
+    focus: list[str] = field(default_factory=list)
 
 
-def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict) -> Day:
+def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict, focus=()) -> Day:
+    """focus: 오늘 기록 줄(시세 대 보기·계산기·기준선 예측)을 만들 종목(record가 입력에서 넘긴다). 손 계좌가 들고 있는 종목은 늘 든다."""
+    pool = ST.register(root.stocks)
+    recs = {k: R.read(root.records, k) for k in R.FIELDS}
     rows = PR.load_all(root.prices)
-    hists = {a: PR.view(a, rows[a], at) for a in C.ASSET_IDS}
+    # 종목: 목록 + 기록에 나온 종목(목록에서 지워졌어도 채점·평가는 해야 한다)
+    seen_stocks = ({str(s["code"]) for s in pool if C.is_stock(str(s.get("code", "")))}
+                   | {x["asset"] for k in ("prediction", "order") for x in recs[k] if C.is_stock(x["asset"])}
+                   | {a for x in recs["account"] for a in x["positions"] if C.is_stock(a)})
+    for a in sorted(seen_stocks):
+        rows[a] = PR.load(a, root.prices)
+    hists = {a: PR.view(a, r, at) for a, r in rows.items()}
     raw = tomllib.loads(root.knowledge.read_text(encoding="utf-8"))
     pieces, digest = K.load_pieces(root.knowledge)
-    recs = {k: R.read(root.records, k) for k in R.FIELDS}
     runs = sorted({r["run"] for r in recs["run"]})
     last_run = runs[-1] if runs else None
     already = last_run is not None and last_run >= day.isoformat()
@@ -177,10 +206,13 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
 
     skipped = {a: why for a in C.ASSET_IDS if (why := skip_reason(a, hists[a], at, fetch))}
     predictable = [a for a in C.ASSET_IDS if a not in skipped]
+    stock_skipped = {a: why for a in sorted(seen_stocks) if (why := skip_reason(a, hists[a], at, fetch))}
+    buyable = {str(s["code"]) for s in pool if s.get("buy", True)}
 
     # 정산 (기록에서 계좌를 되살려 판단 시각에 알려진 일봉으로 체결)
     accounts = {aid: L.rebuild(aid, recs["account"], recs["order"]) for aid in C.LIVE_ACCOUNTS}
     fills = [f for acc in accounts.values() for f in acc.settle(hists, day)]
+    held = sorted(accounts["live:hand"].held())  # 정산 뒤: 들고 있거나 체결을 기다리는 종목
 
     # 채점
     preds_all = recs["prediction"]
@@ -194,6 +226,9 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     account_lines = [acc.record(day, last) for acc in accounts.values()]
     D = Day(day, at, hists, raw, digest, recs, already, missing, predictable, skipped, accounts, fills, scores,
             account_lines)
+    D.pool, D.stock_skipped = pool, stock_skipped
+    D.held = [a for a in held if a not in stock_skipped]
+    D.stock_ok = [a for a in sorted(seen_stocks) if a not in stock_skipped and (a in buyable or a in held)]
     D.prices = {a: v for a, (_, v) in last.items()}
     if ticker.get("KRW-BTC"):
         D.prices["KRW-BTC"] = ticker["KRW-BTC"]["price"]  # 주문 수량은 판단 때 가격으로 잡는다(체결은 다음 공식 가격)
@@ -222,15 +257,27 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
                 vf = K.record_fields(K.predict(a, hz, values, vpieces))
                 D.preds.append({"id": f"{run}:version:{vid}:{a}:{hz}", "predictor": f"version:{vid}", **base,
                                 "readings": values, "knowledge": vdig, **vf})
-            D.preds.append({"id": f"{run}:baseline:half:{a}:{hz}", "predictor": "baseline:half", **base, "p_up": 0.5,
-                            "p_range": None, "size_lo": None, "size_hi": None, "readings": {}, "used": [],
-                            "decisive": [], "reason": "늘 50%", "knowledge": ""})
-            br, w = S.base_rate(h, hz)
-            D.preds.append({"id": f"{run}:baseline:base_rate:{a}:{hz}", "predictor": "baseline:base_rate", **base,
-                            "p_up": round(br, 4) if br is not None else None, "p_range": None,
-                            "size_lo": round(w[0], 4) if w else None, "size_hi": round(w[1], 4) if w else None,
-                            "readings": {}, "used": [], "decisive": [],
-                            "reason": f"최근 {S.BASE_RATE_WINDOW}봉에서 {hz}봉 수익률이 오른 비율", "knowledge": ""})
+            D.preds += baselines(run, a, hz, h, base)
+    # 종목: 시세 상태와 기준 종가는 오늘 살 수 있는 종목 모두(손 예측 검사용), 기록 줄은 손 계좌가 든 종목과 focus만.
+    # 계산기는 세 대상에만 맞춘 숫자라 종목에는 '모름'이다(기록은 남겨 손 예측과 나란히 보이게; 이전 버전은 같은 '모름'이라 뺀다).
+    for a in D.stock_ok:
+        h = hists[a]
+        values, numbers = P.read(h.closes)
+        D.calc_values[a] = values
+        D.base[a] = {"base_date": h.last.date.isoformat(), "base_close": h.last.close}
+        D.prices[a] = h.last.close
+    D.focus = [a for a in D.stock_ok if a in set(D.held) | set(focus)]
+    for a in D.focus:
+        h = hists[a]
+        values, numbers = P.read(h.closes)
+        D.readings.append({"id": f"reading:{run}:{a}", "run": run, "asset": a, "known_through": h.last.date.isoformat(),
+                           "values": values, "numbers": numbers})
+        for hz in C.ASSETS[a].horizons:
+            base = {"run": run, "asset": a, "horizon": hz, **D.base[a]}
+            f = K.record_fields(K.predict(a, hz, values, pieces))
+            D.preds.append({"id": f"{run}:calc:{a}:{hz}", "predictor": "calc", **base, "readings": values,
+                            "knowledge": digest, **f})
+            D.preds += baselines(run, a, hz, h, base)
     if not already:
         D.calc_orders = [o.record() for o in accounts["live:calc"].plan(day, calc_w, D.prices, 0.02, reasons, at)]
         bought = {o["asset"] for o in D.recs["order"] if o["account"] == "baseline:equal_hold"}
@@ -260,12 +307,26 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     return D
 
 
+def baselines(run: str, a: str, hz: int, h: PR.History, base: dict) -> list[dict]:
+    """기준선 예측 둘: 늘 50%, 최근 250봉에서 오른 비율."""
+    br, w = S.base_rate(h, hz)
+    return [{"id": f"{run}:baseline:half:{a}:{hz}", "predictor": "baseline:half", **base, "p_up": 0.5,
+             "p_range": None, "size_lo": None, "size_hi": None, "readings": {}, "used": [],
+             "decisive": [], "reason": "늘 50%", "knowledge": ""},
+            {"id": f"{run}:baseline:base_rate:{a}:{hz}", "predictor": "baseline:base_rate", **base,
+             "p_up": round(br, 4) if br is not None else None, "p_range": None,
+             "size_lo": round(w[0], 4) if w else None, "size_hi": round(w[1], 4) if w else None,
+             "readings": {}, "used": [], "decisive": [],
+             "reason": f"최근 {S.BASE_RATE_WINDOW}봉에서 {hz}봉 수익률이 오른 비율", "knowledge": ""}]
+
+
 # ---------- prepare ----------
 def prepare(root: Root, day: dt.date, at: dt.datetime, fetch: bool = True, ticker: dict | None = None,
             echo: bool = True) -> int:
     out = root.day_dir(day)
     out.mkdir(parents=True, exist_ok=True)
-    fetched = fetch_prices(root, at) if fetch else {a: {"status": "skipped"} for a in C.ASSET_IDS}
+    fetched = (fetch_prices(root, at) if fetch else
+               {a: {"status": "skipped"} for a in [*C.ASSET_IDS, *ST.codes(root.stocks)]})
     tick = ticker if ticker is not None else (fetch_ticker() if fetch else {})
     D = compute(root, day, at, fetched, tick)
     state = {"day": day.isoformat(), "prepared_at": at.isoformat(timespec="seconds"), "fetch": fetched,
@@ -305,6 +366,26 @@ def briefing(D: Day, fetched: dict, tick: dict) -> str:
         L_.append(f"- 판단 때 가격(업비트 현재가): {t['price']:,.0f}원 ({t['time']})")
     elif tick.get("error"):
         L_.append(f"- 판단 때 가격: 받기 실패 ({tick['error']})")
+    L_ += ["", f"## 종목 (살 수 있는 목록 stocks.toml {len(D.pool)}개, 오늘 쓸 수 있는 것 {len(D.stock_ok)}개)"]
+    L_.append("손 계좌가 세 대상 말고 살 수 있는 한국 상장 종목이다. 계산기는 종목에 '모름'이다(세 대상에만 맞춘 숫자). "
+              "사려면 손 예측 셋(다음·1주·4주)과 1주 결론 조각(decisive)이 있어야 한다 — 지시문 '종목'.")
+    for s in D.pool:
+        a = str(s["code"])
+        f = fetched.get(a, {})
+        h = D.hists.get(a)
+        mark = " **[손 계좌가 듦]**" if a in D.held else ""
+        if a in D.stock_skipped or not h or not h.last:
+            L_.append(f"- {a} {s['name']}{mark}: 받기 {f.get('status', '안 함')}{' ' + f['error'][:120] if f.get('error') else ''}"
+                      f" / 건너뜀: {D.stock_skipped.get(a, '시세 없음')[:80]}")
+            continue
+        c = h.closes
+        chg = lambda n: f"{(c[-1] / c[-1 - n] - 1) * 100:+.1f}%" if len(c) > n else "–"
+        tm = S.typical_move(h, 1)
+        vals = D.calc_values.get(a, {})
+        on = [k for k, v in vals.items() if v == "예"]
+        L_.append(f"- {a} {s['name']}{mark}: {h.last.date} 종가 {h.last.close:,.0f}원, 하루 {chg(1)}, 1주 {chg(5)}, 4주 {chg(20)}"
+                  f", 평소 하루 움직임 {tm * 100:.1f}%" if tm else f"- {a} {s['name']}{mark}: {h.last.date} 종가 {h.last.close:,.0f}원")
+        L_[-1] += f" / 켜진 시세 상태: {', '.join(on) or '없음'}" + (" / 처음 받음" if f.get("first") else "")
     L_ += ["", "## 정산·계좌 (오늘 07:37 평가)"]
     for f in D.fills:
         L_.append(f"- 체결 {f['account']} {f['asset']} {f['side']} {f['qty_units']}단위 @ {f['price']:,} ({f['fill_date']})")
@@ -338,29 +419,40 @@ def briefing(D: Day, fetched: dict, tick: dict) -> str:
 def template(D: Day) -> dict:
     """메인이 채울 입력 틀. '_'로 시작하는 칸은 참고용이고 검사하지 않는다."""
     from .research import research_states
-    states = [s["id"] for s in research_states(D.raw)]
+    states = [s["id"] for s in research_states(D.raw, per_asset=False)]
+    per_asset = [s["id"] for s in research_states(D.raw, per_asset=True)]
     calc = {(p["asset"], p["horizon"]): p for p in D.preds if p["predictor"] == "calc"}
     hand_acc = D.accounts["live:hand"]
     units, cash = hand_acc.expected(D.prices)
-    total = cash + sum(units[a] * D.prices[a] / C.ASSETS[a].unit for a in C.ASSET_IDS if a in D.prices)
+    total = cash + sum(n * D.prices[a] / C.ASSETS[a].unit for a, n in units.items() if a in D.prices)
     pieces = {pid: info["state"] for pid, info in H._piece_index(D.raw).items()}
+    assets = list(D.predictable) + list(D.held)
+    names = {str(s["code"]): s["name"] for s in D.pool}
     return {
         "day": D.day.isoformat(), "agents": 0, "notes": [],
         "_pieces": {k: f"조건 상태 {v}" if v else "기준값(값 없이 조각 id만)" for k, v in pieces.items()},
-        "_used_form": "used·decisive는 '조각 id=값'. 값은 그 조각 조건 상태의 오늘 값(조사 조각은 readings, 계산 조각은 _values)",
+        "_used_form": "used·decisive는 '조각 id=값'. 값은 그 조각 조건 상태의 오늘 값(조사 조각은 readings, 종목마다 대 보는 "
+                      "조사 조각은 stock_readings의 그 종목 값, 계산 조각은 _values)",
+        "_stocks": {a: {"name": names.get(a, a), "held": a in D.held, "base_date": D.base[a]["base_date"],
+                        "close": D.base[a]["base_close"], "_values": D.calc_values.get(a, {})} for a in D.stock_ok},
+        "_stock_rule": (f"종목을 사려면 hand에 그 종목의 기간 셋(1·5·20)을 더하고, 1주 p_up > 0.5와 decisive(결론 조각)를 적고, "
+                        f"weights에 target(≤ {C.STOCK_MAX_WEIGHT}, 종목 {C.STOCK_MAX_COUNT}개까지)을 넣는다. 종목 몫은 한국 묶음에서 "
+                        f"덜어 낸다. 든 종목은 매일 hand·weights에 남긴다(팔려면 target 0). 새 종목은 python -m market.stocks add"),
         "research": [{"question": q["question"], "state": q["state"], "angle": q["angle"], "asked": q["asked"],
                       "answer": "", "agent": "", "_suggest": q["suggest"],
                       "looked": [{"place": "", "result": "찾음", "new": False, "url": "", "date": "", "note": ""}]}
                      for q in D.questions],
         "readings": {st: {"value": "모름", "why": "", "places": []} for st in states},
+        "stock_readings": {a: {st: {"value": "모름", "why": "", "places": []} for st in per_asset} for a in D.held}
+                          if per_asset else {},
         "hand": [{"asset": a, "horizon": hz, "p_up": None, "size_lo": None, "size_hi": None, "used": [],
                   "decisive": [], "reason": "", "confidence": "낮음",
                   "_calc": calc[(a, hz)]["reason"] if (a, hz) in calc else "",
                   "_calc_p_up": calc[(a, hz)]["p_up"] if (a, hz) in calc else None,
                   "_values": D.calc_values.get(a, {})}
-                 for a in D.predictable for hz in C.ASSETS[a].horizons],
-        "weights": {a: {"target": round(units[a] * D.prices[a] / C.ASSETS[a].unit / total, 4) if total else 0.0,
-                        "reason": ""} for a in D.predictable},
+                 for a in assets for hz in C.ASSETS[a].horizons],
+        "weights": {a: {"target": round(units.get(a, 0) * D.prices[a] / C.ASSETS[a].unit / total, 4) if total else 0.0,
+                        "reason": ""} for a in assets},
         "reviews": [{"prediction": pid, "why": "", "wrong": [], "reason": "", "_info": info}
                     for pid, info in D.due_reviews.items()],
         "corrections": [],
@@ -376,13 +468,19 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
         print(f"{prep_p}가 없다 — 먼저 python -m market.daily prepare")
         return 1
     prep = json.loads(prep_p.read_text(encoding="utf-8"))
-    D = compute(root, day, at, prep["fetch"], prep.get("decision_price") or {})
+    inp = H.load_input(input_path)
+    focus = {str(h.get("asset")) for h in inp.get("hand", []) if isinstance(h, dict)} | set(inp.get("weights") or {})
+    focus |= set(inp.get("stock_readings") or {})
+    D = compute(root, day, at, prep["fetch"], prep.get("decision_price") or {}, focus={a for a in focus if C.is_stock(a)})
     if D.already:
         print(f"{day} 기록이 이미 있다 — 같은 날 두 번 쓰지 않는다(정정은 correction 기록으로)")
         return 1
-    inp = H.load_input(input_path)
-    ctx = {"day": day.isoformat(), "raw": D.raw, "research_states": [s["id"] for s in RS.research_states(D.raw)],
+    ctx = {"day": day.isoformat(), "raw": D.raw,
+           "research_states": [s["id"] for s in RS.research_states(D.raw, per_asset=False)],
+           "stock_states": [s["id"] for s in RS.research_states(D.raw, per_asset=True)],
            "places": [p["id"] for p in D.places], "stale": D.stale, "predictable": D.predictable,
+           "stocks": D.stock_ok, "held": D.held, "buyable": {str(s["code"]) for s in D.pool if s.get("buy", True)},
+           "hand_units": D.accounts["live:hand"].expected(D.prices)[0],
            "calc_values": D.calc_values, "due_reviews": D.due_reviews, "due_checks": D.due_checks,
            "node_ids": {n.get("id") for k in ("goal", "state", "fact", "hypothesis", "rule") for n in D.raw.get(k, [])},
            "record_ids": {x["id"] for items in D.recs.values() for x in items}}
@@ -423,6 +521,8 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
                   "fetch": {a: f.get("status") for a, f in prep["fetch"].items()},
                   "fetch_errors": {a: f["error"] for a, f in prep["fetch"].items() if f.get("error")},
                   "decision_price": prep.get("decision_price") or {}, "skipped": D.skipped,
+                  "stocks": {"pool": len(D.pool), "usable": len(D.stock_ok), "held": D.held, "recorded": D.focus,
+                             "skipped": {a: w for a, w in D.stock_skipped.items() if a in set(D.held) | focus}},
                   "fills": len(D.fills), "scores": len(D.scores),
                   "counted_scores": sum(s["counted"] for s in D.scores),
                   "predictions": len(lines["prediction"]), "orders": len(lines["order"]),
@@ -505,10 +605,11 @@ def main(argv: list[str]) -> int:
 
 
 def copy_for_simulation(dst: Path, prices_from: Path | None = None) -> Root:
-    """흉내 내기용 임시 저장소: 논리집·볼 곳·버전(그리고 시세)을 복사한다. 기록은 빈 채로."""
+    """흉내 내기용 임시 저장소: 논리집·볼 곳·종목 목록·버전(그리고 시세)을 복사한다. 기록은 빈 채로."""
     dst.mkdir(parents=True, exist_ok=True)
-    for name in ("knowledge.toml", "places.toml"):
-        shutil.copyfile(C.ROOT / name, dst / name)
+    for name in ("knowledge.toml", "places.toml", "stocks.toml"):
+        if (C.ROOT / name).exists():
+            shutil.copyfile(C.ROOT / name, dst / name)
     shutil.copytree(C.VERSIONS, dst / "versions", dirs_exist_ok=True)
     if prices_from is not None:
         shutil.copytree(prices_from, dst / "data" / "prices", dirs_exist_ok=True)

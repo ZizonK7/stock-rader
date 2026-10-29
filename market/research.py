@@ -74,10 +74,13 @@ def research_pieces(raw: dict) -> list[tuple[dict, dict]]:
     return out
 
 
-def research_states(raw: dict) -> list[dict]:
-    """살아 있는 조사 조각이 쓰는 상태 (중복 없이, 처음 나온 순서)."""
+def research_states(raw: dict, per_asset: bool | None = None) -> list[dict]:
+    """살아 있는 조사 조각이 쓰는 상태 (중복 없이, 처음 나온 순서). per_asset: False = 하루 하나로 대 보는 상태(시장 전체),
+    True = 종목마다 대 보는 상태(state에 per_asset = true, 2026-10-29), None = 둘 다."""
     seen, out = set(), []
     for _, st in research_pieces(raw):
+        if per_asset is not None and bool(st.get("per_asset")) != per_asset:
+            continue
         if st["id"] not in seen:
             seen.add(st["id"])
             out.append(st)
@@ -145,8 +148,11 @@ def questions(day: dt.date, raw: dict, places: list[dict], cards: dict[str, dict
         users = [h["id"] for h, s in pieces if s["id"] == st["id"]]
         cand = [p for p in places if st["id"] in p.get("covers", [])]
         cand.sort(key=lambda p: usefulness(cards.get(p["id"], _empty())), reverse=True)
+        ask = st.get("ask", st["text"])
+        if st.get("per_asset"):
+            ask = "[종목마다] " + ask + " (손 계좌가 든 종목과 살 후보 종목마다 따로 답한다)"
         out.append({"question": f"q:{day.isoformat()}:{st['id']}", "state": st["id"], "angle": st.get("angle", ""),
-                    "asked": st.get("ask", st["text"]), "pieces": users,
+                    "asked": ask, "pieces": users,
                     "suggest": [p["id"] for p in cand[:SUGGEST]]})
     for ang in ANGLES:
         cand = [p for p in places if p.get("angle") == ang]

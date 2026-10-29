@@ -14,12 +14,12 @@
 | `run` | 실행 한 번 | mode(replay / replay-score-only / live / missed = 빠진 날), steps(받기 결과, 판단 때 가격, 판단 시각, 건너뛴 대상, 수, 에이전트 수, 볼 곳 수 등), notes(메모·경고) |
 | `reading` | 시세 대 보기: 대상 하나의 조각 값 | asset, known_through(본 마지막 일봉 날짜), values(상태 id → 예/아니오/모름), numbers(계산에 쓴 숫자) |
 | `research` | 조사: 질문 하나 | question, state(대 볼 상태 id, 열린 질문이면 ''), angle, asked, answer(300자 이내 요약), looked(본 곳마다 place·result 찾음/없음/늦음/막힘·new·url·date·note), agent |
-| `hand_reading` | 손 대 보기(하루 하나) | values(조사 상태 → 예/아니오/일부/모름 또는 값), why(상태 → 이유), places(상태 → 쓴 볼 곳), research(근거 조사 id) |
+| `hand_reading` | 손 대 보기(하루 하나) | values(조사 상태 → 예/아니오/일부/모름 또는 값), why(상태 → 이유), places(상태 → 쓴 볼 곳), research(근거 조사 id), (있으면) by_asset(종목 코드 → 종목마다 대 보는 상태 → {value, why, places}, 2026-10-29~) |
 | `prediction` | 예측 | predictor(calc / hand / version:<id> / baseline:half / baseline:base_rate), asset, horizon(봉 수), base_date·base_close(판단 때 알려진 마지막 끝난 종가), p_up(오를 확률), p_range, size_lo·size_hi(움직임 크기 범위, \|수익률\| %), readings, used(쓴 조각), decisive(빼면 결론이 바뀌는 조각), reason, knowledge(논리집 지문), (손 예측) confidence |
 | `score` | 채점 | prediction, predictor, asset, horizon, target_date·target_close, ret(수익률), up, direction_hit(확률 0.5면 null), brier(확률 점수), size_hit, (2단계) counted(같은 예측기·대상·기간·기준 날짜 중 처음 말한 것만 true) |
-| `order` | 주문 | account, asset, side(buy/sell), qty_units(최소 단위 개수: ETF 1주, 코인 1e-8), ref_price(주문 수량을 잡은 가격), reason, (2단계) decided_at(판단한 실제 시각 — 이 뒤의 첫 공식 가격에 체결) |
+| `order` | 주문 | account, asset(세 대상 또는 종목 코드), side(buy/sell), qty_units(최소 단위 개수: ETF·종목 1주, 코인 1e-8), ref_price(주문 수량을 잡은 가격), reason, (2단계) decided_at(판단한 실제 시각 — 이 뒤의 첫 공식 가격에 체결) |
 | `fill` | 체결 | account, order, asset, side, fill_date, price, qty_units, value·fee(원, 정수), cash_after, note |
-| `account` | 계좌 상태(07:37, 정산 뒤) | account, cash(원), positions(최소 단위), prices(대상 → [날짜, 가격]), value(평가액), pending(체결 안 된 주문 id) |
+| `account` | 계좌 상태(07:37, 정산 뒤) | account, cash(원), positions(최소 단위; 세 대상은 늘, 종목은 들고 있을 때만), prices(대상 → [날짜, 가격]; 세 대상 + 들거나 기다리는 종목), value(평가액), pending(체결 안 된 주문 id) |
 | `review` | 돌아보기: 기한이 된 손 예측 하나 | prediction, wrong(틀린 조각·상태 id), why(맞음 / 잡음 / 대 보기 틀림 / 조건 흐림 / 이유 틀림 / 바깥 상황), reason(맞았어도 적는다) |
 | `reading_check` | 손 대 보기 다시 보기(7일 뒤) | target(hand_reading id), state, then, now, hit(true/false/null), late(판단 뒤에야 정보가 나온 볼 곳), reason |
 | `correction` | 정정 | target(고칠 기록 id), note. 지난 줄은 고치지 않는다 |
