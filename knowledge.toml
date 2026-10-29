@@ -103,6 +103,16 @@ angle = "금리·환율·정책"
 ask = "미국 중앙은행(연준)과 한국은행은 지금 금리를 올리는 중인가, 내리는 중인가, 멈춘 상태인가? 다음 결정 날짜와 시장이 보는 확률(예: 금리 선물로 본 확률)은? 두 곳이 다르면 둘 다 적는다"
 
 [[state]]
+id = "S_q_rate_shift_up"
+text = "기준이 되는 중앙은행이 금리를 올리는 쪽이고, 최근 1주 사이 시장이 보는 다음 결정이 더 올리는 쪽으로 뚜렷하게 바뀌었다 (금리 선물·예측시장의 인상 확률이 10%p 넘게 올랐거나, 그 사이 결정·발표문이 시장 예상보다 올리는 쪽이었다)"
+known_before = true
+serves = "G_timing"
+read_by = "조사"
+angle = "금리·환율·정책"
+ask = "최근 1주 사이 시장이 보는 연준·한국은행 다음 결정의 인상 확률이 어떻게 바뀌었나? 1주 전 값과 지금 값(같은 출처: 금리 선물·예측시장·설문), 그 사이 결정·발표문이 시장 예상보다 올리는 쪽이었나(결정 직후 2년물 금리 움직임 등)"
+note = "2026-10-30 더함: Q_rate_up을 쪼개며 더한 조건. 근거 문헌(F_lit_policy_stock)이 주가 반응을 '예상 밖 결정'에서 찾았으므로, 올리는 흐름이라는 상태가 아니라 기대가 올리는 쪽으로 바뀌는지를 본다"
+
+[[state]]
 id = "S_q_home_currency_weak"
 text = "계좌 통화가 기준 외화에 대해 최근 한 달 사이 뚜렷하게 약해지는 중이다 (환율이 오르는 중)"
 known_before = true
@@ -140,6 +150,16 @@ ask = "오늘 판단 시각부터 다음 거래일 장 마감까지, 또는 판�
 
 # ---------- 사실: 근거 문헌 (2026-10-20 웹 검색으로 실재 확인. 본문은 옮기지 않고 요지만) ----------
 # kind = 출처 종류(연구 / 통념 / 실험 결과 / 이 저장소의 기록), strength = 근거 강도(낮음 / 보통 / 높음): 이 분야(지수·코인의 시계열)에 바로 맞는 정도
+
+[[state]]
+id = "S_q_exchange_hack"
+text = "판단 직전 사흘 안에 큰 디지털 자산 거래소(거래량 상위)가 해킹이나 출금 중단을 겪었다는 보도가 있었고, 피해(또는 의심 이동) 규모가 10억 달러를 넘는다"
+known_before = true
+serves = "G_timing"
+read_by = "조사"
+angle = "코인"
+ask = "판단 직전 사흘 안에 큰 디지털 자산 거래소의 해킹·출금 중단 보도가 있나? 거래소 이름, 보도 날짜·시각, 피해(의심 이동) 규모, 출금이 지금도 멈춰 있나, 동결된 금액"
+note = "2026-10-30 더함: 10-29 큰 거래소 해킹 의혹(의심 지갑 약 58억 달러, 출금 일부 중단)이 나왔고 조각 목록에 이 일을 대 볼 곳이 없었다"
 
 [[state]]
 id = "S_q_earnings_beat"
@@ -249,6 +269,16 @@ source = "연구 — Barroso, Santa-Clara (2015), Momentum has its moments, Jour
 url = "https://ideas.repec.org/a/eee/jfinec/v116y2015i1p111-120.html"
 kind = "연구"
 strength = "보통"
+
+[[fact]]
+id = "F_lit_crypto_hack"
+text = "디지털 자산 거래소 해킹 사건 뒤 해킹당한 자산의 값 흔들림이 커지고 그 자산들끼리 같이 움직이는 정도가 커졌다. 사건 몇 시간 전의 비정상 수익은 소식이 알려지면 0으로 돌아갔다"
+checked = 2026-10-30
+source = "연구 — Corbet, Cumming, Lucey, Peat, Vigne (2020), The destabilising effects of cryptocurrency cybercriminality, Economics Letters 191, 108741"
+url = "https://ideas.repec.org/a/eee/ecolet/v191y2020ics0165176519303714.html"
+kind = "연구"
+strength = "낮음"
+note = "흔들림(크기) 쪽 근거다. 방향(내림)은 사례뿐이다: 2025-02 큰 거래소 해킹 뒤 7일 약 −13%(물가 걱정이 겹침), 2022-11 거래소 파산 뒤 1주 약 −25%, 2019-05 작은 해킹은 첫날 −4% 뒤 일부 회복 — 2026-10-30 조사 에이전트가 찾은 기사 숫자, 출처마다 다르다"
 
 [[fact]]
 id = "F_lit_policy_stock"
@@ -365,6 +395,25 @@ strength = "낮음"
 check = ["research_direction"]
 seen_until = "2026-10-21"
 claims = [{ on = "up_odds", dir = "down", when = "예", scope = "all", reason = "금리가 오르는 쪽이면 위험을 지는 대가가 커져 값이 눌린다" }]
+status = "retired"
+replaced_by = ["Q_rate_up_shift"]
+note = "2026-10-30 은퇴(조건 흐림): 한국 묶음 손 예측에서 결론 조각으로 네 번 빗나갔다(10-21 1일 +3.42%, 10-21 5일 +2.48%, 10-22 5일 +6.60%, 10-23 5일 +9.18%). 그 주 연준·한은은 올리는 흐름 속에 쉬었고, 10-22에는 인상 기대가 오히려 꺾였다(동결 86→94%). 근거 문헌은 예상 밖 결정의 반응이라, 이미 알려진 '올리는 시기'라는 상태만으로는 값이 눌리지 않았다. → 기대가 올리는 쪽으로 바뀌었다는 조건(S_q_rate_shift_up)을 더해 Q_rate_up_shift로 쪼갬. 이전 모음은 versions/v2.toml"
+
+[[hypothesis]]
+id = "Q_rate_up_shift"
+text = "기준이 되는 중앙은행이 금리를 올리는 쪽이고, 최근 1주 사이 시장 기대가 더 올리는 쪽으로 바뀌었으면 위험 자산이 오를 확률이 낮다"
+source = "연구 — 예상 밖 금리 결정과 주가 (F_lit_policy_stock); 이 저장소의 기록 — 2026-10-21~23 한국 묶음 손 예측 네 번 빗나감 (근거 1주)"
+reason = "이미 알려진 금리 방향은 값에 들어 있다. 값을 누르는 것은 시장 예상보다 더 올리는 쪽으로 바뀐 몫(놀람)이다"
+read_by = "조사"
+conditions = ["S_q_rate_shift_up", "S_q_rate_up"]
+evidence = ["F_lit_policy_stock"]
+strength = "낮음"
+check = ["research_direction"]
+seen_until = "2026-10-30"
+note = "2026-10-30 세움(Q_rate_up을 쪼갬, 조건 흐림). 더한 조건은 판단 때 알 수 있다(금리 선물·예측시장의 1주 변화). 근거 1주(같은 주의 겹친 예측들) — 다음 기록이 시험한다"
+claims = [{ on = "up_odds", dir = "down", when = "예", scope = "all", reason = "시장 기대가 더 올리는 쪽으로 바뀌면 위험을 지는 대가가 다시 커져 값이 눌린다" }]
+
+
 
 [[hypothesis]]
 id = "Q_home_currency_weak"
@@ -418,6 +467,20 @@ check = ["research_direction"]
 seen_until = "2026-10-29"
 note = "2026-10-29 세움: 2026-10-28 손 예측(한국 묶음 1일)이 반도체 대형주 실적일에 크기 1.2–2.4%를 말했는데 +7.59%였다. 실적 날짜는 판단 때 알 수 있었다. 방향 주장은 하지 않는다(실적이 좋고 나쁨은 판단 때 모른다)"
 claims = [{ on = "move", dir = "up", when = "예", scope = "equity", span = ["다음"], reason = "지수 큰 몫 종목의 실적이 나오는 날 지수 흔들림이 커진다" }]
+
+[[hypothesis]]
+id = "Q_exchange_hack"
+text = "판단 직전 사흘 안에 큰 거래소의 큰 해킹·출금 중단이 보도됐으면, 현금흐름이 없는 자산은 다음 1주 움직임이 크고 오를 확률이 낮다"
+source = "연구 — 코인 거래소 해킹과 값 흔들림 (F_lit_crypto_hack); 방향은 과거 사례(2019·2022·2025)뿐 (근거 약함)"
+reason = "거래소가 털리면 그 거래소의 돈이 묶이거나 팔려 나올 수 있다는 걱정에 파는 쪽이 먼저 움직이고, 피해 규모가 확인될 때까지 소식이 이어져 값이 크게 흔들린다"
+read_by = "조사"
+conditions = ["S_q_exchange_hack"]
+evidence = ["F_lit_crypto_hack"]
+strength = "낮음"
+check = ["research_direction"]
+seen_until = "2026-10-30"
+note = "2026-10-30 세움: 10-29 21:24 UTC 큰 거래소 해킹 의혹(의심 지갑 약 58억 달러, 출금 일부 중단, 동결 약 24억 달러)이 판단 10시간 전에 나왔고 기존 조각에는 대 볼 곳이 없었다. 방향 주장은 사례 근거라 강도 낮음, 크기 주장은 연구 근거"
+claims = [{ on = "move", dir = "up", when = "예", scope = "no_cashflow", span = ["1주"], reason = "해킹 뒤 흔들림이 커진다" }, { on = "up_odds", dir = "down", when = "예", scope = "no_cashflow", span = ["1주"], reason = "피해 규모가 확인될 때까지 파는 쪽이 앞선다(과거 사례)" }]
 
 [[hypothesis]]
 id = "Q_earnings_beat"

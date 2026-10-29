@@ -42,13 +42,13 @@ def fill(tpl: dict, value: str = "예", review_why=None) -> dict:
     for st, rd in inp["readings"].items():
         rd.update(value=value, why="가짜 이유", places=["P_fed_calendar"])
     for h in inp["hand"]:
-        h.update(p_up=0.55, size_lo=1.0, size_hi=2.0, used=[f"Q_rate_up={value}"], decisive=[f"Q_rate_up={value}"],
+        h.update(p_up=0.55, size_lo=1.0, size_hi=2.0, used=[f"Q_rate_up_shift={value}"], decisive=[f"Q_rate_up_shift={value}"],
                  reason="가짜 손 예측", confidence="보통")
     for a in inp["weights"]:
         inp["weights"][a] = {"target": 0.3, "reason": "가짜 비중"}
     for rv in inp["reviews"]:
         why = review_why or ("맞음" if rv["_info"]["verdict"] == "맞음" else "조건 흐림")
-        rv.update(why=why, wrong=[] if why == "맞음" else ["Q_rate_up"], reason="가짜 돌아보기")
+        rv.update(why=why, wrong=[] if why == "맞음" else ["Q_rate_up_shift"], reason="가짜 돌아보기")
     inp["agents"] = 4
     return inp
 
@@ -165,7 +165,7 @@ class DailyLoop(unittest.TestCase):
             D.prepare(root, d, at(d, 7, 37), fetch=False, ticker=TICK, echo=False)
             tpl = json.loads((root.day_dir(d) / "input.json").read_text(encoding="utf-8"))
             inp = fill(tpl, "예")
-            inp["hand"][0]["used"] = ["Q_rate_up=아니오"]          # 그날 대 본 값과 다름
+            inp["hand"][0]["used"] = ["Q_rate_up_shift=아니오"]          # 그날 대 본 값과 다름
             inp["hand"][1]["size_hi"] = inp["hand"][1]["size_lo"] * 3  # 폭 상한
             inp["hand"][2]["reason"] = ""                           # 이유 없는 숫자
             inp["weights"] = {a: {"target": 0.5, "reason": "r"} for a in inp["weights"]}  # 합 > 1

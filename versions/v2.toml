@@ -1,0 +1,976 @@
+# stock-rader 논리집 — Claude가 혼자 하는 가상 투자로 논리 조각화를 시험한다 (PROVISO 지식 양식)
+# 검사: python -m market.logic validate | check | audit   (PROVISO 코어를 불러 쓴다: market/logic.py)
+# 쌓는 방식은 PROVISO-Nesy domains/agent_usage/CLAUDE.md를 따른다: 모든 주장은 성적 붙은 가설, 세운 뒤의 날들로만 시험,
+# 틀리면 조건을 더해 쪼갠다(새 버전), 이전 버전은 retired + replaced_by로 남긴다.
+# 계산 조각의 모양(무엇에·어떻게·언제·방향·이유)은 손으로 적고(claims 칸), 숫자(effect의 range)는 `python -m market.fit --write`가
+# 2026-06-30까지의 시세로 기계적으로 맞춘다. 손으로 숫자를 넣거나 넓히면 audit 오류.
+# 조각 id·문장·이유에는 대상(상품·코인) 이름을 쓰지 않는다 — 다른 대상·분야에서 다시 쓴다. effect의 asset·horizon 칸은
+# '어느 대상·기간의 숫자인가'만 가리킨다(성적과 숫자는 대상별로 따로 쌓는다).
+# 조사 조각(2단계, 2026-10-21): 시세로 계산하지 않고 매일 조사 결과로 메인이 대 보는 조각(read_by = "조사", id Q_*).
+# 효과 숫자가 없고 방향 주장(claims)만 있다. 주장이 걸리는 대상은 이름 대신 성질(scope: market/config.py TRAITS)로 적는다.
+# 손 예측이 이 조각들을 쓰고, 성적은 2026-10-21 뒤의 판단으로만 쌓는다(checks.research_direction). 상한은 계산 조각과 따로(checks.MAX_RESEARCH_PIECES).
+
+[domain]
+id = "market"
+name = "가상 투자 — 시세로 계산하는 조각 (stock-rader)"
+# 효과가 작용하는 것: up_odds = 오를 확률의 승산(오를 확률 ÷ 내릴 확률), move = 기간 동안 움직임 크기(수익률 절댓값, %)
+quantities = ["up_odds", "move"]
+situation_values = ["예", "아니오", "모름"]
+max_ratio = 2  # 효과 범위와 계산한 범위의 폭 상한(상한/하한). 넓혀서 맞추지 않는다
+
+# ---------- 목표 (사용자 의도: CLAUDE.md "사용자 의도", 2026-10-20) ----------
+[[goal]]
+id = "G_test"
+text = "논리 조각화를 시험한다: 틀리면 원인을 쪼갠 논리가 쪼개기 전 버전과 기준선보다 앞으로 더 잘 맞히는지 본다 (돈을 버는 것이 목표가 아니다)"
+
+[[goal]]
+id = "G_predict"
+text = "대상마다 다음 거래일·1주·4주 뒤를 이유와 함께 예측하고 시장 결과로 채점받는다 ('모든 에이전트 작업이 시험')"
+parent = "G_test"
+
+[[goal]]
+id = "G_timing"
+text = "'지금이 어떤 시기냐'(추세, 겁먹은 시기 등)가 중요하다는 것도 조각으로 잡히는지 본다"
+parent = "G_test"
+
+[[goal]]
+id = "G_research"
+text = "조사 범위도 논리집에 쌓는다: 어디를 봤더니 좋았다, 어디는 정보가 없었다 (2단계)"
+parent = "G_test"
+
+[[goal]]
+id = "G_record"
+text = "기록을 꼼꼼히 남긴다: 덧붙이기만 하고, 결과 전에 말했다는 증거를 남긴다"
+parent = "G_test"
+
+[[goal]]
+id = "G_report"
+text = "매일 투자하는 사람이 쓰듯 무엇을 왜 샀고 얼마를 벌고 잃었는지 보고서를 쓴다"
+parent = "G_test"
+
+# ---------- 상태: 가격으로 대 보는 조각의 조건 (계산: market/pieces.py, '봉' = 그 대상의 일봉 하나) ----------
+[[state]]
+id = "S_trend_20"
+text = "최근 20봉 수익률이 양수다"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_trend_60"
+text = "최근 60봉 수익률이 양수다"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_above_ma200"
+text = "종가가 최근 200봉 평균보다 위다"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_drop_5"
+text = "최근 5봉에 평소 한 주 움직임(60봉 하루 변동성 × √5)보다 크게 내렸다"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_vol_high"
+text = "최근 20봉 하루 변동성이 최근 250봉 하루 변동성보다 크다 (흔들림이 평소보다 큰 시기)"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_deep_drawdown"
+text = "최근 250봉 고점보다 평소 한 달 움직임의 두 배(250봉 하루 변동성 × √20 × 2)보다 깊이 빠져 있다"
+known_before = true
+serves = "G_timing"
+
+[[state]]
+id = "S_big_move"
+text = "마지막 봉의 움직임이 평소 하루 움직임(60봉 하루 변동성)의 두 배를 넘었다"
+known_before = true
+serves = "G_timing"
+
+# ---------- 상태: 조사로 대 보는 조건 (2단계, 2026-10-21. 매일 조사 → 메인이 예/아니오/일부/모름으로 대 본다) ----------
+# ask = 조사 질문(조사 에이전트에게 그대로 준다), angle = 조사 각도. 판단 시각 전에 나온 정보로만 대 본다(known_before).
+[[state]]
+id = "S_q_rate_up"
+text = "기준이 되는 중앙은행이 금리를 올리는 중이거나, 다음 결정에서 올릴 것으로 시장이 보는 쪽이 우세하다"
+known_before = true
+serves = "G_timing"
+read_by = "조사"
+angle = "금리·환율·정책"
+ask = "미국 중앙은행(연준)과 한국은행은 지금 금리를 올리는 중인가, 내리는 중인가, 멈춘 상태인가? 다음 결정 날짜와 시장이 보는 확률(예: 금리 선물로 본 확률)은? 두 곳이 다르면 둘 다 적는다"
+
+[[state]]
+id = "S_q_home_currency_weak"
+text = "계좌 통화가 기준 외화에 대해 최근 한 달 사이 뚜렷하게 약해지는 중이다 (환율이 오르는 중)"
+known_before = true
+serves = "G_timing"
+read_by = "조사"
+angle = "금리·환율·정책"
+ask = "달러-원 환율이 최근 한 달(약 20거래일) 사이 얼마나 움직였나? 원화가 약해지는 중인가(환율이 오르는 중인가)? 판단 시각 직전 값과 한 달 전 값, 출처"
+
+[[state]]
+id = "S_q_risk_off"
+text = "시장이 겁먹은 상태다: 앞으로의 흔들림 예상(공포 지수)이 평소보다 높거나 최근 크게 올랐고, 안전한 쪽으로 돈이 몰린다"
+known_before = true
+serves = "G_timing"
+read_by = "조사"
+angle = "미국 시장"
+ask = "미국 주식 공포 지수(VIX)의 지금 값과 최근 한 달 범위·1년 평균은? 국내 공포 지수(VKOSPI)와 코인 공포·탐욕 지수도 있으면 적는다. 안전 자산(국채·금·달러)으로 돈이 몰리는 기사가 있나?"
+
+[[state]]
+id = "S_q_event_soon"
+text = "다음 거래일(또는 다음 하루) 안에 큰 일정(금리 결정, 물가 발표, 고용 발표)이 있다"
+known_before = true
+serves = "G_timing"
+read_by = "조사"
+angle = "금리·환율·정책"
+ask = "오늘 판단 시각부터 다음 거래일 장 마감까지 미국·한국의 금리 결정, 소비자물가(CPI) 발표, 고용 발표가 있나? 날짜와 한국 시간, 공식 일정표 링크"
+
+[[state]]
+id = "S_q_bigcap_earnings"
+text = "다음 거래일(또는 다음 하루) 안에 지수의 큰 몫을 차지하는 종목(지수 비중 상위 몇 종목)의 실적 발표가 있거나, 판단 직전 하루 안에 나왔다"
+known_before = true
+serves = "G_timing"
+read_by = "조사"
+angle = "한국 시장"
+ask = "오늘 판단 시각부터 다음 거래일 장 마감까지, 또는 판단 직전 하루 안에 한국 지수(KOSPI200)와 미국 지수(S&P500)의 비중 상위 종목 실적 발표가 있나? 회사, 발표 날짜와 한국 시간, 지수 비중(대략), 출처"
+
+# ---------- 사실: 근거 문헌 (2026-10-20 웹 검색으로 실재 확인. 본문은 옮기지 않고 요지만) ----------
+# kind = 출처 종류(연구 / 통념 / 실험 결과 / 이 저장소의 기록), strength = 근거 강도(낮음 / 보통 / 높음): 이 분야(지수·코인의 시계열)에 바로 맞는 정도
+
+[[state]]
+id = "S_q_earnings_beat"
+text = "이 종목의 회사가 판단 직전 열흘 안에 낸 실적(잠정 실적 포함)이 시장 예상(증권사 전망 평균)보다 뚜렷하게 좋았다"
+known_before = true
+serves = "G_timing"
+read_by = "조사"
+angle = "한국 시장"
+per_asset = true
+ask = "이 회사가 판단 직전 열흘 안에 실적(잠정 실적 포함)을 냈나? 냈다면 영업이익이 증권사 전망 평균(컨센서스)보다 몇 % 높거나 낮았나? 발표 날짜·시각, 전망 평균의 출처, 공시나 기사 링크"
+[[fact]]
+id = "F_lit_tsmom"
+text = "시계열 모멘텀: 58개 선물(주가지수·통화·원자재·채권)에서 지난 1~12개월 수익률이 다음 수익률을 같은 방향으로 예측했다(긴 기간에서는 일부 되돌림)"
+checked = 2026-10-20
+source = "연구 — Moskowitz, Ooi, Pedersen (2012), Time Series Momentum, Journal of Financial Economics 104(2), 228–250, doi:10.1016/j.jfineco.2011.11.003"
+url = "https://papers.ssrn.com/abstract=2089463"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_tsmom_weak"
+text = "반대 근거: 자산마다 따로 회귀하면 시계열 모멘텀의 증거가 약하고, 수익은 과거 평균만 쓰는 전략과 거의 같다"
+checked = 2026-10-20
+source = "연구 — Huang, Li, Wang, Zhou (2020), Time series momentum: Is it there?, Journal of Financial Economics 135(3), 774–794, doi:10.1016/j.jfineco.2019.08.004"
+url = "https://ideas.repec.org/a/eee/jfinec/v135y2020i3p774-794.html"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_crypto_mom"
+text = "코인 시장에서 강한 시계열 모멘텀(한 주 오르면 다음 주도 오르는 경향)과 관심 지표의 예측력이 보고됐다"
+checked = 2026-10-20
+source = "연구 — Liu, Tsyvinski (2021), Risks and Returns of Cryptocurrency, Review of Financial Studies 34(6), 2689–2727"
+url = "https://ideas.repec.org/a/oup/rfinst/v34y2021i6p2689-2727..html"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_ma_rules"
+text = "이동평균 규칙: 1897–1986 다우지수에서 이동평균 위(사기 신호) 뒤 수익이 아래(팔기 신호) 뒤보다 높았고, 팔기 신호 뒤 수익은 음수였다"
+checked = 2026-10-20
+source = "연구 — Brock, Lakonishok, LeBaron (1992), Simple Technical Trading Rules and the Stochastic Properties of Stock Returns, Journal of Finance 47(5), 1731–1764"
+url = "https://ideas.repec.org/a/bla/jfinan/v47y1992i5p1731-64.html"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_faber"
+text = "10개월 이동평균 위에서만 들고 있는 단순 규칙이 여러 자산군에서 수익은 비슷하게, 변동과 낙폭은 작게 했다"
+checked = 2026-10-20
+source = "연구(실무 논문) — Faber (2007), A Quantitative Approach to Tactical Asset Allocation, Journal of Wealth Management (Spring 2007), SSRN 962461"
+url = "https://papers.ssrn.com/abstract=962461"
+kind = "연구"
+strength = "낮음"
+
+[[fact]]
+id = "F_lit_weekly_reversal"
+text = "한 주 동안 크게 오르거나 내린 개별 주식은 다음 주에 되돌아가는 경향이 있었다 (지수·코인이 아니라 개별 종목 연구)"
+checked = 2026-10-20
+source = "연구 — Lehmann (1990), Fads, Martingales, and Market Efficiency, Quarterly Journal of Economics 105(1), 1–28"
+url = "https://www.nber.org/papers/w2533"
+kind = "연구"
+strength = "낮음"
+
+[[fact]]
+id = "F_lit_arch"
+text = "변동성 뭉침: 수익률의 흔들림 크기는 지난 흔들림을 따라간다(크게 흔들린 뒤엔 크게, 잔잔한 뒤엔 잔잔하게)"
+checked = 2026-10-20
+source = "연구 — Engle (1982), Autoregressive Conditional Heteroscedasticity with Estimates of the Variance of United Kingdom Inflation, Econometrica 50(4), 987–1008"
+url = "https://ideas.repec.org/a/ecm/emetrp/v50y1982i4p987-1007.html"
+kind = "연구"
+strength = "높음"
+
+[[fact]]
+id = "F_lit_52w_high"
+text = "다우지수가 52주 고점에 가까울수록 이후 시장 수익이 높았다(고점에서 멀면 낮았다). G7 나라에서도 같은 결과"
+checked = 2026-10-20
+source = "연구 — Li, Yu (2012), Investor attention, psychological anchors, and stock return predictability, Journal of Financial Economics 104(2), 401–419, doi:10.1016/j.jfineco.2011.04.003"
+url = "https://academicnewsletter.sufe.edu.cn/info/356820"
+kind = "연구"
+strength = "낮음"
+
+[[fact]]
+id = "F_lit_leverage"
+text = "주가가 내리면 그 뒤 변동성이 커지는 경향(레버리지 효과)"
+checked = 2026-10-20
+source = "연구 — Christie (1982), The stochastic behavior of common stock variances: Value, leverage and interest rate effects, Journal of Financial Economics 10(4), 407–432, doi:10.1016/0304-405X(82)90018-6"
+url = "https://doi.org/10.1016/0304-405X(82)90018-6"
+kind = "연구"
+strength = "보통"
+
+# 2026-10-21 웹 검색으로 실재 확인 (2단계: 쪼갠 조각과 조사 조각의 근거)
+[[fact]]
+id = "F_lit_mom_crash"
+text = "추세 따라가기(모멘텀)는 가끔 크고 오래가는 손실을 내는데, 시장이 내린 뒤 흔들림이 큰 때에 몰리고 시장이 갑자기 되오를 때 일어난다(어느 정도 미리 알 수 있다)"
+checked = 2026-10-21
+source = "연구 — Daniel, Moskowitz (2016), Momentum crashes, Journal of Financial Economics 122(2), 221–247, doi:10.1016/j.jfineco.2015.12.002"
+url = "https://www.nber.org/papers/w20439"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_mom_moments"
+text = "모멘텀의 위험(흔들림)은 시기마다 크게 달라지고 미리 알 수 있으며, 흔들림이 클 때 덜 들고 있으면 큰 손실이 대부분 사라진다"
+checked = 2026-10-21
+source = "연구 — Barroso, Santa-Clara (2015), Momentum has its moments, Journal of Financial Economics 116(1), 111–120, doi:10.1016/j.jfineco.2014.11.010"
+url = "https://ideas.repec.org/a/eee/jfinec/v116y2015i1p111-120.html"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_policy_stock"
+text = "미국 중앙은행이 예상 밖으로 금리를 0.25%p 내리면 주가 지수가 약 1% 올랐다(올리면 반대). 주로 위험을 지는 대가(앞으로의 초과 수익) 쪽이 바뀌어서다"
+checked = 2026-10-21
+source = "연구 — Bernanke, Kuttner (2005), What Explains the Stock Market's Reaction to Federal Reserve Policy?, Journal of Finance 60(3), 1221–1257"
+url = "https://www.nber.org/papers/w10402"
+kind = "연구"
+strength = "낮음"
+note = "예상 밖 결정(놀람)의 하루 반응 연구다. '올리는 시기'라는 상태가 몇 주 뒤 수익을 낮춘다는 직접 근거는 아니라서 강도를 낮게 둔다"
+
+[[fact]]
+id = "F_lit_fx_mom"
+text = "통화 모멘텀: 48개 통화(1976–2010)에서 최근 오른 통화가 이후에도 더 오른 경향(이긴 통화와 진 통화의 차이 연 최대 10%)이 있었다"
+checked = 2026-10-21
+source = "연구 — Menkhoff, Sarno, Schmeling, Schrimpf (2012), Currency momentum strategies, Journal of Financial Economics 106(3), 660–684, doi:10.1016/j.jfineco.2012.06.009"
+url = "https://openaccess.city.ac.uk/id/eprint/3296/"
+kind = "연구"
+strength = "낮음"
+note = "여러 통화를 줄 세운 비교(횡단면)다. 한 통화쌍(달러-원)의 한 달 방향이 이어진다는 직접 근거는 아니다"
+
+[[fact]]
+id = "F_lit_implied_vol"
+text = "옵션 값에 담긴 앞으로의 흔들림 예상(내재 변동성)이 지난 흔들림보다 앞으로의 실제 흔들림을 더 잘 맞혔다 (S&P 100 지수 옵션)"
+checked = 2026-10-21
+source = "연구 — Christensen, Prabhala (1998), The relation between implied and realized volatility, Journal of Financial Economics 50(2), 125–150, doi:10.1016/S0304-405X(98)00034-8"
+url = "https://doi.org/10.1016/S0304-405X(98)00034-8"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_announce_vol"
+text = "정해진 일정의 경제 발표가 금리·환율 선물의 하루 안·요일별 흔들림 무늬 대부분을 만든다(발표 직후 흔들림이 커진다)"
+checked = 2026-10-21
+source = "연구 — Ederington, Lee (1993), How Markets Process Information: News Releases and Volatility, Journal of Finance 48(4), 1161–1191"
+url = "https://ideas.repec.org/a/bla/jfinan/v48y1993i4p1161-91.html"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_announce_return"
+text = "물가·고용·금리 발표가 예정된 날 주식 초과 수익이 다른 날보다 훨씬 컸다(1958–2009 평균 0.114% vs 0.011%)"
+checked = 2026-10-21
+source = "연구 — Savor, Wilson (2013), How Much Do Investors Care About Macroeconomic Risk? Evidence from Scheduled Economic Announcements, Journal of Financial and Quantitative Analysis 48(2), 343–375"
+url = "https://ideas.repec.org/a/cup/jfinqa/v48y2013i02p343-375_00.html"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_lit_pead"
+text = "실적이 예상보다 좋았던(나빴던) 회사의 주식은 발표 뒤 몇 주~몇 달 동안 같은 쪽으로 더 움직였다(실적 발표 뒤 표류). 위험 보상으로는 설명되지 않아 값이 늦게 반응하는 것으로 읽힌다"
+checked = 2026-10-29
+source = "연구 — Bernard, Thomas (1989), Post-Earnings-Announcement Drift: Delayed Price Response or Risk Premium?, Journal of Accounting Research 27 (Supplement), 1–36, doi:10.2307/2491062"
+url = "https://ideas.repec.org/a/bla/joares/v27y1989ip1-36.html"
+kind = "연구"
+strength = "보통"
+note = "2026-10-29 웹 검색(RePEc·EconPapers 서지)으로 실재 확인. 미국 주식, 1970~80년대 자료다. 뒤의 연구들은 큰 회사일수록, 최근일수록 표류가 작아졌다고 본다 — 한국 대형주에 그대로 맞는지는 이 저장소의 기록으로 시험한다"
+
+[[fact]]
+id = "F_lit_earnings_systematic"
+text = "실적을 발표하는 회사의 주식은 발표 기간에 시장 위험(베타)이 커지고 초과 수익이 컸다. 큰 회사들의 실적 발표는 시장 전체에 대한 정보를 담는다"
+checked = 2026-10-29
+source = "연구 — Savor, Wilson (2016), Earnings Announcements and Systematic Risk, Journal of Finance 71(1), 83–138, doi:10.1111/jofi.12361"
+url = "https://doi.org/10.1111/jofi.12361"
+kind = "연구"
+strength = "낮음"
+note = "2026-10-29 Crossref로 실재 확인. 개별 주식 연구라 지수 묶음의 움직임 크기에 바로 맞지는 않는다(강도 낮음)"
+
+[[fact]]
+id = "F_lit_pre_fomc"
+text = "미국 주식은 미국 중앙은행 금리 결정 발표 직전 24시간에 큰 초과 수익을 냈다(다른 나라 주가 지수도 비슷, 다른 경제 발표 전에는 없음)"
+checked = 2026-10-21
+source = "연구 — Lucca, Moench (2015), The Pre-FOMC Announcement Drift, Journal of Finance 70(1), 329–371, doi:10.1111/jofi.12196"
+url = "https://ideas.repec.org/a/bla/jfinan/v70y2015i1p329-371.html"
+kind = "연구"
+strength = "보통"
+
+[[fact]]
+id = "F_replay_2026"
+text = "재생(2026-07-01~10-19, 계산기만): 확률 점수 0.2755 > 늘 50% 0.25. 추세 조각(최근 20봉 오름)은 방향 시험 9칸 모두 거꾸로였고, 고점에서 깊이 빠졌을 때 오히려 더 올랐다. 한국 대형주 묶음이 넉 달 −35%, 하루 ±8~24% 움직인 날이 여럿인 흔들림 큰 기간이었다"
+checked = 2026-10-20
+source = "이 저장소의 기록 — records/replay/, docs/replay-2026-07-10.md"
+kind = "이 저장소의 기록"
+strength = "보통"
+
+[[fact]]
+id = "F_prices"
+text = "시세 출처 3곳(네이버 차트, 야후 차트, 업비트 공개 API)이 키 없이 응답하고, 끝난 일봉만 data/prices/에 저장된다. 네이버는 최대 3,000줄을 줘서 대형주 묶음 상품은 2014-07부터 있다"
+checked = 2026-10-20
+source = "자동 확인 — python -m market.prices backfill (2026-10-20)"
+
+# ---------- 규칙 (방법이 붙은 가설) ----------
+[[rule]]
+id = "R_weights"
+method = "1주 기간(5거래일 / 7일) 계산기의 오를 확률 p로 대상마다 목표 비중 = 1/3 × clamp((p − 0.40) ÷ 0.20, 0, 1), 나머지는 현금. 확률이 '모름'이면 지금 비중을 그대로 둔다. 목표 금액과 지금(체결 안 된 주문 포함) 금액의 차이가 계좌의 2%보다 작으면 거래하지 않는다"
+reason = "셋을 똑같이 나눠 사 두기(기준선)와 같은 상한(1/3)에서 출발해, 계산기가 비관적일 때만 덜 들고 낙관적일 때 다 채운다. 그래서 기준선과의 차이가 곧 계산기의 '때 고르기' 성적이다. 2% 문턱은 작은 흔들림마다 수수료를 내지 않으려는 것"
+status = "hypothesis"
+version = 1
+serves = "G_predict"
+check = ["account_vs_equal"]
+note = "2026-10-20 1단계에서 정함(재생 계좌용). 숫자 0.40·0.20·1/3·2%는 기록에서 맞춘 값이 아니라 미리 정한 모양이다. 진짜 계좌의 비중은 2단계에서 손 예측이 정한다(docs/design.md)"
+
+# ---------- 조사 조각 (2단계, 2026-10-21 세움. 손 예측이 쓴다. 숫자 없이 방향 주장만; 시험은 2026-10-21 뒤 판단으로만) ----------
+# claims: on(무엇에) · dir(방향) · when(조건 값) · scope(걸리는 대상의 성질, config.TRAITS) · span(걸리는 기간: 다음/1주/4주, 없으면 셋 다) · reason
+[[hypothesis]]
+id = "Q_rate_up"
+text = "기준이 되는 중앙은행이 금리를 올리는 쪽이면 위험 자산이 오를 확률이 낮다"
+source = "연구 — 예상 밖 금리 결정과 주가 (F_lit_policy_stock); 상태로서의 효과는 통념 수준"
+reason = "금리가 오르면 앞으로 받을 돈의 지금 값이 줄고, 사람들이 위험을 지는 대가를 더 요구한다"
+read_by = "조사"
+conditions = ["S_q_rate_up"]
+evidence = ["F_lit_policy_stock"]
+strength = "낮음"
+check = ["research_direction"]
+seen_until = "2026-10-21"
+claims = [{ on = "up_odds", dir = "down", when = "예", scope = "all", reason = "금리가 오르는 쪽이면 위험을 지는 대가가 커져 값이 눌린다" }]
+
+[[hypothesis]]
+id = "Q_home_currency_weak"
+text = "계좌 통화가 약해지는 중이면 해외에서 외화로 값이 정해지는 자산은 계좌 통화로 오를 확률이 높다"
+source = "연구 — 통화 모멘텀 (F_lit_fx_mom); 환산 몫은 계산으로 성립"
+reason = "외화로 값이 정해지는 자산의 계좌 통화 값은 환율을 같이 타고, 환율의 방향은 한동안 이어지는 경향이 있다"
+read_by = "조사"
+conditions = ["S_q_home_currency_weak"]
+evidence = ["F_lit_fx_mom"]
+strength = "낮음"
+check = ["research_direction"]
+seen_until = "2026-10-21"
+claims = [{ on = "up_odds", dir = "up", when = "예", scope = "priced_abroad", reason = "환율이 계속 오르면 외화 자산의 원화 값이 그만큼 더 오른다" }]
+
+[[hypothesis]]
+id = "Q_risk_off"
+text = "시장이 겁먹은 상태면 앞으로의 움직임이 크다"
+source = "연구 — 내재 변동성의 예측력 (F_lit_implied_vol)"
+reason = "공포 지수는 옵션 값에 담긴 앞으로의 흔들림 예상이고, 그 예상이 실제 흔들림을 잘 맞혔다"
+read_by = "조사"
+conditions = ["S_q_risk_off"]
+evidence = ["F_lit_implied_vol"]
+strength = "보통"
+check = ["research_direction"]
+seen_until = "2026-10-21"
+claims = [{ on = "move", dir = "up", when = "예", scope = "all", reason = "흔들림 예상이 높으면 실제 흔들림도 크다" }]
+
+[[hypothesis]]
+id = "Q_event_soon"
+text = "다음 하루 안에 큰 일정이 있으면 다음 날 움직임이 크고, 주식 묶음은 오를 확률이 조금 높다"
+source = "연구 — 발표와 흔들림 (F_lit_announce_vol), 발표일 수익 (F_lit_announce_return, F_lit_pre_fomc)"
+reason = "정해진 발표 때 새 정보가 한꺼번에 들어와 값이 크게 움직이고, 그 위험을 지는 대가로 발표일 주식 수익이 컸다"
+read_by = "조사"
+conditions = ["S_q_event_soon"]
+evidence = ["F_lit_announce_vol", "F_lit_announce_return", "F_lit_pre_fomc"]
+strength = "보통"
+check = ["research_direction"]
+seen_until = "2026-10-21"
+claims = [{ on = "move", dir = "up", when = "예", scope = "all", span = ["다음"], reason = "발표 때 새 정보가 몰려 흔들림이 커진다" }, { on = "up_odds", dir = "up", when = "예", scope = "equity", span = ["다음"], reason = "발표 위험을 지는 대가로 발표일 주식 수익이 컸다" }]
+
+[[hypothesis]]
+id = "Q_bigcap_earnings"
+text = "다음 하루 안에 지수의 큰 몫을 차지하는 종목의 실적 발표가 있으면 주식 묶음의 다음 날 움직임이 크다"
+source = "연구 — 실적 발표와 시장 위험 (F_lit_earnings_systematic); 이 저장소의 기록 — 2026-10-27·28 한국 묶음 하루 +3.38%·+7.59% (근거 1건)"
+reason = "지수가 몇 종목에 쏠려 있으면 그 종목의 실적이 곧 지수의 새 정보다. 정해진 날에 정보가 한꺼번에 들어오므로 그날 흔들림이 커진다. 금리·물가·고용만 보는 '큰 일정 직전'(Q_event_soon)은 이 날을 놓친다"
+read_by = "조사"
+conditions = ["S_q_bigcap_earnings"]
+evidence = ["F_lit_earnings_systematic"]
+strength = "낮음"
+check = ["research_direction"]
+seen_until = "2026-10-29"
+note = "2026-10-29 세움: 2026-10-28 손 예측(한국 묶음 1일)이 반도체 대형주 실적일에 크기 1.2–2.4%를 말했는데 +7.59%였다. 실적 날짜는 판단 때 알 수 있었다. 방향 주장은 하지 않는다(실적이 좋고 나쁨은 판단 때 모른다)"
+claims = [{ on = "move", dir = "up", when = "예", scope = "equity", span = ["다음"], reason = "지수 큰 몫 종목의 실적이 나오는 날 지수 흔들림이 커진다" }]
+
+[[hypothesis]]
+id = "Q_earnings_beat"
+text = "회사의 실적이 예상보다 뚜렷하게 좋았으면 그 회사 주식은 그 뒤 1주·4주에 오를 확률이 높다"
+source = "연구 — 실적 발표 뒤 표류 (F_lit_pead)"
+reason = "예상보다 좋은 실적에 값이 한 번에 다 반응하지 않고, 몇 주에 걸쳐 따라간다"
+read_by = "조사"
+conditions = ["S_q_earnings_beat"]
+evidence = ["F_lit_pead"]
+strength = "낮음"
+check = ["research_direction"]
+seen_until = "2026-10-29"
+note = "2026-10-29 세움(대화 세션, 종목 사기를 더하면서). 종목마다 대 보는 첫 조각이다(조건 상태 per_asset). 손 계좌가 종목을 사는 까닭을 이 조각처럼 조각에 묶어야 채점·쪼개기가 된다. 대형주는 표류가 작다는 반대 근거가 있어 강도 낮음"
+claims = [{ on = "up_odds", dir = "up", when = "예", scope = "single", span = ["1주", "4주"], reason = "예상보다 좋은 실적에 값이 늦게 따라가 몇 주 더 오른다" }]
+
+[[hypothesis]]
+id = "H_hand_vs_calc"
+text = "조사로 '지금이 어떤 시기냐'를 대 본 손 예측이 시세 모양만 보는 계산기보다 확률 점수가 낮다(더 잘 맞힌다)"
+source = "이 저장소의 기록 — 재생에서 계산기가 내리는 시기를 못 알아봄 (F_replay_2026)"
+reason = "재생에서 계산기는 맞춘 기간의 오르는 시기에 묶여 있었다. 금리·환율·겁먹은 정도는 시세 모양에 늦게 나타난다"
+evidence = ["F_replay_2026"]
+check = ["hand_vs_calc"]
+seen_until = "2026-10-21"
+
+[[hypothesis]]
+id = "H_place_official"
+text = "금리 결정·발표 일정 질문은 공식 기관 페이지(일정표·발표문)에서 다른 곳보다 더 자주 찾고 덜 늦는다"
+source = "통념 — 일정과 결정은 공식 기관이 먼저 낸다 (조사 범위에 대한 가설, G_research)"
+reason = "언론은 공식 발표를 옮겨 쓰므로 늦거나 빠뜨릴 수 있고, 일정표는 미리 정해져 있다"
+check = ["place_official"]
+seen_until = "2026-10-21"
+
+# ---------- 계산 조각 (python -m market.fit --write가 effect·fit·not_set 칸을 다시 쓴다; 모양은 손으로) ----------
+[[hypothesis]]
+id = "C_base"
+text = "아무 조각도 켜지지 않았을 때의 오를 확률(승산)과 움직임 크기"
+source = "이 저장소의 기록 — 2026-06-30까지의 시세"
+reason = "계산의 출발점. 대상과 기간마다 오르는 날의 비율과 흔들림 크기가 다르므로 대상·기간마다 따로 맞춘다"
+check = ["piece_size"]
+seen_until = "2026-06-30"
+claims = [{ on = "up_odds", op = "base", reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)" }, { on = "move", op = "base", reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 18/18 (069500:1, 069500:1, 069500:5, 069500:5, 069500:20, 069500:20, 360750:1, 360750:1, 360750:5, 360750:5, 360750:20, 360750:20, KRW-BTC:1, KRW-BTC:1, KRW-BTC:7, KRW-BTC:7, KRW-BTC:28, KRW-BTC:28)"
+not_set = []
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.15, 1.25]
+asset = "069500"
+horizon = 1
+n = 2675
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [0.559, 1.11]
+asset = "069500"
+horizon = 1
+n = 2655
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.23, 1.47]
+asset = "069500"
+horizon = 5
+n = 2671
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [1.43, 2.86]
+asset = "069500"
+horizon = 5
+n = 2663
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.23, 1.77]
+asset = "069500"
+horizon = 20
+n = 2656
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [2.29, 4.58]
+asset = "069500"
+horizon = 20
+n = 2653
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.02, 1.23]
+asset = "360750"
+horizon = 1
+n = 1192
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [0.451, 0.902]
+asset = "360750"
+horizon = 1
+n = 1173
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.09, 1.59]
+asset = "360750"
+horizon = 5
+n = 1188
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [1.11, 2.22]
+asset = "360750"
+horizon = 5
+n = 1179
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [1.53, 2.69]
+asset = "360750"
+horizon = 20
+n = 1173
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [3.21, 6.42]
+asset = "360750"
+horizon = 20
+n = 1171
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [0.885, 0.994]
+asset = "KRW-BTC"
+horizon = 1
+n = 2950
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [0.898, 1.79]
+asset = "KRW-BTC"
+horizon = 1
+n = 2947
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [0.913, 1.17]
+asset = "KRW-BTC"
+horizon = 7
+n = 2944
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [3.35, 6.7]
+asset = "KRW-BTC"
+horizon = 7
+n = 2943
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "base"
+range = [0.992, 1.48]
+asset = "KRW-BTC"
+horizon = 28
+n = 2923
+reason = "모든 조각이 '아니오'일 때의 오를 확률의 승산(로지스틱 회귀의 절편)"
+[[hypothesis.effect]]
+on = "move"
+op = "base"
+range = [8.66, 17.3]
+asset = "KRW-BTC"
+horizon = 28
+n = 2923
+reason = "조각의 크기 효과를 걷어 낸 움직임 크기에서, 2배 폭 창이 가장 많이 담는 구간"
+
+[[hypothesis]]
+id = "C_trend_20"
+text = "최근 20봉 동안 올랐으면 앞으로도 오를 확률이 높다"
+source = "연구 — 시계열 모멘텀 (F_lit_tsmom, F_lit_crypto_mom)"
+reason = "새 소식에 사람들이 천천히 반응해(덜 반응) 값이 한동안 같은 쪽으로 이어진다"
+status = "retired"
+replaced_by = ["C_trend_20_calm"]
+note = "2026-10-21 돌아보기: 재생에서 방향 시험 9칸 모두 거꾸로(0/9). 까닭 = 조건 흐림 — 추세는 흔들림이 큰 시기에 꺾인다는 조건이 빠졌다(F_lit_mom_crash, F_lit_mom_moments). 흔들림이 평소보다 크지 않을 때로 쪼갠 C_trend_20_calm으로 바꾼다. 이 버전은 versions/v1.toml로 계속 같이 채점한다"
+conditions = ["S_trend_20"]
+evidence = ["F_lit_tsmom", "F_lit_crypto_mom"]
+against = ["F_lit_tsmom_weak", "F_replay_2026"]
+strength = "보통"
+check = ["piece_direction"]
+seen_until = "2026-06-30"
+claims = [{ on = "up_odds", op = "mul", dir = "up", when = "예", reason = "한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 4/9 (069500:1, 360750:5, KRW-BTC:1, KRW-BTC:7)"
+not_set = ["069500:5 up_odds: 방향이 데이터와 안 맞음(값 1.045, 표준오차 안쪽이거나 반대쪽)", "069500:20 up_odds: 너무 불확실(범위 폭 2.17배 > 상한 2배)", "360750:1 up_odds: 방향이 데이터와 안 맞음(값 1.121, 표준오차 안쪽이거나 반대쪽)", "360750:20 up_odds: 너무 불확실(범위 폭 3.20배 > 상한 2배)", "KRW-BTC:28 up_odds: 너무 불확실(범위 폭 2.20배 > 상한 2배)"]
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.03, 1.22]
+dir = "up"
+when = { S_trend_20 = "예" }
+asset = "069500"
+horizon = 1
+n = 2675
+reason = "한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.09, 1.93]
+dir = "up"
+when = { S_trend_20 = "예" }
+asset = "360750"
+horizon = 5
+n = 1188
+reason = "한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.04, 1.24]
+dir = "up"
+when = { S_trend_20 = "예" }
+asset = "KRW-BTC"
+horizon = 1
+n = 2950
+reason = "한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.14, 1.71]
+dir = "up"
+when = { S_trend_20 = "예" }
+asset = "KRW-BTC"
+horizon = 7
+n = 2944
+reason = "한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+
+[[hypothesis]]
+id = "C_trend_20_calm"
+text = "최근 20봉 동안 올랐고 최근 흔들림이 평소보다 크지 않으면 앞으로도 오를 확률이 높다"
+source = "연구 — 시계열 모멘텀 (F_lit_tsmom)과 모멘텀이 흔들림 큰 때 꺾임 (F_lit_mom_crash, F_lit_mom_moments)"
+reason = "새 소식에 덜 반응한 몫이 남아 값이 한동안 같은 쪽으로 이어지지만, 흔들림이 큰 시기에는 추세가 갑자기 뒤집히는 일이 몰린다"
+conditions = ["S_trend_20", "S_vol_high"]
+evidence = ["F_lit_tsmom", "F_lit_crypto_mom", "F_lit_mom_crash", "F_lit_mom_moments"]
+against = ["F_lit_tsmom_weak"]
+strength = "보통"
+check = ["piece_direction"]
+seen_until = "2026-10-21"
+note = "2026-10-21 C_trend_20을 조건을 더해 쪼갠 새 버전. 숫자는 2026-06-30까지의 시세로만 맞춘다(재생 기간으로 맞추지 않는다). 쪼갤 생각이 재생 결과에서 나왔으므로 시험은 2026-10-21 뒤 기준 날짜로만 한다"
+claims = [{ on = "up_odds", op = "mul", dir = "up", when = "예", also = { S_vol_high = "아니오" }, reason = "잔잔한 시기에 한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 4/9 (360750:1, 360750:5, KRW-BTC:1, KRW-BTC:7)"
+not_set = ["069500:1 up_odds: 방향이 데이터와 안 맞음(값 1.045, 표준오차 안쪽이거나 반대쪽)", "069500:5 up_odds: 방향이 데이터와 안 맞음(값 0.878, 표준오차 안쪽이거나 반대쪽)", "069500:20 up_odds: 너무 불확실(범위 폭 2.05배 > 상한 2배)", "360750:20 up_odds: 너무 불확실(범위 폭 3.05배 > 상한 2배)", "KRW-BTC:28 up_odds: 너무 불확실(범위 폭 2.27배 > 상한 2배)"]
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.05, 1.35]
+dir = "up"
+when = { S_trend_20 = "예", S_vol_high = "아니오" }
+asset = "360750"
+horizon = 1
+n = 1192
+reason = "잔잔한 시기에 한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.18, 2.04]
+dir = "up"
+when = { S_trend_20 = "예", S_vol_high = "아니오" }
+asset = "360750"
+horizon = 5
+n = 1188
+reason = "잔잔한 시기에 한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.05, 1.24]
+dir = "up"
+when = { S_trend_20 = "예", S_vol_high = "아니오" }
+asset = "KRW-BTC"
+horizon = 1
+n = 2950
+reason = "잔잔한 시기에 한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.01, 1.53]
+dir = "up"
+when = { S_trend_20 = "예", S_vol_high = "아니오" }
+asset = "KRW-BTC"
+horizon = 7
+n = 2944
+reason = "잔잔한 시기에 한 달 남짓 이어진 오름은 덜 반응한 몫이 남아 있다는 신호"
+
+[[hypothesis]]
+id = "C_trend_60"
+text = "최근 60봉 동안 올랐으면 앞으로도 오를 확률이 높다"
+source = "연구 — 시계열 모멘텀 (F_lit_tsmom)"
+reason = "몇 달 단위의 추세가 문헌에서 가장 꾸준히 보고된 길이다(1~12개월)"
+conditions = ["S_trend_60"]
+evidence = ["F_lit_tsmom", "F_lit_crypto_mom"]
+against = ["F_replay_2026", "F_lit_tsmom_weak"]
+strength = "보통"
+check = ["piece_direction"]
+seen_until = "2026-06-30"
+note = "2026-10-21 돌아보기: 재생 방향 시험 9칸 중 4 — 동전 던지기와 구분되지 않는다. 계산에 쓰인 효과도 하나(1일 기간)뿐이다. 까닭을 가를 근거가 모자라 그대로 두고, 진짜 계좌 기록(2026-10-21 뒤)으로 가른다"
+claims = [{ on = "up_odds", op = "mul", dir = "up", when = "예", reason = "석 달 남짓 이어진 오름은 추세가 살아 있다는 신호" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 1/9 (KRW-BTC:1)"
+not_set = ["069500:1 up_odds: 방향이 데이터와 안 맞음(값 1.018, 표준오차 안쪽이거나 반대쪽)", "069500:5 up_odds: 방향이 데이터와 안 맞음(값 1.088, 표준오차 안쪽이거나 반대쪽)", "069500:20 up_odds: 너무 불확실(범위 폭 2.51배 > 상한 2배)", "360750:1 up_odds: 방향이 데이터와 안 맞음(값 1.028, 표준오차 안쪽이거나 반대쪽)", "360750:5 up_odds: 방향이 데이터와 안 맞음(값 1.050, 표준오차 안쪽이거나 반대쪽)", "360750:20 up_odds: 너무 불확실(범위 폭 3.70배 > 상한 2배)", "KRW-BTC:7 up_odds: 방향이 데이터와 안 맞음(값 1.110, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:28 up_odds: 너무 불확실(범위 폭 2.54배 > 상한 2배)"]
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.05, 1.24]
+dir = "up"
+when = { S_trend_60 = "예" }
+asset = "KRW-BTC"
+horizon = 1
+n = 2950
+reason = "석 달 남짓 이어진 오름은 추세가 살아 있다는 신호"
+
+[[hypothesis]]
+id = "C_above_ma200"
+text = "종가가 200봉 평균보다 위면 오를 확률이 높다"
+source = "연구 — 이동평균 규칙 (F_lit_ma_rules, F_lit_faber)"
+reason = "긴 평균 위는 오르는 시기, 아래는 내리는 시기의 거친 표시다. 아래일 때 뒤 수익이 낮았다는 기록이 길다"
+conditions = ["S_above_ma200"]
+evidence = ["F_lit_ma_rules", "F_lit_faber"]
+against = ["F_replay_2026"]
+strength = "보통"
+check = ["piece_direction"]
+seen_until = "2026-06-30"
+note = "2026-10-21 돌아보기: 재생 방향 시험 7칸 중 2. 그런데 맞춘 시세가 방향을 받쳐 주지 않아 효과가 하나도 세워지지 않았으므로 계산기 결론에는 쓰이지 않았다. 문헌은 백 년 단위의 미국 지수인데 재생은 넉 달이다. 그대로 둔다"
+claims = [{ on = "up_odds", op = "mul", dir = "up", when = "예", reason = "긴 평균 위는 오르는 시기라는 표시" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 0/9"
+not_set = ["069500:1 up_odds: 방향이 데이터와 안 맞음(값 1.009, 표준오차 안쪽이거나 반대쪽)", "069500:5 up_odds: 너무 불확실(범위 폭 2.02배 > 상한 2배)", "069500:20 up_odds: 너무 불확실(범위 폭 4.12배 > 상한 2배)", "360750:1 up_odds: 방향이 데이터와 안 맞음(값 0.751, 표준오차 안쪽이거나 반대쪽)", "360750:5 up_odds: 너무 불확실(범위 폭 2.49배 > 상한 2배)", "360750:20 up_odds: 너무 불확실(범위 폭 7.20배 > 상한 2배)", "KRW-BTC:1 up_odds: 방향이 데이터와 안 맞음(값 0.952, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:7 up_odds: 너무 불확실(범위 폭 2.23배 > 상한 2배)", "KRW-BTC:28 up_odds: 너무 불확실(범위 폭 5.08배 > 상한 2배)"]
+
+[[hypothesis]]
+id = "C_drop_5"
+text = "최근 5봉에 평소보다 크게 내렸으면 되오를 확률이 높다"
+source = "연구(다른 대상) — 한 주 되돌림 (F_lit_weekly_reversal); 이 대상들에는 통념 수준"
+reason = "짧은 기간의 큰 하락에는 겁먹은 매도(지나친 반응)가 섞여 있어 일부 되돌아간다"
+conditions = ["S_drop_5"]
+evidence = ["F_lit_weekly_reversal"]
+against = ["F_replay_2026"]
+strength = "낮음"
+check = ["piece_direction"]
+seen_until = "2026-06-30"
+note = "2026-10-21 돌아보기: 재생 방향 시험 6칸 중 4(주장대로 다음 날 되오름이 더 많았다). 효과가 세워지지 않아 계산에는 안 쓰였다. 그대로 둔다"
+claims = [{ on = "up_odds", op = "mul", dir = "up", when = "예", reason = "지나친 반응의 일부가 되돌아간다" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 1/9 (360750:1)"
+not_set = ["069500:1 up_odds: 방향이 데이터와 안 맞음(값 0.971, 표준오차 안쪽이거나 반대쪽)", "069500:5 up_odds: 방향이 데이터와 안 맞음(값 1.242, 표준오차 안쪽이거나 반대쪽)", "069500:20 up_odds: 너무 불확실(범위 폭 2.96배 > 상한 2배)", "360750:5 up_odds: 너무 불확실(범위 폭 2.40배 > 상한 2배)", "360750:20 up_odds: 너무 불확실(범위 폭 5.83배 > 상한 2배)", "KRW-BTC:1 up_odds: 방향이 데이터와 안 맞음(값 1.102, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:7 up_odds: 방향이 데이터와 안 맞음(값 0.990, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:28 up_odds: 너무 불확실(범위 폭 3.58배 > 상한 2배)"]
+[[hypothesis.effect]]
+on = "up_odds"
+op = "mul"
+range = [1.0, 1.48]
+dir = "up"
+when = { S_drop_5 = "예" }
+asset = "360750"
+horizon = 1
+n = 1192
+reason = "지나친 반응의 일부가 되돌아간다"
+
+[[hypothesis]]
+id = "C_drawdown"
+text = "1년 고점보다 깊이 빠져 있으면 오를 확률은 낮고 움직임은 크다"
+source = "연구 — 52주 고점 기준점 (F_lit_52w_high), 레버리지 효과 (F_lit_leverage)"
+reason = "사람들은 1년 고점을 기준점으로 삼아 고점에서 먼 시장의 나쁜 소식을 덜 반영한다(뒤 수익이 낮다). 그리고 값이 내린 뒤에는 흔들림이 커진다"
+conditions = ["S_deep_drawdown"]
+evidence = ["F_lit_52w_high", "F_lit_leverage"]
+against = ["F_replay_2026"]
+strength = "낮음"
+check = ["piece_direction", "piece_size"]
+seen_until = "2026-06-30"
+note = "2026-10-21 돌아보기: 재생 방향 시험 16칸 중 4. 오를 확률 쪽 주장(깊이 빠지면 덜 오른다)은 8칸 모두 거꾸로 — 이유 틀림 후보지만 근거가 한 기간뿐이고, 그 효과는 세워지지 않아 계산에 안 쓰였다. 움직임 쪽은 8칸 중 4. 그대로 두고 진짜 계좌 기록으로 가른다(재생 기간으로 뒤집어 맞추지 않는다)"
+claims = [{ on = "up_odds", op = "mul", dir = "down", when = "예", reason = "고점에서 먼 시장은 이후 수익이 낮았다" }, { on = "move", op = "mul", dir = "up", when = "예", reason = "내린 뒤에는 흔들림이 커진다" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 3/18 (069500:1, 360750:1, 360750:5)"
+not_set = ["069500:1 up_odds: 방향이 데이터와 안 맞음(값 0.933, 표준오차 안쪽이거나 반대쪽)", "069500:5 up_odds: 방향이 데이터와 안 맞음(값 0.964, 표준오차 안쪽이거나 반대쪽)", "069500:5 move: 방향이 데이터와 안 맞음(값 1.039, 표준오차 안쪽이거나 반대쪽)", "069500:20 up_odds: 너무 불확실(범위 폭 2.13배 > 상한 2배)", "069500:20 move: 방향이 데이터와 안 맞음(값 0.892, 표준오차 안쪽이거나 반대쪽)", "360750:1 up_odds: 방향이 데이터와 안 맞음(값 0.940, 표준오차 안쪽이거나 반대쪽)", "360750:5 up_odds: 너무 불확실(범위 폭 3.37배 > 상한 2배)", "360750:20 up_odds: 너무 불확실(범위 폭 13.22배 > 상한 2배)", "360750:20 move: 너무 불확실(범위 폭 2.52배 > 상한 2배)", "KRW-BTC:1 up_odds: 방향이 데이터와 안 맞음(값 1.027, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:1 move: 방향이 데이터와 안 맞음(값 1.021, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:7 up_odds: 방향이 데이터와 안 맞음(값 0.958, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:7 move: 방향이 데이터와 안 맞음(값 1.027, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:28 up_odds: 너무 불확실(범위 폭 2.21배 > 상한 2배)", "KRW-BTC:28 move: 방향이 데이터와 안 맞음(값 0.932, 표준오차 안쪽이거나 반대쪽)"]
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.02, 1.12]
+dir = "up"
+when = { S_deep_drawdown = "예" }
+asset = "069500"
+horizon = 1
+n = 2655
+reason = "내린 뒤에는 흔들림이 커진다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.4, 1.71]
+dir = "up"
+when = { S_deep_drawdown = "예" }
+asset = "360750"
+horizon = 1
+n = 1173
+reason = "내린 뒤에는 흔들림이 커진다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.14, 1.77]
+dir = "up"
+when = { S_deep_drawdown = "예" }
+asset = "360750"
+horizon = 5
+n = 1179
+reason = "내린 뒤에는 흔들림이 커진다"
+
+[[hypothesis]]
+id = "C_vol_high"
+text = "최근 흔들림이 1년 평균보다 크면 앞으로의 움직임도 크다"
+source = "연구 — 변동성 뭉침 (F_lit_arch)"
+reason = "흔들림 크기는 지난 흔들림을 따라간다"
+conditions = ["S_vol_high"]
+evidence = ["F_lit_arch"]
+against = ["F_replay_2026"]
+strength = "높음"
+check = ["piece_direction", "piece_size"]
+seen_until = "2026-06-30"
+note = "2026-10-21 돌아보기: 재생 방향 시험 9칸 중 5. 변동성 뭉침은 근거가 가장 강한 문헌이고 칸 수가 적다(겹치는 기간의 거친 비교). 잡음으로 보고 그대로 둔다"
+claims = [{ on = "move", op = "mul", dir = "up", when = "예", reason = "최근 흔들림이 크면 다음 흔들림도 크다" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 7/9 (069500:1, 069500:5, 069500:20, 360750:1, 360750:5, KRW-BTC:1, KRW-BTC:7)"
+not_set = ["360750:20 move: 방향이 데이터와 안 맞음(값 1.215, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:28 move: 방향이 데이터와 안 맞음(값 1.024, 표준오차 안쪽이거나 반대쪽)"]
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.16, 1.29]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "069500"
+horizon = 1
+n = 2655
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.06, 1.32]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "069500"
+horizon = 5
+n = 2663
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.12, 1.72]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "069500"
+horizon = 20
+n = 2653
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.12, 1.28]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "360750"
+horizon = 1
+n = 1173
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.21, 1.61]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "360750"
+horizon = 5
+n = 1179
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.37, 1.53]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "KRW-BTC"
+horizon = 1
+n = 2947
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.02, 1.34]
+dir = "up"
+when = { S_vol_high = "예" }
+asset = "KRW-BTC"
+horizon = 7
+n = 2943
+reason = "최근 흔들림이 크면 다음 흔들림도 크다"
+
+[[hypothesis]]
+id = "C_big_move"
+text = "마지막 봉이 평소의 두 배 넘게 움직였으면 앞으로의 움직임도 크다"
+source = "연구 — 변동성 뭉침 (F_lit_arch)"
+reason = "큰 충격 하나 뒤에는 흔들림이 한동안 이어진다"
+conditions = ["S_big_move"]
+evidence = ["F_lit_arch"]
+strength = "보통"
+check = ["piece_direction", "piece_size"]
+seen_until = "2026-06-30"
+claims = [{ on = "move", op = "mul", dir = "up", when = "예", reason = "큰 충격 뒤 흔들림이 이어진다" }]
+fit = "목표 종가 2026-06-30 이하 시세에서 맞춤: 세움 4/9 (069500:1, 069500:5, 360750:1, KRW-BTC:1)"
+not_set = ["069500:20 move: 너무 불확실(범위 폭 2.31배 > 상한 2배)", "360750:5 move: 방향이 데이터와 안 맞음(값 1.136, 표준오차 안쪽이거나 반대쪽)", "360750:20 move: 너무 불확실(범위 폭 3.20배 > 상한 2배)", "KRW-BTC:7 move: 방향이 데이터와 안 맞음(값 1.141, 표준오차 안쪽이거나 반대쪽)", "KRW-BTC:28 move: 너무 불확실(범위 폭 2.62배 > 상한 2배)"]
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.04, 1.25]
+dir = "up"
+when = { S_big_move = "예" }
+asset = "069500"
+horizon = 1
+n = 2655
+reason = "큰 충격 뒤 흔들림이 이어진다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.11, 1.69]
+dir = "up"
+when = { S_big_move = "예" }
+asset = "069500"
+horizon = 5
+n = 2663
+reason = "큰 충격 뒤 흔들림이 이어진다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.35, 1.74]
+dir = "up"
+when = { S_big_move = "예" }
+asset = "360750"
+horizon = 1
+n = 1173
+reason = "큰 충격 뒤 흔들림이 이어진다"
+[[hypothesis.effect]]
+on = "move"
+op = "mul"
+range = [1.42, 1.74]
+dir = "up"
+when = { S_big_move = "예" }
+asset = "KRW-BTC"
+horizon = 1
+n = 2947
+reason = "큰 충격 뒤 흔들림이 이어진다"
+# ---------- 계산 조각 끝 ----------

@@ -327,7 +327,7 @@ id = "P_blockmedia"
 name = "블록미디어 (한국어 코인 시황, RSS)"
 url = "https://www.blockmedia.co.kr/feed"
 angle = "코인"
-covers = ["S_q_risk_off"]
+covers = ["S_q_risk_off", "S_q_exchange_hack"]
 official = false
 added = 2026-10-24
 note = "2026-10-24 새로 시도: 매일 아침 뉴욕 마감 코인 시황(값·청산·까닭)이 판단 시각 전에 올라온다"
@@ -337,7 +337,7 @@ id = "P_cointelegraph_rss"
 name = "Cointelegraph (현물 ETF 하루 흐름, RSS)"
 url = "https://cointelegraph.com/rss"
 angle = "코인"
-covers = ["S_q_risk_off"]
+covers = ["S_q_risk_off", "S_q_exchange_hack"]
 official = false
 added = 2026-10-24
 note = "2026-10-24 새로 시도: 미국 현물 비트코인 ETF 하루 순유입·유출(SoSoValue 인용). Farside가 403일 때 대신"
@@ -541,3 +541,33 @@ covers = ["S_q_earnings_beat"]
 official = false
 added = 2026-10-29
 note = "종목 조각과 함께 더함(대화 세션). 주소의 code를 종목 코드로 바꿔 본다. 전망 평균(컨센서스)과 뉴스 묶음이 있다"
+
+[[place]]
+id = "P_naver_news_search"
+name = "네이버 뉴스 검색 (최신순) — 한국 기사 제목·발행 시각"
+url = "https://search.naver.com/search.naver?where=news&query=%ED%95%9C%EC%9D%80+%EA%B8%88%ED%86%B5%EC%9C%84&sort=1"
+angle = "금리·환율·정책"
+covers = ["S_q_rate_up", "S_q_rate_shift_up"]
+official = false
+added = 2026-10-30
+note = "2026-10-30 조사에서 처음 써 쓸모 있었다. 한은 금통위 전망 기사를 최신순으로 볼 수 있다. 확률 숫자는 없다"
+
+[[place]]
+id = "P_asiae_fnguide"
+name = "아시아경제 실적 집계 기사 (에프앤가이드 전망 평균 대비, 네이버 뉴스 경유)"
+url = "https://n.news.naver.com/mnews/article/277/0005835576"
+angle = "한국 시장"
+covers = ["S_q_earnings_beat"]
+official = false
+added = 2026-10-30
+note = "2026-10-30 조사에서 처음 써 쓸모 있었다. 발표 회사들의 영업익을 에프앤가이드 전망 평균과 견준 표가 실린다. 주소는 그날 기사마다 다르다"
+
+[[place]]
+id = "P_mt_strategy"
+name = "머니투데이 '내일의전략' (장 마감 뒤 수급·악재 정리, 네이버 뉴스 경유)"
+url = "https://n.news.naver.com/mnews/article/008/0005433840"
+angle = "한국 시장"
+covers = []
+official = false
+added = 2026-10-30
+note = "2026-10-30 조사에서 처음 써 쓸모 있었다. 그날 하락·상승 까닭과 투자자별 수급을 장 마감 직후 정리한다. 주소는 그날 기사마다 다르다"

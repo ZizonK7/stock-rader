@@ -71,7 +71,7 @@ def buy_stock(inp: dict, code: str, target: float = 0.1, p_week: float = 0.6, de
         "S_q_earnings_beat": {"value": beat, "why": "가짜: 잠정 실적과 전망 평균 비교", "places": ["P_dart"]}}
     for hz in C.ASSETS[code].horizons:
         inp["hand"] = [h for h in inp["hand"] if not (h["asset"] == code and h["horizon"] == hz)]
-        used = [f"Q_earnings_beat={beat}"] if hz != 1 else ["Q_rate_up=" + inp["readings"]["S_q_rate_up"]["value"]]
+        used = [f"Q_earnings_beat={beat}"] if hz != 1 else ["Q_rate_up_shift=" + inp["readings"]["S_q_rate_shift_up"]["value"]]
         inp["hand"].append({"asset": code, "horizon": hz, "p_up": p_week if hz == 5 else 0.55, "size_lo": 2.0,
                             "size_hi": 4.0, "used": used, "decisive": used[:1] if decisive else [],
                             "reason": "가짜 종목 예측", "confidence": "보통"})
