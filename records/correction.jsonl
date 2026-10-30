@@ -1,0 +1,2 @@
+{"kind": "correction", "id": "correction:2026-10-31:1", "run": "2026-10-31", "target": "research:2026-10-30:12", "note": "질문 q:2026-10-30:deep:069500(KODEX 200 2차)의 answer에 미국 묶음(S&P500) 2차 조사 답이 잘못 들어갔다. 한국 묶음 2차 조사의 답은 기록에 남지 않았다(그날 손 예측의 근거는 한국 시장 1차 조사 research:2026-10-30:8)"}
+{"kind": "correction", "id": "correction:2026-10-31:2", "run": "2026-10-31", "target": "research:2026-10-30:13", "note": "질문 q:2026-10-30:deep:360750(미국 묶음 2차)의 answer에 비트코인 2차 조사 답(research:2026-10-30:14와 거의 같음)이 잘못 들어갔다. 미국 묶음 2차의 맞는 답은 바로 앞 줄 research:2026-10-30:12의 answer다"}
