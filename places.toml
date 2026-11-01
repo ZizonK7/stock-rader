@@ -601,3 +601,43 @@ covers = ["S_q_earnings_beat"]
 official = false
 added = 2026-10-31
 note = "2026-10-31 조사에서 처음 써 쓸모 있었다. 종목별 정규장(15:30) 종가 등락을 적어 시간외 값과 구별할 수 있다"
+
+[[place]]
+id = "P_decrypt"
+name = "Decrypt (코인 기사: 현물 ETF 하루 흐름·온체인 분석)"
+url = "https://decrypt.co/"
+angle = "코인"
+covers = []
+official = false
+added = 2026-11-02
+note = "2026-11-02 2차 조사에서 처음 써 쓸모 있었다. 10-30 현물 ETF 유출(−6.43억 달러)을 Farside가 막혔을 때 대신 줬다"
+
+[[place]]
+id = "P_coindesk"
+name = "CoinDesk 기사 (옵션 블록 거래·해커 지갑·상장사 매도)"
+url = "https://www.coindesk.com/"
+angle = "코인"
+covers = ["S_q_exchange_hack"]
+official = false
+added = 2026-11-02
+note = "2026-11-02 2차 조사에서 처음 써 쓸모 있었다. curl은 429라 WebFetch로 읽어야 한다. RSS(https://www.coindesk.com/arc/outboundfeeds/rss/)는 curl로 열린다"
+
+[[place]]
+id = "P_bok_schedule"
+name = "한국은행 통화정책방향 결정회의 일정 (bok.or.kr)"
+url = "https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSe=A&menuNo=200755"
+angle = "금리·환율·정책"
+covers = ["S_q_event_soon"]
+official = true
+added = 2026-11-02
+note = "2026-11-02 조사에서 처음 썼다. 다음 회의를 11-26으로 적어 기사들의 '11-12'와 달랐다 — 공식 일정표를 먼저 본다"
+
+[[place]]
+id = "P_polymarket_clob"
+name = "Polymarket 가격 이력 API (예측시장 일별 값)"
+url = "https://clob.polymarket.com/prices-history"
+angle = "금리·환율·정책"
+covers = ["S_q_rate_shift_up"]
+official = false
+added = 2026-11-02
+note = "2026-11-02 조사에서 처음 썼다. 연준 결정 계약의 날짜별 값을 줘 '1주 전 값'을 바로 비교할 수 있다(market에 토큰 id)"
