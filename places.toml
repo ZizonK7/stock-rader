@@ -641,3 +641,23 @@ covers = ["S_q_rate_shift_up"]
 official = false
 added = 2026-11-02
 note = "2026-11-02 조사에서 처음 썼다. 연준 결정 계약의 날짜별 값을 줘 '1주 전 값'을 바로 비교할 수 있다(market에 토큰 id)"
+
+[[place]]
+id = "P_fred_dgs2"
+name = "FRED 미국 2년물 국채 금리 시계열 (세인트루이스 연준)"
+url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS2"
+angle = "금리·환율·정책"
+covers = ["S_q_rate_shift_up"]
+official = true
+added = 2026-11-03
+note = "2026-11-03 조사에서 처음 썼다. 금리 결정 전후 2년물 움직임으로 '예상보다 올리는 쪽이었나'를 본다(하루 늦게 올라옴)"
+
+[[place]]
+id = "P_naver_index_integration"
+name = "네이버 증권 지수 통합 API (투자자별 순매수·상승 하락 종목 수)"
+url = "https://m.stock.naver.com/api/index/KOSPI/integration"
+angle = "한국 시장"
+covers = []
+official = false
+added = 2026-11-03
+note = "2026-11-03 조사에서 처음 썼다. 개인·외국인·기관 하루 순매수를 바로 준다. 장 마감 직후 잠정치라 기사 숫자와 조금 다를 수 있다"
