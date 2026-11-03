@@ -11,6 +11,8 @@
   범위 = exp(값 ± 표준오차). 겹치는 기간 표본이라 표준오차에 √h를 곱한다(유효 표본 = 표본 ÷ h).
 - 움직임 크기(move): log|수익률|의 최소제곱 회귀. 계수 → 곱하기(범위는 위와 같다).
   기준값 = 조각 효과를 걷어 낸 움직임(%)들을 2배 폭 창으로 훑어 가장 많이 담는 창(agent_usage fit.window와 같은 방법).
+  기준값 주장에 scale = "vol250"이 있으면(2026-11-03, C_base_vol) 움직임을 표본마다 그때의 '최근 250봉 하루 변동성 × √기간'으로
+  나눈 배수로 맞춘다(곱하기도 같은 배수 위에서). 기준값은 % 대신 그 배수이고, 계산기가 판단 때의 흔들림을 곱해 %로 바꾼다.
 - 세우지 않는 효과 (기계적으로, 한 번에 하나씩 빼고 다시 맞춤):
   범위가 주장한 방향과 어긋나거나 1을 넘나듦(값이 표준오차 하나 안쪽) → '방향이 데이터와 안 맞음'.
   범위 폭이 상한(2배)을 넘음 → '너무 불확실'. 곱하기 수가 유효 표본 ÷ 10을 넘음 → 가장 약한 것부터 뺀다.
@@ -141,6 +143,7 @@ class Claim:
     state: str | None = None
     when: str | None = None
     also: tuple[tuple[str, str], ...] = ()   # 더한 조건(쪼갠 새 버전): 상태 id = 값이 모두 맞을 때만 켜진다
+    scale: str | None = None                 # 기준값의 단위: None = %, "vol250" = 최근 250봉 하루 변동성 × √기간의 배수
 
 
 def claims_of(raws: list[dict]) -> list[Claim]:
@@ -152,7 +155,7 @@ def claims_of(raws: list[dict]) -> list[Claim]:
         for c in r.get("claims", []):
             out.append(Claim(r["id"], c["on"], c.get("op", "mul"), c.get("reason", ""), c.get("dir"),
                              conds[0] if conds and c.get("op", "mul") != "base" else None, c.get("when"),
-                             tuple(sorted((c.get("also") or {}).items()))))
+                             tuple(sorted((c.get("also") or {}).items())), c.get("scale")))
     return out
 
 
@@ -169,11 +172,13 @@ class Samples:
     horizon: int
     readings: list[dict[str, str]] = field(default_factory=list)
     rets: list[float] = field(default_factory=list)
+    units: list[float] = field(default_factory=list)   # 표본마다 그때의 최근 250봉 하루 변동성 × √기간 (scale = "vol250"용)
     first: dt.date | None = None
     last: dt.date | None = None
 
 
 _READ_CACHE: dict = {}
+_VOL_CACHE: dict = {}
 
 
 def samples(asset: str, rows: tuple[PR.Row, ...], horizon: int, until: dt.date) -> Samples:
@@ -185,12 +190,17 @@ def samples(asset: str, rows: tuple[PR.Row, ...], horizon: int, until: dt.date) 
         _READ_CACHE.clear() if len(_READ_CACHE) > 12 else None
         _READ_CACHE[key] = P.read_series(closes)
     reads = _READ_CACHE[key]
+    if key not in _VOL_CACHE:
+        _VOL_CACHE.clear() if len(_VOL_CACHE) > 12 else None
+        _VOL_CACHE[key] = P.vol250_series(closes)
+    vols = _VOL_CACHE[key]
     s = Samples(asset, horizon)
     for t in range(len(rows) - horizon):
         if reads[t] is None:
             continue
         s.readings.append(reads[t])
         s.rets.append(closes[t + horizon] / closes[t] - 1)
+        s.units.append(vols[t] * math.sqrt(horizon))
         s.first = s.first or rows[t].date
         s.last = rows[t + horizon].date
     return s
@@ -226,8 +236,17 @@ def _violation(b: float, se: float, cl: Claim) -> tuple[float, str] | None:
     return None
 
 
+def scaled_move(claims: list[Claim]) -> bool:
+    """움직임을 '최근 250봉 하루 변동성 × √기간'의 배수로 맞추나 (살아 있는 기준값 주장에 scale = "vol250")."""
+    return any(c.on == "move" and c.op == "base" and c.scale == "vol250" for c in claims)
+
+
 def fit_one(s: Samples, on: str, claims: list[Claim]) -> Fitted:
     cls = [c for c in claims if c.on == on and c.op == "mul"]
+    scaled = on == "move" and scaled_move(claims)
+    if scaled:  # 움직임을 그때의 흔들림으로 나눈 배수로 (방향은 그대로라 오를 확률은 바뀌지 않는다)
+        s = Samples(s.asset, s.horizon, s.readings, [r / u if u else 0.0 for r, u in zip(s.rets, s.units)], s.units,
+                    s.first, s.last)
     n = len(s.rets) if on == "up_odds" else sum(1 for r in s.rets if r != 0)
     n_eff = n / s.horizon
     dropped: dict[str, str] = {}
@@ -282,7 +301,7 @@ def fit_one(s: Samples, on: str, claims: list[Claim]) -> Fitted:
             if r == 0:
                 continue
             k = sum(beta[i + 1] * _x(rd, c) for i, c in enumerate(active))
-            vals.append(abs(r) * 100 / math.exp(k))
+            vals.append(abs(r) * (1 if scaled else 100) / math.exp(k))
         w = window(vals)
         if w:
             base = rounded(*w)
@@ -317,7 +336,7 @@ def effects_for(raw: dict, fitted: list[Fitted], claims: list[Claim]) -> tuple[l
             if c.op == "base":
                 if f.base:
                     effs.append({"on": c.on, "op": "base", "range": list(f.base), "asset": f.asset, "horizon": f.horizon,
-                                 "n": f.n, "reason": c.reason})
+                                 **({"scale": c.scale} if c.scale else {}), "n": f.n, "reason": c.reason})
                     made.append(tag)
                 else:
                     notset.append(f"{tag} {c.on}: {f.note}")

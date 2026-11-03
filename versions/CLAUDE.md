@@ -7,6 +7,8 @@
 |---|---|
 | `versions.toml` | 목록: id, file, saved(떠 둔 날), digest(지문), active, why |
 | `v1.toml` | 1단계 재생(2026-07-01~10-19)에 쓴 논리집 그대로(지문 3a322e89980b). 2026-10-21 C_trend_20을 쪼개기 전 |
+| `v2.toml` | 2026-10-30 Q_rate_up을 쪼개기 전(지문 4372422cd8f6) |
+| `v3.toml` | 2026-11-03 점검 반영 전(지문 f380e5a5fa5e): C_base(고정 크기 움직임 기준값)를 흔들림 배수 C_base_vol로, C_drawdown을 C_drawdown_volup으로 바꾸기 전. 지금 active는 v1·v2·v3로 상한 3개가 찼다 — 더 떠 두려면 하나를 `active = false`로 |
 
 ## 결정과 이유
 - 떠 두기는 `python -m market.versions save <id> "<왜>"`. 논리집 파일 전체를 복사한다(조각만 뽑지 않는다: 계산기 코드가 그대로 읽게).

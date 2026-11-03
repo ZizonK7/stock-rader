@@ -186,17 +186,27 @@ def account_vs_equal():
 
 
 # ---------- 조사 조각과 손 예측 (진짜 계좌만) ----------
+POOLED = "종목 묶어 봄"  # 종목마다 대 보는 조각의 칸 이름 (대상 칸 대신)
+
+
 def research_direction(node_id: str) -> tuple[str, str]:
     """조사 조각의 방향 주장이 세운 뒤의 판단에서 맞나: 그날 손 대 보기 값이 '예'인 날과 '아니오'인 날의 결과를 비교.
-    결과(수익률)는 그날 계산기 예측의 채점에서 가져온다(대상·기간마다 하나, 같은 기준 날짜는 한 번). 범위 밖 대상은 뺀다."""
+    결과(수익률)는 그날 계산기 예측의 채점에서 가져온다(대상·기간마다 하나, 같은 기준 날짜는 한 번). 범위 밖 대상은 뺀다.
+    종목마다 대 보는 조각(조건 상태 per_asset)은 종목을 한 칸으로 묶는다(2026-11-03): 주장이 '어떤 회사든'에 대한 것이고,
+    한 종목은 실적이 분기에 한 번이라 종목마다 칸을 나누면 '예'·'아니오'가 다섯씩 모이지 않는다. 같은 날 '예' 종목과
+    '아니오' 종목(비교군, 지시문 '종목마다 묻는 질문')을 견준다.
+    예/아니오가 아니라 세지 않은 값(일부·모름·안 물음)은 세부에 수를 보인다 — '시험 전'의 까닭이 보이게."""
     node = _node(node_id)
     if not node:
         return "불명 (노드 없음)", ""
     cut = node.get("seen_until", C.RESEARCH_SINCE)
     state = (node.get("conditions") or [None])[0]
     claims = node.get("claims", [])
+    raw = _raw()
+    pooled = any(s.get("id") == state and s.get("per_asset") for s in raw.get("state", []))
     hrs = {h["run"]: h for h in R.read(C.RECORDS, "hand_reading")}
     cells: dict = {}
+    skipped: dict = {}
     for p, s in _scored(C.RECORDS, lambda p: p["predictor"] == "calc" and p["run"] > cut):
         h = hrs.get(p["run"])
         if h is None:
@@ -212,9 +222,17 @@ def research_direction(node_id: str) -> tuple[str, str]:
                 continue
             on = _holds(vals, c, state)
             if on is None:
+                for k in dict.fromkeys([state, *(c.get("also") or {})]):
+                    v = vals.get(k, "안 물음")
+                    if v not in ("예", "아니오"):
+                        skipped[f"{k}={v}"] = skipped.get(f"{k}={v}", 0) + 1
                 continue
-            cells.setdefault((c["on"], c.get("dir"), p["asset"], p["horizon"]), {True: [], False: []})[on].append(s["ret"])
-    return _verdict(cells, "판단의 손 대 보기", cut)
+            where = POOLED if pooled else p["asset"]
+            cells.setdefault((c["on"], c.get("dir"), where, p["horizon"]), {True: [], False: []})[on].append(s["ret"])
+    verdict, detail = _verdict(cells, "판단의 손 대 보기", cut)
+    if skipped:
+        detail += "\n    세지 않은 채점(예/아니오가 아닌 값): " + ", ".join(f"{k} {n}" for k, n in sorted(skipped.items()))
+    return verdict, detail
 
 
 def hand_vs_calc() -> tuple[str, str]:
@@ -376,7 +394,7 @@ def _research_errors(kn, research) -> list[str]:
 
 def _norm(effs: list[dict]) -> list[tuple]:
     return sorted((e.get("on"), e.get("op"), str(e.get("asset")), e.get("horizon"), tuple(float(x) for x in e.get("range", [])),
-                   tuple(sorted((e.get("when") or {}).items())), e.get("dir")) for e in effs)
+                   tuple(sorted((e.get("when") or {}).items())), e.get("dir"), e.get("scale") or "") for e in effs)
 
 
 AUDIT = audit

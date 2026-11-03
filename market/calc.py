@@ -8,6 +8,8 @@
 - 조각 = 효과(effect)가 있는 살아 있는 가설. 효과 하나 = 무엇에(on) · 어떻게(op: 기준/곱하기) · 범위 · 언제(when) · 대상·기간.
 - 오를 확률의 승산 = 기준 승산 × 켜진 곱하기들. 움직임 크기도 같다. 기준값이 없으면 지어내지 않고 '모름'.
 - 범위 합치기: 로그 반폭을 제곱합 제곱근으로 합치고, 상한(2배)을 넘으면 가운데 둘레로 자른다.
+- 움직임 기준값에 scale = "vol250"이 있으면(2026-11-03, C_base_vol) 범위는 '최근 250봉 하루 변동성 × √기간'의 배수다.
+  합친 범위에 판단 때의 그 값(대 보기 숫자 vol250, %로)을 곱한다. 숫자가 없으면 움직임은 '모름'(지어내지 않는다).
 - 결론 = (방향 쪽, 확신도, 크기 등급). 설명에는 빼면 결론이 바뀌는 조각만 남긴다(기준값은 늘 남긴다).
 """
 from __future__ import annotations
@@ -40,6 +42,7 @@ class Effect:
     when: tuple[tuple[str, str], ...] = ()
     dir: str | None = None
     reason: str = ""
+    scale: str | None = None  # 기준값의 단위: None = %, "vol250" = 최근 250봉 하루 변동성 × √기간의 배수
 
     @property
     def center(self) -> float:
@@ -66,7 +69,8 @@ def pieces_from(raw: dict) -> list[Piece]:
         for e in h["effect"]:
             when = tuple((k, v) for k, v in (e.get("when") or {}).items())
             effs.append(Effect(h["id"], e["on"], e["op"], float(e["range"][0]), float(e["range"][1]),
-                               str(e["asset"]), int(e["horizon"]), when, e.get("dir"), e.get("reason", "")))
+                               str(e["asset"]), int(e["horizon"]), when, e.get("dir"), e.get("reason", ""),
+                               e.get("scale")))
         out.append(Piece(h["id"], h.get("text", h.get("method", "")), h.get("reason", ""), effs))
     return out
 
@@ -105,6 +109,7 @@ class Result:
     odds_muls: list[Effect] = field(default_factory=list)
     base_move: Effect | None = None
     move_muls: list[Effect] = field(default_factory=list)
+    unit: float = 1.0  # 움직임 범위에 곱할 값(%). 기준값이 흔들림의 배수면 판단 때의 '250봉 하루 변동성 × √기간 × 100'
 
     def odds(self, skip: Effect | None = None) -> tuple[float, float] | None:
         if not self.base_odds:
@@ -125,7 +130,8 @@ class Result:
     def move(self, skip: Effect | None = None) -> tuple[float, float] | None:
         if not self.base_move:
             return None
-        return clamp(combine([(e.lo, e.hi) for e in [self.base_move, *self.move_muls] if e is not skip]))
+        lo, hi = clamp(combine([(e.lo, e.hi) for e in [self.base_move, *self.move_muls] if e is not skip]))
+        return lo * self.unit, hi * self.unit
 
     def used(self) -> list[Effect]:
         return [e for e in [self.base_odds, *self.odds_muls, self.base_move, *self.move_muls] if e]
@@ -140,7 +146,7 @@ class Result:
             conf = "낮음" if abs(d) < 0.05 else "보통" if abs(d) < 0.10 else "높음"
         m, size = self.move(skip), "모름"
         if m and self.base_move:
-            ratio = math.sqrt(m[0] * m[1]) / self.base_move.center
+            ratio = math.sqrt(m[0] * m[1]) / (self.base_move.center * self.unit)
             size = "작음" if ratio < 0.85 else "큼" if ratio > 1.18 else "보통"
         return side, conf, size
 
@@ -163,11 +169,15 @@ class Result:
             keep = set(map(id, self.decisive()))
             parts = [f"'{e.piece}' ×{e.center:.2f}" for e in self.move_muls if id(e) in keep]
             head += f"; 움직임 {m[0]:.2f}–{m[1]:.2f}%" + (" (" + ", ".join(parts) + ")" if parts else "")
+            if self.base_move and self.base_move.scale:
+                head += f" [기준: 최근 250봉 흔들림 × √{self.horizon} = {self.unit:.2f}%의 {self.base_move.lo:g}–{self.base_move.hi:g}배]"
         side, conf, size = self.conclusion()
         return f"{head}. 결론: {side}, 확신 {conf}, 크기 {size}"
 
 
-def predict(asset: str, horizon: int, values: dict[str, str], pieces: list[Piece]) -> Result:
+def predict(asset: str, horizon: int, values: dict[str, str], pieces: list[Piece],
+            numbers: dict[str, float] | None = None) -> Result:
+    """numbers: 대 보기 숫자(pieces.read). 움직임 기준값이 흔들림의 배수(scale = "vol250")일 때 vol250을 쓴다."""
     effs = [e for p in pieces for e in p.effects if e.asset == asset and e.horizon == horizon]
 
     def base(on: str) -> Effect | None:
@@ -177,7 +187,16 @@ def predict(asset: str, horizon: int, values: dict[str, str], pieces: list[Piece
     def muls(on: str) -> list[Effect]:
         return [e for e in effs if e.on == on and e.op == "mul" and e.matches(values)]
 
-    return Result(asset, horizon, values, base("up_odds"), muls("up_odds"), base("move"), muls("move"))
+    bm, unit = base("move"), 1.0
+    if bm is not None and bm.scale == "vol250":
+        v = (numbers or {}).get("vol250")
+        if isinstance(v, (int, float)) and v > 0:
+            unit = v * math.sqrt(horizon) * 100
+        else:
+            bm = None  # 흔들림 숫자가 없으면 움직임은 '모름'
+    elif bm is not None and bm.scale:
+        bm = None  # 모르는 단위
+    return Result(asset, horizon, values, base("up_odds"), muls("up_odds"), bm, muls("move"), unit)
 
 
 def record_fields(r: Result) -> dict:
@@ -201,11 +220,11 @@ def main(argv: list[str]) -> int:
     print(f"{day} 07:37 판단 (논리집 {digest})")
     for asset in C.ASSET_IDS:
         hist = PR.view(asset, PR.load(asset), at)
-        values, _ = P.read(hist.closes)
+        values, numbers = P.read(hist.closes)
         print(f"\n{asset} — 마지막 일봉 {hist.last.date if hist.last else '없음'}")
         print("  대 보기: " + ", ".join(f"{k}={v}" for k, v in values.items()))
         for h in C.ASSETS[asset].horizons:
-            print(f"  {h}봉: {predict(asset, h, values, pieces).reason()}")
+            print(f"  {h}봉: {predict(asset, h, values, pieces, numbers).reason()}")
     return 0
 
 

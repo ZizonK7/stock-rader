@@ -5,7 +5,8 @@
 
 검사하는 것 (오류면 아무것도 쓰지 않는다):
 - 조사: 칸·결과 낱말·링크·요약 길이(기사 본문 금지). 목록에 없는 볼 곳은 new = true일 때만.
-- 손 대 보기: 살아 있는 조사 조각의 상태마다 값·이유. 값이 모름이 아니면 쓴 볼 곳이 있어야 한다.
+- 손 대 보기: 살아 있는 조사 조각의 상태마다 값·이유. 값이 모름이 아니면 쓴 볼 곳이 있어야 한다. 상태에 answers가 있으면
+  값은 그 안에서만(2026-11-03: 값 기준으로 대 보는 상태는 '일부'를 쓰지 않는다 — 검사가 '일부'를 셀 수 없다).
 - 손 예측: 오늘 예측할 수 있는 대상 × 기간마다 하나. 확률 0~1(모름이면 null), 크기 범위 폭 2배 이하, 이유, 확신도.
   쓴 조각은 '조각 id=값'이고 값은 그날 대 본 값과 같아야 한다(조사 조각은 손 대 보기, 계산 조각은 시세 대 보기).
   결론을 바꾼 조각(decisive)은 쓴 조각 안에서.
@@ -13,7 +14,8 @@
 - 종목(2026-10-29): 손 계좌가 든 종목은 매일 손 예측 셋과 비중을 낸다(팔려면 0). 목표 > 0이면 손 예측 셋이 있고, 1주
   오를 확률 > 0.5이고, 1주 예측에 결론 조각(decisive)이 있어야 한다(이유 없이 사지 않는다). 한 종목 상한
   config.STOCK_MAX_WEIGHT, 종목 수 상한 config.STOCK_MAX_COUNT. 종목마다 대 보는 조사 상태(per_asset)는 stock_readings에
-  종목마다 값을 적고, 그 조각을 쓴 손 예측의 값은 그 종목의 값과 같아야 한다.
+  종목마다 값을 적고, 그 조각을 쓴 손 예측의 값은 그 종목의 값과 같아야 한다. 그 상태에 '예'인 종목이 있는 날은 '아니오'인
+  종목(비교군)도 config.STOCK_CONTROL_MIN개 이상 (2026-11-03).
 - 돌아보기: 기한이 된 손 예측(한 번만 세는 것)마다. 까닭 낱말, 틀렸는데 '맞음' 금지, '잡음'은 코드가 잡음이라 본 것만,
   조건 흐림·이유 틀림·바깥 상황·대 보기 틀림이면 틀린 조각·상태 id.
 - 대 보기 다시 보기: 다시 볼 차례인 것만.
@@ -87,9 +89,13 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
         warns.append("조사 기록이 하나도 없음")
 
     # 손 대 보기
+    answers = {s["id"]: s["answers"] for s in ctx["raw"].get("state", []) if s.get("answers")}
     readings = inp.get("readings", {})
     for st in ctx["research_states"]:
         errs += _reading_errors(f"readings.{st}", readings.get(st))
+        v = (readings.get(st) or {}).get("value") if isinstance(readings.get(st), dict) else None
+        if st in answers and v is not None and str(v) not in answers[st]:
+            errs.append(f"readings.{st}: 값 '{v}'는 {answers[st]} 중 하나여야 함 — 이 상태는 값 기준으로 대 본다(상태 text·ask)")
     for st in readings:
         if st not in ctx["research_states"]:
             errs.append(f"readings: '{st}'는 살아 있는 조사 조각의 (시장 전체) 상태가 아님"
@@ -106,6 +112,14 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
                 errs.append(f"stock_readings.{a}: '{st}'는 종목마다 대 보는 조사 상태가 아님")
         for st in stock_states:
             errs += _reading_errors(f"stock_readings.{a}.{st}", rs.get(st))
+    # 종목 비교군 (2026-11-03): '예' 종목만 대 보면 '아니오' 쪽이 없어 그 조각이 시험되지 않는다
+    for st in stock_states:
+        got = [str(((rs or {}).get(st) or {}).get("value")) for a, rs in stock_readings.items() if a in stocks
+               and isinstance(rs, dict) and isinstance(rs.get(st), dict)]
+        if "예" in got and got.count("아니오") < C.STOCK_CONTROL_MIN:
+            errs.append(f"stock_readings: '{st}'가 '예'인 종목이 있는데 '아니오'인 종목이 {got.count('아니오')}개 — 비교군을 "
+                        f"{C.STOCK_CONTROL_MIN}개 이상 넣는다(직전 열흘 안 실적을 낸 다른 회사 먼저, 모자라면 틀의 _stock_control 순서대로; "
+                        f"손 예측·비중은 없어도 된다). 비교군이 없으면 그 조각은 시험되지 않는다")
     valid = list(ctx["predictable"]) + stocks
 
     # 손 예측

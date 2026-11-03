@@ -76,14 +76,21 @@ def research_pieces(raw: dict) -> list[tuple[dict, dict]]:
 
 def research_states(raw: dict, per_asset: bool | None = None) -> list[dict]:
     """살아 있는 조사 조각이 쓰는 상태 (중복 없이, 처음 나온 순서). per_asset: False = 하루 하나로 대 보는 상태(시장 전체),
-    True = 종목마다 대 보는 상태(state에 per_asset = true, 2026-10-29), None = 둘 다."""
+    True = 종목마다 대 보는 상태(state에 per_asset = true, 2026-10-29), None = 둘 다.
+    첫 조건만이 아니라 조사로 대 보는 조건(read_by = "조사") 모두를 낸다(2026-11-03): 쪼개며 더한 조건(예: Q_rate_up_shift의
+    S_q_rate_up)도 매일 물어 기록해야 검사(checks._holds의 also)가 그 조건을 볼 수 있다."""
+    states = {s["id"]: s for s in raw.get("state", [])}
     seen, out = set(), []
-    for _, st in research_pieces(raw):
-        if per_asset is not None and bool(st.get("per_asset")) != per_asset:
-            continue
-        if st["id"] not in seen:
-            seen.add(st["id"])
-            out.append(st)
+    for h, _ in research_pieces(raw):
+        for sid in h.get("conditions") or []:
+            st = states.get(sid)
+            if not st or st.get("read_by") != "조사":
+                continue
+            if per_asset is not None and bool(st.get("per_asset")) != per_asset:
+                continue
+            if sid not in seen:
+                seen.add(sid)
+                out.append(st)
     return out
 
 
@@ -145,7 +152,7 @@ def questions(day: dt.date, raw: dict, places: list[dict], cards: dict[str, dict
     pieces = research_pieces(raw)
     out = []
     for st in research_states(raw):
-        users = [h["id"] for h, s in pieces if s["id"] == st["id"]]
+        users = [h["id"] for h, _ in pieces if st["id"] in (h.get("conditions") or [])]
         cand = [p for p in places if st["id"] in p.get("covers", [])]
         cand.sort(key=lambda p: usefulness(cards.get(p["id"], _empty())), reverse=True)
         ask = st.get("ask", st["text"])

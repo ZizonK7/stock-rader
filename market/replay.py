@@ -72,7 +72,7 @@ class Replay:
                 for i, hz in enumerate(C.ASSETS[asset].horizons):
                     base = {"run": run, "asset": asset, "horizon": hz, "base_date": h.last.date.isoformat(),
                             "base_close": h.last.close}
-                    r = K.predict(asset, hz, values, self.pieces)
+                    r = K.predict(asset, hz, values, self.pieces, numbers)
                     f = K.record_fields(r)
                     out["prediction"].append({"id": f"{run}:calc:{asset}:{hz}", "predictor": "calc", **base,
                                               "readings": values, "knowledge": self.digest, **f})

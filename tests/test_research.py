@@ -82,6 +82,26 @@ class ResearchRecords(unittest.TestCase):
         self.assertTrue(all(q["suggest"] for q in qs if q["state"]))
 
 
+    def test_every_research_condition_is_asked(self):
+        """쪼개며 더한 조건(두 번째 조건)도 묻는다 — 기록돼야 검사(also)가 그 조건을 본다 (2026-11-03)."""
+        raw = tomllib.loads(TEXT)
+        states = {s["id"] for s in RS.research_states(raw)}
+        for h in raw["hypothesis"]:
+            if h.get("read_by") == "조사" and h.get("status") != "retired":
+                self.assertLessEqual(set(h["conditions"]), states, h["id"])
+        self.assertIn("S_q_rate_up", states)
+        q = next(q for q in RS.questions(dt.date(2026, 11, 4), raw, RS.load_places(), {}) if q["state"] == "S_q_rate_up")
+        self.assertIn("Q_rate_up_shift", q["pieces"])
+        shift = next(h for h in raw["hypothesis"] if h["id"] == "Q_rate_up_shift")
+        self.assertEqual(shift["claims"][0]["also"], {"S_q_rate_up": "예"})
+
+    def test_uncounted_values_are_shown(self):
+        """예/아니오가 아니라 시험에서 빠진 값의 수가 성적표 세부에 보인다(2026-10-31~11-03은 S_q_rate_up을 묻지 않았다)."""
+        _, detail = CH.research_direction("Q_rate_up_shift")
+        self.assertIn("세지 않은 채점", detail)
+        self.assertIn("S_q_rate_up=안 물음", detail)
+
+
 class CountOnce(unittest.TestCase):
     def test_first_only_keeps_earliest_said(self):
         def pair(run, base="2026-10-23"):

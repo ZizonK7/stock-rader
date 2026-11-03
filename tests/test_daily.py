@@ -174,6 +174,22 @@ class DailyLoop(unittest.TestCase):
             self.assertEqual(D.record(root, d, at(d, 8, 30), p), 1)
             self.assertFalse(list(root.records.glob("*.jsonl")))
 
+    def test_value_based_state_refuses_partial(self):
+        """값 기준으로 대 보는 상태(answers)는 '일부'를 쓰지 못한다 — 검사가 '일부'를 셀 수 없다 (2026-11-03)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_root(tmp)
+            d = dt.date(2025, 9, 2)
+            D.prepare(root, d, at(d, 7, 37), fetch=False, ticker=TICK, echo=False)
+            tpl = json.loads((root.day_dir(d) / "input.json").read_text(encoding="utf-8"))
+            self.assertIn("S_q_fear_above_year", tpl["readings"])
+            self.assertNotIn("S_q_risk_off", tpl["readings"])  # 은퇴한 조각의 상태는 묻지 않는다
+            inp = fill(tpl, "예")
+            inp["readings"]["S_q_fear_above_year"]["value"] = "일부"
+            p = root.day_dir(d) / "partial.json"
+            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d, at(d, 8, 30), p), 1)
+            self.assertFalse(list(root.records.glob("*.jsonl")))
+
     def test_noise_excuse_is_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_root(tmp)

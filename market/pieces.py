@@ -62,6 +62,15 @@ def read(closes: list[float] | tuple[float, ...]) -> tuple[dict[str, str], dict[
     return values, {k: round(v, 6) for k, v in numbers.items()}
 
 
+def vol250_series(closes: list[float]) -> list[float | None]:
+    """맞추기용: 각 시점 t까지의 최근 250봉 하루 변동성(read의 numbers['vol250']과 같은 값). t < NEED-1이면 None.
+    움직임 기준값을 '최근 흔들림의 배수'로 맞출 때 표본마다 그때의 흔들림으로 나누는 데 쓴다(2026-11-03, C_base_vol)."""
+    out: list[float | None] = []
+    for t in range(len(closes)):
+        out.append(pstdev(_logret(closes[t + 1 - NEED: t + 1], 250)) if t + 1 >= NEED else None)
+    return out
+
+
 def read_series(closes: list[float]) -> list[dict[str, str] | None]:
     """맞추기용: 각 시점 t까지의 종가로 읽은 값 (t < NEED-1이면 None). read(closes[:t+1])와 같다."""
     out: list[dict[str, str] | None] = []

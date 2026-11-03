@@ -119,6 +119,10 @@ LIVE_ACCOUNTS = ("live:hand", "live:calc", "baseline:equal_hold", "baseline:cash
 # 세 종목까지면 종목 몫이 많아야 45%로, 묶음 1/3 기준선과 비슷한 무게에서 멈춘다. 숫자는 기록에서 맞춘 값이 아니라 미리 정한 모양이다.
 STOCK_MAX_WEIGHT = 0.15
 STOCK_MAX_COUNT = 3
+# 종목 비교군 (2026-11-03): 종목마다 대 보는 조사 상태에 '예'인 종목이 있는 날은 '아니오'인 종목도 이만큼 이상 stock_readings에
+# 넣는다(hand.validate가 막는다). 살 후보('예')만 대 보면 '아니오' 쪽이 기록되지 않아 그 조각(Q_earnings_beat)이 영영 시험되지
+# 않는다. 3 = 손 계좌가 들 수 있는 종목 수와 같다: 사는 쪽만큼은 견줄 쪽이 있어야 한쪽으로 쏠리지 않는다.
+STOCK_CONTROL_MIN = 3
 STOCKS = ROOT / "stocks.toml"           # 손 계좌가 살 수 있는 종목 목록 — market/stocks.py
 
 # 조사 조각을 세운 날. 조사 조각은 이 날 뒤의 판단(run)으로만 시험한다

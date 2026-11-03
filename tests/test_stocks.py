@@ -48,8 +48,15 @@ name = "가짜자동차"
 market = "KOSPI"
 added = "2025-09-01"
 why = "시험용"
+
+[[stock]]
+code = "666660"
+name = "가짜통신"
+market = "KOSPI"
+added = "2025-09-01"
+why = "시험용"
 '''
-S1, S2, S3, S4 = "111110", "222220", "333330", "444440"
+S1, S2, S3, S4, S5 = "111110", "222220", "333330", "444440", "666660"
 
 
 def make_root(tmp: str, stock_until: dt.date | None = None) -> D.Root:
@@ -58,17 +65,30 @@ def make_root(tmp: str, stock_until: dt.date | None = None) -> D.Root:
     start, end = dt.date(2024, 3, 1), dt.date(2025, 10, 31)
     for a, rows in fixtures.market(start, end).items():
         PR.append(a, list(rows), root.prices)
-    for i, code in enumerate((S1, S2, S3, S4)):
+    for i, code in enumerate((S1, S2, S3, S4, S5)):
         rows = fixtures.series(code, start, stock_until or end, price=50000 + 10000 * i, vol=0.02, drift=0.001)
         PR.append(code, list(rows), root.prices)
     return root
 
 
+CONTROLS = (S2, S3, S4)  # 비교군(config.STOCK_CONTROL_MIN = 3): '예' 종목이 있는 날 '아니오'로 대 보는 종목. S5는 손대지 않는다
+
+
+def add_controls(inp: dict, codes=CONTROLS) -> dict:
+    """비교군: '아니오' 종목의 대 보기만 더한다(손 예측·비중 없음, 2026-11-03)."""
+    for c in codes:
+        inp.setdefault("stock_readings", {}).setdefault(c, {
+            "S_q_earnings_beat": {"value": "아니오", "why": "가짜: 직전 열흘 실적 발표 없음", "places": ["P_dart"]}})
+    return inp
+
+
 def buy_stock(inp: dict, code: str, target: float = 0.1, p_week: float = 0.6, decisive: bool = True,
-              beat: str = "예") -> dict:
-    """틀에 종목 사기를 더한다: 종목마다 대 보는 상태, 손 예측 셋, 비중(한국 묶음에서 덜어 냄)."""
+              beat: str = "예", controls: bool = True) -> dict:
+    """틀에 종목 사기를 더한다: 종목마다 대 보는 상태, 손 예측 셋, 비중(한국 묶음에서 덜어 냄). '예'면 비교군도."""
     inp.setdefault("stock_readings", {})[code] = {
         "S_q_earnings_beat": {"value": beat, "why": "가짜: 잠정 실적과 전망 평균 비교", "places": ["P_dart"]}}
+    if beat == "예" and controls:
+        add_controls(inp, [c for c in CONTROLS if c != code] + ([S1] if code != S1 else []))
     for hz in C.ASSETS[code].horizons:
         inp["hand"] = [h for h in inp["hand"] if not (h["asset"] == code and h["horizon"] == hz)]
         used = [f"Q_earnings_beat={beat}"] if hz != 1 else ["Q_rate_up_shift=" + inp["readings"]["S_q_rate_shift_up"]["value"]]
@@ -240,7 +260,10 @@ class DailyStocks(unittest.TestCase):
             self.assertEqual(hr["by_asset"][S1]["S_q_earnings_beat"]["value"], "예")
             hand_wk = next(p for p in preds if p["id"] == f"{d0}:hand:{S1}:5")
             self.assertEqual(hand_wk["readings"]["S_q_earnings_beat"], "예")
-            self.assertEqual([p for p in preds if p["asset"] == S2], [])  # 손대지 않은 종목은 기록하지 않는다
+            self.assertEqual([p for p in preds if p["asset"] == S5], [])  # 손대지 않은 종목은 기록하지 않는다
+            # 비교군('아니오' 종목)은 대 보기와 계산기('모름')·기준선 줄이 생겨 채점된다(손 예측은 없다)
+            self.assertEqual({p["predictor"] for p in preds if p["asset"] == S2}, {"calc", "baseline:half", "baseline:base_rate"})
+            self.assertEqual(hr["by_asset"][S2]["S_q_earnings_beat"]["value"], "아니오")
             self.assertEqual(R.check_folder(root.records), [])
             RP.write(root, d0)
             first = (root.reports / f"{d0}.md").read_text(encoding="utf-8")
@@ -303,7 +326,9 @@ class DailyStocks(unittest.TestCase):
             with mock.patch.object(C, "RECORDS", root.records), mock.patch.object(C, "RESEARCH_SINCE", "2025-09-01"), \
                     mock.patch.object(CK, "_node", lambda nid: {**CK._raw_node(nid), "seen_until": "2025-09-01"}):
                 verdict, detail = CK.research_direction("Q_earnings_beat")
-            self.assertIn(f"up_odds {S1}:5", detail)
+            # 종목은 한 칸으로 묶어 '예' 종목과 '아니오' 종목(비교군)을 견준다(2026-11-03)
+            self.assertIn(f"up_odds {CK.POOLED}:5", detail)
+            self.assertNotIn(f"up_odds {S1}:5", detail)
             self.assertNotIn("069500", detail)  # scope single: 묶음에는 걸리지 않는다
 
     def test_stock_rules_are_checked(self):
@@ -318,6 +343,7 @@ class DailyStocks(unittest.TestCase):
                 "목록에 없음": lambda i: buy_stock(i, "999990"),
                 "종목 조각을 묶음에": lambda i: (i["hand"][0]["used"].append("Q_earnings_beat=예"), i)[1],
                 "종목 대 보기 빠짐": lambda i: (buy_stock(i, S1), i.pop("stock_readings"), i)[2],
+                "비교군 모자람": lambda i: add_controls(buy_stock(i, S1, controls=False), [S2, S3]),
             }
             for name, edit in cases.items():
                 with self.subTest(name):

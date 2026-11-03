@@ -39,7 +39,7 @@ class Devices(unittest.TestCase):
         self.assertEqual(AUDIT.unaccepted_harms(kn), [])
 
     def test_hand_changed_range_is_an_audit_error(self):
-        text = TEXT.replace("range = [1.16, 1.29]", "range = [1.16, 1.31]", 1)  # 살아 있는 조각(C_vol_high)의 효과
+        text = TEXT.replace("range = [1.11, 1.25]", "range = [1.11, 1.27]", 1)  # 살아 있는 조각(C_vol_high)의 효과
         self.assertNotEqual(text, TEXT)
         errors, _ = CH.audit(self.kn(text), fitted_now())
         self.assertTrue(any("맞춘 값과 다름" in e for e in errors), errors)

@@ -247,14 +247,14 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
                            "values": values, "numbers": numbers})
         for i, hz in enumerate(C.ASSETS[a].horizons):
             base = {"run": run, "asset": a, "horizon": hz, **D.base[a]}
-            f = K.record_fields(K.predict(a, hz, values, pieces))
+            f = K.record_fields(K.predict(a, hz, values, pieces, numbers))
             D.preds.append({"id": f"{run}:calc:{a}:{hz}", "predictor": "calc", **base, "readings": values,
                             "knowledge": digest, **f})
             if i == WEIGHT_HORIZON_INDEX:
                 calc_w[a] = L.target_weight(f["p_up"])
                 reasons[a] = f"R_weights: 1주 오를 확률 {f['p_up']} → 목표 비중 {calc_w[a]}"
             for vid, vpieces, vdig in versions:
-                vf = K.record_fields(K.predict(a, hz, values, vpieces))
+                vf = K.record_fields(K.predict(a, hz, values, vpieces, numbers))
                 D.preds.append({"id": f"{run}:version:{vid}:{a}:{hz}", "predictor": f"version:{vid}", **base,
                                 "readings": values, "knowledge": vdig, **vf})
             D.preds += baselines(run, a, hz, h, base)
@@ -274,7 +274,7 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
                            "values": values, "numbers": numbers})
         for hz in C.ASSETS[a].horizons:
             base = {"run": run, "asset": a, "horizon": hz, **D.base[a]}
-            f = K.record_fields(K.predict(a, hz, values, pieces))
+            f = K.record_fields(K.predict(a, hz, values, pieces, numbers))
             D.preds.append({"id": f"{run}:calc:{a}:{hz}", "predictor": "calc", **base, "readings": values,
                             "knowledge": digest, **f})
             D.preds += baselines(run, a, hz, h, base)
@@ -368,7 +368,8 @@ def briefing(D: Day, fetched: dict, tick: dict) -> str:
         L_.append(f"- 판단 때 가격: 받기 실패 ({tick['error']})")
     L_ += ["", f"## 종목 (살 수 있는 목록 stocks.toml {len(D.pool)}개, 오늘 쓸 수 있는 것 {len(D.stock_ok)}개)"]
     L_.append("손 계좌가 세 대상 말고 살 수 있는 한국 상장 종목이다. 계산기는 종목에 '모름'이다(세 대상에만 맞춘 숫자). "
-              "사려면 손 예측 셋(다음·1주·4주)과 1주 결론 조각(decisive)이 있어야 한다 — 지시문 '종목'.")
+              "사려면 손 예측 셋(다음·1주·4주)과 1주 결론 조각(decisive)이 있어야 한다 — 지시문 '종목'. "
+              f"종목 대 보기에 '예'가 있으면 '아니오' 종목(비교군) {C.STOCK_CONTROL_MIN}개 이상도 stock_readings에 넣는다(틀의 _stock_control).")
     for s in D.pool:
         a = str(s["code"])
         f = fetched.get(a, {})
@@ -416,6 +417,15 @@ def briefing(D: Day, fetched: dict, tick: dict) -> str:
     return "\n".join(L_)
 
 
+def control_note(D: Day, names: dict) -> str:
+    """종목 비교군 안내 (2026-11-03, config.STOCK_CONTROL_MIN): 고르는 순서를 미리 정해 결과를 보고 고르지 않게."""
+    order = [f"{a} {names.get(a, a)}" for a in D.stock_ok if a not in D.held]
+    return (f"stock_readings에 '예' 종목이 있으면 '아니오' 종목도 {C.STOCK_CONTROL_MIN}개 이상 넣는다(비교군 — 없으면 종목 조각이 "
+            f"시험되지 않는다). 직전 열흘 안 실적을 낸 다른 회사(좋지 않았거나 전망과 비슷했던 곳)를 먼저, 모자라면 이 순서대로 "
+            f"실적 발표가 없던 회사를 채운다: {', '.join(order) or '없음'}. 비교군은 손 예측·비중 없이 대 보기만 적어도 된다"
+            f"(그 종목의 계산기 '모름'·기준선 줄이 생겨 채점된다)")
+
+
 def template(D: Day) -> dict:
     """메인이 채울 입력 틀. '_'로 시작하는 칸은 참고용이고 검사하지 않는다."""
     from .research import research_states
@@ -438,6 +448,7 @@ def template(D: Day) -> dict:
         "_stock_rule": (f"종목을 사려면 hand에 그 종목의 기간 셋(1·5·20)을 더하고, 1주 p_up > 0.5와 decisive(결론 조각)를 적고, "
                         f"weights에 target(≤ {C.STOCK_MAX_WEIGHT}, 종목 {C.STOCK_MAX_COUNT}개까지)을 넣는다. 종목 몫은 한국 묶음에서 "
                         f"덜어 낸다. 든 종목은 매일 hand·weights에 남긴다(팔려면 target 0). 새 종목은 python -m market.stocks add"),
+        "_stock_control": control_note(D, names) if per_asset else "",
         "research": [{"question": q["question"], "state": q["state"], "angle": q["angle"], "asked": q["asked"],
                       "answer": "", "agent": "", "_suggest": q["suggest"],
                       "looked": [{"place": "", "result": "찾음", "new": False, "url": "", "date": "", "note": ""}]}
