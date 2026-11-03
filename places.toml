@@ -661,3 +661,23 @@ covers = []
 official = false
 added = 2026-11-03
 note = "2026-11-03 조사에서 처음 썼다. 개인·외국인·기관 하루 순매수를 바로 준다. 장 마감 직후 잠정치라 기사 숫자와 조금 다를 수 있다"
+
+[[place]]
+id = "P_okx_api"
+name = "OKX 공개 API (비트코인 무기한 선물 자금조달률)"
+url = "https://www.okx.com/api/v5/public/funding-rate?instId=BTC-USDT-SWAP"
+angle = "코인"
+covers = []
+official = false
+added = 2026-11-04
+note = "바이낸스·바이비트 선물 API는 이 환경에서 지역 차단, OKX는 열림(2026-11-04 2차 조사)"
+
+[[place]]
+id = "P_hankyung"
+name = "한국경제 증시 기사 (장 마감 까닭)"
+url = "https://www.hankyung.com/"
+angle = "한국 시장"
+covers = ["S_q_earnings_beat"]
+official = false
+added = 2026-11-04
+note = "11-03 하락 까닭·현대차·기아 실적의 전망 대비 숫자를 줌(2026-11-04)"
