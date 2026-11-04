@@ -1,6 +1,8 @@
 """대상, 수수료, 기간, 시각, 경로 — 한곳에 모은 고정값.
 
-시각은 모두 한국 시간(KST, UTC+9)이다. 판단 시각은 날짜 D의 07:37.
+시각은 모두 한국 시간(KST, UTC+9)이다. 판단 시각은 날짜 D의 07:37(매일 실행은 record를 돌린 실제 시각).
+체결(2026-11-05~, 결정 E1): 모든 대상이 판단 뒤 첫 시가 — ETF·종목은 그날(휴장이면 다음 거래일) 09:00 시가, 코인은 09:00 일봉 시가.
+그래서 판단(record)은 09:00 전에 끝나야 그날 시가에 체결된다. 그 전에 낸 주문(주문 기록에 fill_rule이 없음)은 옛 규칙(ETF·종목 종가).
 """
 from __future__ import annotations
 
@@ -36,8 +38,9 @@ class Asset:
     # 일봉이 '끝난' 시각 = 날짜 + final_days일, final_time. ETF는 15:30 종가 뒤 여유를 둔 16:00, 코인은 다음 날 09:00
     final_days: int
     final_time: dt.time
-    # 체결: ETF는 판단일과 같거나 뒤인 첫 거래일 종가(15:30), 코인은 판단일 일봉(09:00 시작)의 시가
-    fill_field: str     # "close" | "open"
+    # 체결(2026-11-05~, 결정 E1): 판단 뒤 첫 시가 — ETF·종목은 그 거래일 09:00 시가, 코인은 그날 일봉(09:00 시작)의 시가.
+    # 옛 규칙(주문 기록에 fill_rule이 없는 주문: 2026-11-04까지의 진짜 계좌, 1단계 재생)은 fill_rule()이 고른다(ETF·종목 15:30 종가)
+    fill_field: str     # "open"
     fill_time: dt.time
     yahoo_suffix: str = ".KS"  # 야후 보조 출처의 시장 꼬리(코스피 .KS, 코스닥 .KQ). 코인은 쓰지 않는다
 
@@ -63,14 +66,17 @@ class _Assets(dict):
     def __missing__(self, key: str) -> "Asset":
         if not is_stock(key):
             raise KeyError(key)
-        return Asset(key, STOCK_NAMES.get(key, key), "stock", STOCK_FEE, 1, (1, 5, 20), 0, dt.time(16, 0), "close",
-                     dt.time(15, 30), STOCK_SUFFIX.get(key, ".KS"))
+        return Asset(key, STOCK_NAMES.get(key, key), "stock", STOCK_FEE, 1, (1, 5, 20), 0, dt.time(16, 0), "open",
+                     OPEN_TIME, STOCK_SUFFIX.get(key, ".KS"))
 
+
+OPEN_TIME = dt.time(9, 0)     # 거래소 시가·코인 일봉 시작 (체결 시각, 결정 E1)
+CLOSE_TIME = dt.time(15, 30)  # 거래소 종가 (옛 ETF·종목 체결 시각)
 
 CORE: dict[str, Asset] = {
-    "069500": Asset("069500", "KODEX 200", "etf", 0.00015, 1, (1, 5, 20), 0, dt.time(16, 0), "close", dt.time(15, 30)),
-    "360750": Asset("360750", "TIGER 미국S&P500", "etf", 0.00015, 1, (1, 5, 20), 0, dt.time(16, 0), "close", dt.time(15, 30)),
-    "KRW-BTC": Asset("KRW-BTC", "비트코인(업비트)", "coin", 0.0005, 100_000_000, (1, 7, 28), 1, dt.time(9, 0, 30), "open", dt.time(9, 0)),
+    "069500": Asset("069500", "KODEX 200", "etf", 0.00015, 1, (1, 5, 20), 0, dt.time(16, 0), "open", OPEN_TIME),
+    "360750": Asset("360750", "TIGER 미국S&P500", "etf", 0.00015, 1, (1, 5, 20), 0, dt.time(16, 0), "open", OPEN_TIME),
+    "KRW-BTC": Asset("KRW-BTC", "비트코인(업비트)", "coin", 0.0005, 100_000_000, (1, 7, 28), 1, dt.time(9, 0, 30), "open", OPEN_TIME),
 }
 ASSET_IDS = tuple(CORE)
 ASSETS: dict[str, Asset] = _Assets(CORE)
@@ -156,9 +162,47 @@ def next_bar(asset_id: str, last: dt.date) -> dt.date:
     return d
 
 
-def fill_dt(asset: Asset, day: dt.date) -> dt.datetime:
-    """날짜 day의 체결 가격이 정해지는 시각 (ETF 종가 15:30, 코인 시가 09:00)."""
-    return dt.datetime.combine(day, asset.fill_time, KST)
+# ---------- 체결 규칙 (2026-11-05~, 결정 E1) ----------
+# 새 주문은 주문 기록에 fill_rule = "open"을 적는다(판단 뒤 첫 시가). 그 칸이 없는 주문(2026-11-04까지 낸 진짜 계좌 주문, 1단계 재생)은
+# 옛 규칙: ETF·종목은 판단 뒤 첫 15:30 종가, 코인은 09:00 시가(코인은 원래 시가라 바뀌지 않는다). 날짜가 아니라 주문의 칸으로 가르는 까닭:
+# 옛 코드가 낸 주문은 옛 규칙을 전제로 냈고(언제 합쳐지든 같다), 흉내 내기(지난 날짜)도 새 규칙을 그대로 시험한다.
+FILL_RULE = "open"
+FILL_RULES = (FILL_RULE,)
+# 판단 마감(결정 E1): prepare가 이 시각 뒤면 경고(조사·판단할 시간이 모자라 09:00 시가를 놓치기 쉽다), record가 RECORD_BY 이후면
+# '그날 시가를 놓쳐 다음 시가에 체결' 경고. 08:50 = 시가 10분 전 — record(검사·쓰기 1분 안쪽)와 여유를 둔 미리 정한 값이다
+PREPARE_BY = dt.time(8, 50)
+RECORD_BY = OPEN_TIME
+
+
+def fill_rule(asset_id: str, rule: str | None) -> tuple[str, dt.time]:
+    """주문의 (체결 가격 칸, 체결 시각). rule = 주문 기록의 fill_rule("open"이면 새 규칙, 없으면 옛 규칙)."""
+    if rule not in FILL_RULES and on_exchange(asset_id):
+        return "close", CLOSE_TIME
+    spec = ASSETS[asset_id]
+    return spec.fill_field, spec.fill_time
+
+
+def fill_dt(asset: Asset, day: dt.date, at: dt.time | None = None) -> dt.datetime:
+    """날짜 day의 체결 가격이 정해지는 시각. at이 없으면 지금 규칙(시가 09:00), 옛 규칙은 fill_rule()의 시각을 넘긴다."""
+    return dt.datetime.combine(day, at or asset.fill_time, KST)
+
+
+def known_price_dt(asset_id: str, day: dt.date) -> dt.datetime:
+    """날짜 day의 일봉이 시세 파일에 있을 때 그 봉에서 체결 가격으로 쓸 수 있는 마지막 시각 (정산의 시간 순서 기준).
+    ETF·종목은 봉 전체를 알므로 종가 15:30(옛 규칙의 종가 체결도 이 시각까지), 코인은 시가 09:00(체결은 시가로만 한다)."""
+    if on_exchange(asset_id):
+        return dt.datetime.combine(day, CLOSE_TIME, KST)
+    return fill_dt(ASSETS[asset_id], day)
+
+
+def fill_bar(asset_id: str, at: dt.datetime) -> dt.date:
+    """판단 시각 at 뒤 첫 체결 봉의 날짜 = 새 예측 줄의 기준 날짜(결정 E2, base_kind "fill"). 시가 시각이 at보다 뒤인 첫 날이고,
+    ETF·종목은 주말을 건너뛴다. 휴장일은 모른다 — 그날 봉이 없으면 체결·채점이 그 뒤 첫 봉으로 간다(scoring.fill_index)."""
+    spec = ASSETS[asset_id]
+    d = at.astimezone(KST).date()
+    while (on_exchange(asset_id) and d.weekday() >= 5) or fill_dt(spec, d) <= at:
+        d += dt.timedelta(days=1)
+    return d
 
 
 def now_kst() -> dt.datetime:

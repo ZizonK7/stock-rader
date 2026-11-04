@@ -11,6 +11,7 @@ from market import daily as D
 from market import prices as PR
 from market import records as R
 from market import report as RP
+from market import scoring as S
 from tests import fixtures
 
 TICK = {"KRW-BTC": {"price": 50_000_000.0, "time": "2025-09-02T07:37:00+09:00", "source": "test"}}
@@ -83,28 +84,52 @@ class DailyLoop(unittest.TestCase):
             self.assertNotIn("version:v1", preds)
             # 답한 층(layer)과 참고 칸(analog) — 2026-11-04
             calc = [p for p in recs["prediction"] if p["predictor"] == "calc"]
-            self.assertTrue(all(p["layer"] in ("출발점", "조각", "동전") for p in calc))
+            self.assertTrue(all(p["layer"] in ("조각", "동전") for p in calc))  # 출발점 조각은 은퇴(2026-11-04 결정 E3)
             self.assertTrue(all("analog" in p for p in calc))
             got = [p["analog"] for p in calc if p["analog"]]
             self.assertTrue(got)
             self.assertTrue(all(set(a) == {"n", "runs", "eff", "up_rate"} and 1 <= a["runs"] <= a["n"] for a in got))
-            # 출발점: 판단 때 가격(TICK, 9-02 07:37)이 있는 첫날의 코인 1봉만. 뒤 날들은 그 가격이 기준 봉이 끝나기 전 것이라 안 씀
-            start = [p for p in calc if p["layer"] == "출발점"]
-            self.assertEqual([(p["run"], p["asset"], p["horizon"]) for p in start], [("2025-09-02", "KRW-BTC", 1)])
-            self.assertIn("C_started_move:up_odds", start[0]["used"])
-            self.assertTrue(all(p["layer"] in ("조각", "기준값") for p in recs["prediction"] if p["predictor"].startswith("version:")))
+            # 판단 때 가격(TICK)이 있어도 계산기·이전 버전(v5에는 출발점 조각이 살아 있다)에 넘기지 않는다
+            self.assertFalse([p for p in recs["prediction"] if any(u.startswith("C_started_move") for u in p.get("used", []))])
+            self.assertTrue(all(p["layer"] in ("조각", "기준값", "동전") for p in recs["prediction"] if p["predictor"].startswith("version:")))
+            self.assertLessEqual({"version:v3", "version:v4", "version:v5"}, preds)
+            # 예측 기준 = 체결가(결정 E2): 새 줄은 모두 base_kind fill·base_close null, 기준 날짜 = 판단(08:30) 뒤 첫 체결 봉(평일이라 그날)
+            self.assertTrue(all(p.get("base_kind") == "fill" and p["base_close"] is None for p in recs["prediction"]))
+            self.assertEqual({p["base_date"] for p in recs["prediction"]}, {d.isoformat() for d in days})
+            self.assertTrue(all(p["base_date"] == p["run"] for p in recs["prediction"]))
+            # 채점: 체결 봉의 시가 → 체결 봉부터 h봉째 종가 (1봉이면 체결 봉 자체의 종가)
+            rows = {a: PR.load(a, root.prices) for a in C.ASSET_IDS}
+            by_id = {p["id"]: p for p in recs["prediction"]}
+            for s in recs["score"]:
+                p = by_id[s["prediction"]]
+                rs = rows[s["asset"]]
+                i = next(k for k, r in enumerate(rs) if r.date.isoformat() == s["fill_date"])
+                self.assertEqual(s["fill_date"], p["base_date"])
+                self.assertEqual(s["fill_price"], rs[i].open)
+                self.assertEqual(s["target_date"], rs[i + p["horizon"] - 1].date.isoformat())
+                self.assertAlmostEqual(s["ret"], round(rs[i + p["horizon"] - 1].close / rs[i].open - 1, 6))
+            self.assertTrue(any(s["horizon"] == 1 and s["target_date"] == s["fill_date"] for s in recs["score"]))
+            # 기준선도 같은 기준(다음 봉 시가 → h봉째 종가)으로 센 비율이다
+            br = next(p for p in recs["prediction"] if p["predictor"] == "baseline:base_rate" and p["asset"] == "069500"
+                      and p["horizon"] == 5 and p["run"] == "2025-09-02")
+            view = PR.view("069500", rows["069500"], at(days[0], 8, 30))
+            self.assertEqual(br["p_up"], round(S.base_rate(view, 5, True)[0], 4))
+            self.assertIn("다음 봉 시가", br["reason"])
             self.assertTrue(all(p["layer"] == "조각" for p in recs["prediction"] if p["predictor"] == "hand"))
             # 계산기 계좌는 R_weights_v2: 동전(0.5)이면 정확히 1/3
             reasons = [o["reason"] for o in recs["order"] if o["account"] == "live:calc"]
             self.assertTrue(reasons and all(r.startswith("R_weights_v2") for r in reasons), reasons)
-            # 정산: 코인은 D+2, ETF는 D+3 실행에서 (판단 시각 뒤 첫 공식 가격)
+            # 정산: 판단 뒤 첫 시가(결정 E1) — 코인·ETF 모두 D+2 실행에서. 08:30 판단이라 그날 09:00 시가에 체결
             fills = recs["fill"]
             self.assertTrue(any(f["asset"] == "KRW-BTC" and f["run"] == "2025-09-04" for f in fills), fills)
-            self.assertTrue(any(f["asset"] == "069500" and f["run"] == "2025-09-05" for f in fills), fills)
+            self.assertTrue(any(f["asset"] == "069500" and f["run"] == "2025-09-04" for f in fills), fills)
+            self.assertTrue(all(o.get("fill_rule") == "open" for o in recs["order"]))
             for f in fills:
                 o = next(o for o in recs["order"] if o["id"] == f["order"])
                 when = C.fill_dt(C.ASSETS[f["asset"]], dt.date.fromisoformat(f["fill_date"]))
                 self.assertGreater(when, dt.datetime.fromisoformat(o["decided_at"]))
+                self.assertEqual((f["fill_date"], f["price_kind"]), (o["run"], "open"))
+                self.assertEqual(f["price"], next(r.open for r in rows[f["asset"]] if r.date.isoformat() == f["fill_date"]))
             # 채점·돌아보기가 이어진다
             self.assertTrue(recs["score"])
             self.assertTrue(all("counted" in s for s in recs["score"]))
@@ -218,7 +243,7 @@ class DailyLoop(unittest.TestCase):
             self.assertIn("_info_form", tpl)
             inp = fill(tpl)
             coin = next(h for h in inp["hand"] if h["asset"] == "KRW-BTC" and h["horizon"] == 1)
-            self.assertEqual(coin["_calc_layer"], "출발점")
+            self.assertNotEqual(coin["_calc_layer"], "출발점")  # 출발점 조각은 은퇴(2026-11-04 결정 E3)
             coin.update(decisive=[], info="")
             p = root.day_dir(d) / "noinfo.json"
             p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
@@ -309,6 +334,56 @@ class DailyLoop(unittest.TestCase):
             self.assertIn("069500", D.compute(root, d, late, stale, {}).skipped)
             ok = {a: {"status": "ok", "at": at(d, 16, 30).isoformat()} for a in C.ASSET_IDS}
             self.assertNotIn("069500", D.compute(root, d, late, ok, {}).skipped)
+
+    def test_late_runs_warn_and_miss_the_open(self):
+        """체결은 판단 뒤 첫 시가(결정 E1): prepare가 08:50 뒤면 경고, record가 09:00 뒤면 그날 시가를 놓쳐 다음 시가에 체결되고
+        예측 기준(체결 봉)도 다음 봉이다 — run notes에 경고가 남는다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_root(tmp)
+            d = dt.date(2025, 9, 5)  # 금: ETF 다음 시가는 월요일
+            self.assertEqual(D.prepare(root, d, at(d, 8, 55), fetch=False, ticker=TICK, echo=False), 0)
+            self.assertIn("경고", (root.day_dir(d) / "briefing.md").read_text(encoding="utf-8"))
+            prep = json.loads((root.day_dir(d) / "prepare.json").read_text(encoding="utf-8"))
+            self.assertTrue(prep["warnings"] and "08:50" in prep["warnings"][0])
+            inp = fill(json.loads((root.day_dir(d) / "input.json").read_text(encoding="utf-8")))
+            p = root.day_dir(d) / "late.json"
+            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d, at(d, 9, 10), p), 0)
+            run = R.read(root.records, "run")[-1]
+            self.assertTrue(any("시가를 놓쳐" in n for n in run["notes"]), run["notes"])
+            base = {p["asset"]: p["base_date"] for p in R.read(root.records, "prediction")}
+            self.assertEqual(base, {"069500": "2025-09-08", "360750": "2025-09-08", "KRW-BTC": "2025-09-06"})
+            # 그 뒤 실행에서 정산: 다음 시가에 체결된다(코인 토 9-06 → 9-08 실행, ETF 월 9-08 → 9-10 실행)
+            later = D.compute(root, dt.date(2025, 9, 10), at(dt.date(2025, 9, 10), 7, 37), {}, {})
+            got = {f["asset"]: f["fill_date"] for f in later.fills if f["account"] == "live:hand"}
+            self.assertEqual(got, {"069500": "2025-09-08", "360750": "2025-09-08", "KRW-BTC": "2025-09-06"})
+            # 제때 한 판단(07:37 준비, 08:30 기록)은 경고가 없다
+            root2 = make_root(tmp + "/b")
+            self.assertEqual(run_day(root2, dt.date(2025, 9, 9))[0], 0)
+            self.assertFalse([n for n in R.read(root2.records, "run")[-1]["notes"] if "시가" in n])
+
+    def test_cli_day_with_root(self):
+        """명령줄 그대로 하루(prepare → record → report, --root 임시 폴더, --no-fetch): 새 줄은 체결가 기준, 주문은 시가 규칙."""
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_root(tmp)
+            base = ["--root", str(root.path), "--day", "2025-09-02"]
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(D.main(["prepare", *base, "--at", "07:37", "--no-fetch"]), 0)
+            self.assertIn("record를 09:00 전에", out.getvalue())
+            d = dt.date(2025, 9, 2)
+            inp = fill(json.loads((root.day_dir(d) / "input.json").read_text(encoding="utf-8")))
+            p = root.day_dir(d) / "cli.json"
+            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(D.main(["record", str(p), *base, "--at", "08:40"]), 0)
+                self.assertEqual(D.main(["report", *base]), 0)
+            preds = R.read(root.records, "prediction")
+            self.assertTrue(preds and all(x["base_kind"] == "fill" and x["base_date"] == "2025-09-02" for x in preds))
+            self.assertTrue(all(o["fill_rule"] == "open" for o in R.read(root.records, "order")))
+            self.assertTrue((root.reports / "2025-09-02.md").exists())
+            self.assertEqual(R.check_folder(root.records), [])
 
     def test_live_root_refuses_backdating(self):
         with self.assertRaises(SystemExit):

@@ -1,6 +1,9 @@
 """예측 채점과 모아 보기, 기준선 예측.
 
-- 목표 종가 = 기준 종가(판단 때 알려진 마지막 끝난 종가)에서 h봉 뒤의 종가. ETF는 거래일, 코인은 날.
+- 체결가 기준(2026-11-05~, 결정 E2, 예측 줄 base_kind = "fill"): 기준 = 체결 봉(base_date 이상이고 시가가 있는 첫 봉)의 시가,
+  목표 종가 = 체결 봉부터 h봉째 봉의 종가(1봉이면 체결 봉 자체의 종가). 수익률 = 목표 종가 ÷ 체결가 − 1. 채점 줄에 fill_date·
+  fill_price를 적는다(예측 때는 체결가를 모르므로 예측 줄의 base_close는 null). 계좌가 실제로 버는 구간과 예측 구간이 같다.
+- 옛 줄(base_kind 없음): 목표 종가 = 기준 종가(판단 때 알려진 마지막 끝난 종가)에서 h봉 뒤의 종가. ETF는 거래일, 코인은 날.
 - 오름 = 수익률 > 0 (같으면 오르지 않음으로 센다).
 - 방향 적중: 확률 > 0.5면 오름, < 0.5면 내림을 말한 것. 정확히 0.5는 말하지 않은 것(null, 적중 수에서 빠진다).
 - 확률 점수(Brier) = (확률 − 결과)². 0이 완벽, 늘 50%면 0.25.
@@ -8,7 +11,7 @@
 - 기준선 예측: baseline:half(늘 50%), baseline:base_rate(최근 250봉에서 h봉 수익률이 오른 비율, 크기는 같은 창의
   |수익률| 2배 폭 창), baseline:all(2026-11-04: 알려진 전체 시세에서 h봉 수익률이 오른 비율, 크기는 전체의 2배 폭 창 —
   계산기의 옛 오를 확률 기준값(맞춘 기간 전체의 절편)과 같은 성질이라, 방향 기본값을 동전으로 바꾼 것이 맞았는지 나란히 본다).
-  모두 판단 때 알려진(끝난) 시세만 쓴다.
+  모두 판단 때 알려진(끝난) 시세만 쓴다. 체결가 기준 줄의 기준선은 같은 기준의 수익률(다음 봉 시가 → h봉째 종가, fill=True)로 센다.
 """
 from __future__ import annotations
 
@@ -22,18 +25,36 @@ from .prices import History
 BASE_RATE_WINDOW = 250
 
 
+def fill_index(hist: History, day: dt.date) -> int | None:
+    """체결 봉의 자리(결정 E2): 날짜 day 이상이고 시가가 있는(> 0) 첫 봉. 휴장이면 다음 거래일, 거래 정지로 시가가 0인 봉은
+    건너뛴다(주문 체결 ledger.fill_row와 같은 규칙). 아직 모르면 None."""
+    for i, r in enumerate(hist.rows):
+        if r.date >= day and r.open > 0:
+            return i
+    return None
+
+
 def score_due(preds: list[dict], hists: dict[str, History], run: dt.date, done: set[str]) -> list[dict]:
-    """아직 채점 안 된 예측 중 목표 종가가 알려진 것을 채점한다."""
+    """아직 채점 안 된 예측 중 목표 종가가 알려진 것을 채점한다. base_kind = "fill"이면 체결가 기준(위), 아니면 옛 기준."""
     out = []
     for p in preds:
         if p["id"] in done:
             continue
         h = hists[p["asset"]]
-        i = h.index_of(dt.date.fromisoformat(p["base_date"]))
-        if i is None or i + p["horizon"] >= len(h):
-            continue
-        target = h.rows[i + p["horizon"]]
-        ret = target.close / p["base_close"] - 1
+        extra: dict = {}
+        if p.get("base_kind") == "fill":
+            i = fill_index(h, dt.date.fromisoformat(p["base_date"]))
+            if i is None or i + p["horizon"] - 1 >= len(h):
+                continue
+            fill, target = h.rows[i], h.rows[i + p["horizon"] - 1]
+            ret = target.close / fill.open - 1
+            extra = {"fill_date": fill.date.isoformat(), "fill_price": fill.open}
+        else:
+            i = h.index_of(dt.date.fromisoformat(p["base_date"]))
+            if i is None or i + p["horizon"] >= len(h):
+                continue
+            target = h.rows[i + p["horizon"]]
+            ret = target.close / p["base_close"] - 1
         up = ret > 0
         prob = p.get("p_up")
         hit = None if prob is None or prob == 0.5 else ((prob > 0.5) == up)
@@ -41,7 +62,7 @@ def score_due(preds: list[dict], hists: dict[str, History], run: dt.date, done: 
         if p.get("size_lo") is not None:
             size = p["size_lo"] <= abs(ret) * 100 <= p["size_hi"]
         out.append({"id": f"score:{p['id']}", "run": run.isoformat(), "prediction": p["id"],
-                    "predictor": p["predictor"], "asset": p["asset"], "horizon": p["horizon"],
+                    "predictor": p["predictor"], "asset": p["asset"], "horizon": p["horizon"], **extra,
                     "target_date": target.date.isoformat(), "target_close": target.close, "ret": round(ret, 6),
                     "up": up, "direction_hit": hit,
                     "brier": round((prob - up) ** 2, 6) if prob is not None else None, "size_hit": size})
@@ -49,12 +70,23 @@ def score_due(preds: list[dict], hists: dict[str, History], run: dt.date, done: 
     return out
 
 
-def base_rate(hist: History, h: int) -> tuple[float | None, tuple[float, float] | None]:
-    """최근 250봉 안에서 끝난 h봉 수익률이 오른 비율과 |수익률|(%)의 2배 폭 창."""
-    c = hist.closes
-    if len(c) < BASE_RATE_WINDOW + h:
+def h_returns(hist: History, h: int, ts, fill: bool = False) -> list[float]:
+    """시점 t마다의 h봉 수익률. fill=False: 종가(t) → 종가(t+h) (옛 기준). fill=True: 시가(t+1) → 종가(t+h)
+    (체결가 기준, 결정 E2 — 1봉이면 다음 봉의 시가 → 종가). 시가가 0인 봉(거래 정지)은 건너뛴다."""
+    rows = hist.rows
+    if fill:
+        return [rows[t + h].close / rows[t + 1].open - 1 for t in ts if rows[t + 1].open > 0]
+    return [rows[t + h].close / rows[t].close - 1 for t in ts]
+
+
+def base_rate(hist: History, h: int, fill: bool = False) -> tuple[float | None, tuple[float, float] | None]:
+    """최근 250봉 안에서 끝난 h봉 수익률이 오른 비율과 |수익률|(%)의 2배 폭 창. fill = 체결가 기준 수익률(h_returns)."""
+    n = len(hist)
+    if n < BASE_RATE_WINDOW + h:
         return None, None
-    rets = [c[t + h] / c[t] - 1 for t in range(len(c) - BASE_RATE_WINDOW - h, len(c) - h)]
+    rets = h_returns(hist, h, range(n - BASE_RATE_WINDOW - h, n - h), fill)
+    if not rets:
+        return None, None
     w = F.window([abs(r) * 100 for r in rets])
     return sum(r > 0 for r in rets) / len(rets), w
 
@@ -62,12 +94,14 @@ def base_rate(hist: History, h: int) -> tuple[float | None, tuple[float, float] 
 ALL_RATE_MIN = 30  # baseline:all: 끝난 h봉 수익률이 이만큼은 있어야 낸다(맞추기의 '표본 30개 미만'과 같은 문턱)
 
 
-def all_rate(hist: History, h: int) -> tuple[float | None, tuple[float, float] | None]:
-    """알려진 전체 시세(판단 때 끝난 봉만)에서 h봉 수익률이 오른 비율과 |수익률|(%)의 2배 폭 창."""
-    c = hist.closes
-    if len(c) < ALL_RATE_MIN + h:
+def all_rate(hist: History, h: int, fill: bool = False) -> tuple[float | None, tuple[float, float] | None]:
+    """알려진 전체 시세(판단 때 끝난 봉만)에서 h봉 수익률이 오른 비율과 |수익률|(%)의 2배 폭 창. fill = 체결가 기준 수익률."""
+    n = len(hist)
+    if n < ALL_RATE_MIN + h:
         return None, None
-    rets = [c[t + h] / c[t] - 1 for t in range(len(c) - h)]
+    rets = h_returns(hist, h, range(n - h), fill)
+    if len(rets) < ALL_RATE_MIN:
+        return None, None
     w = F.window([abs(r) * 100 for r in rets])
     return sum(r > 0 for r in rets) / len(rets), w
 

@@ -77,6 +77,88 @@ class Fill(unittest.TestCase):
         self.assertEqual(fills[0]["qty_units"], 0)  # 09:00 사기 때는 15:30 판 돈이 아직 없다
 
 
+class OpenFill(unittest.TestCase):
+    """2026-11-05~(결정 E1): 주문에 fill_rule "open" — 판단 뒤 첫 시가(ETF·종목 09:00 시가, 코인 09:00 일봉 시가)."""
+
+    @staticmethod
+    def order(asset, decided: dt.datetime, rule="open", side="buy", qty=1):
+        return L.Order(f"o:{asset}:{decided:%d%H%M}", decided.date(), "a", asset, side, qty, 1.0, "", decided, rule)
+
+    def test_before_nine_fills_that_days_open_after_nine_the_next(self):
+        acc = L.Account("a", cash=1_000_000)
+        early = dt.datetime(2026, 7, 6, 8, 30, tzinfo=C.KST)   # 월 08:30 → 월 시가
+        late = dt.datetime(2026, 7, 7, 9, 5, tzinfo=C.KST)     # 화 09:05 → 수 시가
+        acc.pending += [self.order("069500", early), self.order("360750", late)]
+        fills = acc.settle(hists(D(2026, 7, 11), ETF, BTC), D(2026, 7, 11))
+        got = {f["asset"]: (f["fill_date"], f["price"], f["price_kind"]) for f in fills}
+        self.assertEqual(got["069500"], ("2026-07-06", 104.0, "open"))
+        self.assertEqual(got["360750"], ("2026-07-08", 111.0, "open"))
+
+    def test_weekend_order_fills_monday_open_and_coin_is_unchanged(self):
+        acc = L.Account("a", cash=1_000_000)
+        sat = dt.datetime(2026, 7, 4, 7, 50, tzinfo=C.KST)
+        acc.pending += [self.order("069500", sat), self.order("KRW-BTC", sat)]
+        fills = {f["asset"]: f for f in acc.settle(hists(D(2026, 7, 9), ETF, BTC), D(2026, 7, 9))}
+        self.assertEqual((fills["069500"]["fill_date"], fills["069500"]["price"]), ("2026-07-06", 104.0))
+        self.assertEqual((fills["KRW-BTC"]["fill_date"], fills["KRW-BTC"]["price"]), ("2026-07-04", 1004.0))
+
+    def test_settles_on_d_plus_2_for_etf_too(self):
+        """시가 체결은 ETF도 D+2 실행에서(코인 D 일봉이 D+1 09:00에 끝나 그때까지 시간 순서를 못 정한다). 옛 종가는 D+3."""
+        d = dt.datetime(2026, 7, 7, 8, 30, tzinfo=C.KST)  # 화
+        acc = L.Account("a", cash=1_000_000)
+        acc.pending.append(self.order("069500", d))
+        self.assertEqual(acc.settle(hists(D(2026, 7, 8), ETF, BTC), D(2026, 7, 8)), [])
+        self.assertEqual(len(acc.settle(hists(D(2026, 7, 9), ETF, BTC), D(2026, 7, 9))), 1)
+        old = L.Account("a", cash=1_000_000)
+        old.pending.append(self.order("069500", d, rule=None))
+        self.assertEqual(old.settle(hists(D(2026, 7, 9), ETF, BTC), D(2026, 7, 9)), [])
+        f = old.settle(hists(D(2026, 7, 10), ETF, BTC), D(2026, 7, 10))
+        self.assertEqual((f[0]["fill_date"], f[0]["price"], f[0]["price_kind"]), ("2026-07-07", 111.0, "close"))
+
+    def test_old_order_without_rule_fills_at_close(self):
+        """바꾸기 전에 낸 주문(기록에 fill_rule 없음 — 2026-11-04 판단 주문)은 옛 규칙: ETF 종가, 코인 시가."""
+        rec = {"id": "live:hand:2026-07-06:069500", "run": "2026-07-06", "account": "a", "asset": "069500",
+               "side": "buy", "qty_units": 1, "ref_price": 1.0, "reason": "", "decided_at": "2026-07-06T07:56:04+09:00"}
+        o = L.Order.from_record(rec)
+        self.assertIsNone(o.fill_rule)
+        self.assertEqual(o.rule(), ("close", C.CLOSE_TIME))
+        self.assertNotIn("fill_rule", o.record())
+        acc = L.Account("a", cash=1_000_000)
+        acc.pending.append(o)
+        f = acc.settle(hists(D(2026, 7, 9), ETF, BTC), D(2026, 7, 9))[0]
+        self.assertEqual((f["fill_date"], f["price"], f["price_kind"]), ("2026-07-06", 110.0, "close"))
+        new = L.Order.from_record({**rec, "fill_rule": "open"})
+        self.assertEqual((new.rule(), new.record()["fill_rule"]), (("open", C.OPEN_TIME), "open"))
+
+    def test_zero_open_bar_is_skipped(self):
+        """거래 정지 봉(시가 0)에는 사지 않는다 — 다음 거래가 있는 봉의 시가."""
+        halt = tuple(row(r.date, 0, r.close) if r.date == D(2026, 7, 6) else r for r in ETF)
+        acc = L.Account("a", cash=1_000_000)
+        acc.pending.append(self.order("069500", dt.datetime(2026, 7, 6, 8, 0, tzinfo=C.KST)))
+        f = acc.settle(hists(D(2026, 7, 11), halt, BTC), D(2026, 7, 11))[0]
+        self.assertEqual((f["fill_date"], f["price"]), ("2026-07-07", 110.0))
+
+    def test_plan_writes_the_rule(self):
+        acc = L.Account("a")
+        at = dt.datetime(2026, 7, 6, 8, 0, tzinfo=C.KST)
+        orders = acc.plan(D(2026, 7, 6), {"069500": 0.3}, {"069500": 100.0}, 0.0, {}, at, C.FILL_RULE)
+        self.assertEqual(orders[0].record()["fill_rule"], "open")
+        self.assertNotIn("fill_rule", L.Account("b").plan(D(2026, 7, 6), {"069500": 0.3}, {"069500": 100.0}, 0.0)[0].record())
+
+
+class FillBar(unittest.TestCase):
+    """예측 기준 날짜 = 판단 뒤 첫 체결 봉(config.fill_bar, 결정 E2)."""
+
+    def test_fill_bar(self):
+        k = lambda d, h, m: dt.datetime.combine(d, dt.time(h, m), C.KST)
+        self.assertEqual(C.fill_bar("069500", k(D(2026, 7, 6), 8, 30)), D(2026, 7, 6))   # 월 08:30 → 그날
+        self.assertEqual(C.fill_bar("069500", k(D(2026, 7, 6), 9, 0)), D(2026, 7, 7))    # 09:00 정각은 이미 정해짐 → 다음 날
+        self.assertEqual(C.fill_bar("069500", k(D(2026, 7, 3), 9, 30)), D(2026, 7, 6))   # 금 09:30 → 월
+        self.assertEqual(C.fill_bar("005930", k(D(2026, 7, 4), 7, 50)), D(2026, 7, 6))   # 종목 토 → 월
+        self.assertEqual(C.fill_bar("KRW-BTC", k(D(2026, 7, 4), 7, 50)), D(2026, 7, 4))  # 코인은 주말에도
+        self.assertEqual(C.fill_bar("KRW-BTC", k(D(2026, 7, 4), 9, 10)), D(2026, 7, 5))
+
+
 class Plan(unittest.TestCase):
     def test_band_and_pending_are_counted(self):
         acc = L.Account("a")

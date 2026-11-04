@@ -25,7 +25,7 @@ OPT_BOOL = (bool, type(None))
 FIELDS: dict[str, dict[str, tuple]] = {
     "run": {"mode": (str,), "steps": (dict,), "notes": (list,)},
     "reading": {"asset": (str,), "known_through": (str,), "values": (dict,), "numbers": (dict,)},
-    "prediction": {"predictor": (str,), "asset": (str,), "horizon": (int,), "base_date": (str,), "base_close": NUM,
+    "prediction": {"predictor": (str,), "asset": (str,), "horizon": (int,), "base_date": (str,), "base_close": OPT_NUM,
                    "p_up": OPT_NUM, "p_range": (list, type(None)), "size_lo": OPT_NUM, "size_hi": OPT_NUM,
                    "readings": (dict,), "used": (list,), "decisive": (list,), "reason": (str,), "knowledge": (str,)},
     "score": {"prediction": (str,), "predictor": (str,), "asset": (str,), "horizon": (int,), "target_date": (str,),
@@ -47,25 +47,31 @@ FIELDS: dict[str, dict[str, tuple]] = {
 }
 # 있을 때만 검사하는 칸 (1단계 재생 기록에는 없다)
 OPTIONAL: dict[str, dict[str, tuple]] = {
-    "score": {"counted": OPT_BOOL},
-    "order": {"decided_at": (str,)},
+    # 2026-11-05~(결정 E2): 체결가 기준 예측 줄의 채점은 체결 봉 날짜·시가(fill_date·fill_price)를 적는다
+    "score": {"counted": OPT_BOOL, "fill_date": (str,), "fill_price": NUM},
+    # 2026-11-05~(결정 E1): fill_rule = "open"(판단 뒤 첫 시가에 체결). 없으면 옛 규칙(ETF·종목 종가, 코인 시가)
+    "order": {"decided_at": (str,), "fill_rule": (str,)},
+    "fill": {"price_kind": (str,)},   # 체결 가격이 시가(open)인가 종가(close)인가
     # 2026-11-04: layer = 답한 층(계산기 출발점/조각/동전/모름, 이전 버전 조각/기준값, 손 조각/출발점/기타),
     # analog = 계산기 줄의 참고 칸(같은 대상 3년 창에서 시세 상태가 같은 지난 날들 {n, runs, eff, up_rate}, 없으면 null)
-    "prediction": {"confidence": (str,), "layer": (str,), "analog": (dict, type(None))},
+    # 2026-11-05~: base_kind = "fill"(기준이 체결가 — base_date = 체결 봉 날짜, base_close = null). 없으면 옛 기준(마지막 끝난 종가)
+    "prediction": {"confidence": (str,), "layer": (str,), "analog": (dict, type(None)), "base_kind": (str,)},
     "hand_reading": {"by_asset": (dict,)},   # 종목마다 대 본 조사 상태 (2026-10-29): 종목 → 상태 → {value, why, places}
 }
 WHY = ("맞음", "잡음", "대 보기 틀림", "조건 흐림", "이유 틀림", "바깥 상황")
 # 예측 줄 layer 낱말 (2026-11-04): 계산기 출발점/조각/동전/모름, 이전 버전 조각/기준값, 손 예측 조각/출발점/기타(입력 info)
 LAYERS = ("출발점", "조각", "동전", "기준값", "모름", "기타")
+BASE_KINDS = ("fill",)            # 예측 줄 base_kind (2026-11-05~): 체결가 기준
+PRICE_KINDS = ("open", "close")   # 체결 줄 price_kind
 LOOK_RESULT = ("찾음", "없음", "늦음", "막힘")
 SUMMARY_MAX = 300  # 조사 기록의 요약 칸 최대 글자 수 — 기사 본문을 옮기지 않는다(요약 + 링크)
 DESCRIBE = {
     "run": "실행 한 번: mode(replay/live), steps(단계별 결과·실패), notes",
     "reading": "대 보기: 대상 하나의 조각 값(values: 상태 id → 예/아니오/모름)과 계산에 쓴 숫자(numbers), known_through = 본 마지막 일봉 날짜",
-    "prediction": "예측: predictor(calc / hand / version:<id> / baseline:half / baseline:base_rate / baseline:all), 기간(봉 수), 기준 종가, 오를 확률과 범위, 움직임 크기 범위(%, 절댓값), 쓴 조각·결론을 바꾸는 조각, 이유, 논리집 지문, (있으면) 답한 층 layer·참고 칸 analog",
-    "score": "채점: 기한이 된 예측의 목표 종가와 수익률, 방향 적중(확률 0.5면 null), 확률 점수(Brier), 크기 적중",
-    "order": "주문: 계좌, 대상(세 대상 또는 종목 코드), buy/sell, 수량(최소 단위 개수: ETF·종목 주, 코인 1e-8), 판단 때 가격",
-    "fill": "체결: 주문 id, 체결일, 가격, 수량(현금이 모자라면 줄어듦 — note), 금액·수수료(원), 체결 뒤 현금",
+    "prediction": "예측: predictor(calc / hand / version:<id> / baseline:half / baseline:base_rate / baseline:all), 기간(봉 수), 기준(2026-11-05~ base_kind fill: 체결 봉 날짜, 기준가 null — 채점 때 그 봉의 시가; 옛 줄: 마지막 끝난 종가), 오를 확률과 범위, 움직임 크기 범위(%, 절댓값), 쓴 조각·결론을 바꾸는 조각, 이유, 논리집 지문, (있으면) 답한 층 layer·참고 칸 analog",
+    "score": "채점: 기한이 된 예측의 목표 종가와 수익률(체결가 기준이면 체결 봉 날짜·시가 fill_date·fill_price도), 방향 적중(확률 0.5면 null), 확률 점수(Brier), 크기 적중",
+    "order": "주문: 계좌, 대상(세 대상 또는 종목 코드), buy/sell, 수량(최소 단위 개수: ETF·종목 주, 코인 1e-8), 판단 때 가격, (2단계) 판단 시각, (2026-11-05~) 체결 규칙 fill_rule = open(판단 뒤 첫 시가)",
+    "fill": "체결: 주문 id, 체결일, 가격(price_kind 시가/종가), 수량(현금이 모자라면 줄어듦 — note), 금액·수수료(원), 체결 뒤 현금",
     "account": "계좌 상태: 현금(원), 보유(최소 단위; 세 대상은 늘, 종목은 들고 있을 때만), 평가 가격(대상 → [날짜, 가격]; 세 대상 + 들거나 기다리는 종목), 평가액, 아직 체결 안 된 주문",
     "review": "돌아보기(2단계): 예측 id, 틀린 조각 id, 까닭(조건 흐림/이유 틀림/바깥 상황/잡음/대 보기 틀림), 이유",
     "correction": "정정: 고칠 기록 id(target)와 설명. 지난 줄은 고치지 않는다",
@@ -112,6 +118,17 @@ def line_errors(kind: str, d: dict, where: str) -> list[str]:
         errs.append(f"{where}: p_up은 0~1")
     if kind == "prediction" and "layer" in d and d["layer"] not in LAYERS:
         errs.append(f"{where}: layer는 {list(LAYERS)} 중 하나")
+    if kind == "prediction":
+        if "base_kind" in d and d["base_kind"] not in BASE_KINDS:
+            errs.append(f"{where}: base_kind는 {list(BASE_KINDS)} 중 하나(없으면 옛 기준)")
+        elif d.get("base_kind") == "fill" and d.get("base_close") is not None:
+            errs.append(f"{where}: 체결가 기준 줄(base_kind fill)의 base_close는 null — 예측 때는 체결가를 모른다")
+        elif "base_kind" not in d and "base_close" in d and d["base_close"] is None:
+            errs.append(f"{where}: 옛 기준 줄은 base_close(기준 종가)가 있어야 함")
+    if kind == "order" and "fill_rule" in d and d["fill_rule"] not in C.FILL_RULES:
+        errs.append(f"{where}: fill_rule은 {list(C.FILL_RULES)} 중 하나(없으면 옛 규칙)")
+    if kind == "fill" and "price_kind" in d and d["price_kind"] not in PRICE_KINDS:
+        errs.append(f"{where}: price_kind는 {list(PRICE_KINDS)} 중 하나")
     for k, types in OPTIONAL.get(kind, {}).items():
         if k in d and (not isinstance(d[k], types) or (isinstance(d[k], bool) and bool not in types)):
             errs.append(f"{where}: '{k}' 타입이 {[t.__name__ for t in types]}가 아님")

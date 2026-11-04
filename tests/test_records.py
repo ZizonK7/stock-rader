@@ -41,6 +41,26 @@ class Fields(unittest.TestCase):
             self.assertTrue(any("중복" in e for e in errs), errs)
             self.assertTrue(any("날짜 순서" in e for e in errs), errs)
 
+    def test_fill_basis_fields(self):
+        """체결가 기준(2026-11-05~): 예측 줄 base_kind fill이면 base_close는 null, 옛 줄은 숫자. 주문 fill_rule·체결 price_kind 낱말."""
+        pred = {"kind": "prediction", "id": "p", "run": "2026-11-05", "predictor": "calc", "asset": "069500", "horizon": 1,
+                "base_date": "2026-11-05", "base_close": None, "base_kind": "fill", "p_up": 0.5, "p_range": None,
+                "size_lo": None, "size_hi": None, "readings": {}, "used": [], "decisive": [], "reason": "r", "knowledge": ""}
+        self.assertEqual(R.line_errors("prediction", pred, "x"), [])
+        self.assertTrue(R.line_errors("prediction", dict(pred, base_close=100.0), "x"))
+        self.assertTrue(R.line_errors("prediction", dict(pred, base_kind="close"), "x"))
+        old = dict(pred, base_close=100.0)
+        del old["base_kind"]
+        self.assertEqual(R.line_errors("prediction", old, "x"), [])
+        self.assertTrue(R.line_errors("prediction", dict(old, base_close=None), "x"))
+        self.assertEqual(R.line_errors("order", {"kind": "order", **ORDER, "fill_rule": "open"}, "x"), [])
+        self.assertTrue(R.line_errors("order", {"kind": "order", **ORDER, "fill_rule": "close"}, "x"))
+        score = {"kind": "score", "id": "s", "run": "2026-11-06", "prediction": "p", "predictor": "calc", "asset": "069500",
+                 "horizon": 1, "fill_date": "2026-11-05", "fill_price": 100.0, "target_date": "2026-11-05",
+                 "target_close": 101.0, "ret": 0.01, "up": True, "direction_hit": None, "brier": 0.25, "size_hit": None}
+        self.assertEqual(R.line_errors("score", score, "x"), [])
+        self.assertTrue(R.line_errors("score", dict(score, fill_price="100"), "x"))
+
     def test_every_kind_is_described(self):
         self.assertEqual(set(R.FIELDS), set(R.DESCRIBE))
 
