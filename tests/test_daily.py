@@ -238,38 +238,48 @@ class DailyLoop(unittest.TestCase):
             self.assertEqual(hand[("KRW-BTC", 1)]["layer"], "출발점")
             self.assertEqual(hand[("069500", 1)]["layer"], "조각")  # decisive가 있으면 '조각'
 
-    def test_seed_state_is_asked_only_when_relevant(self):
-        """씨앗 조각의 상태는 관련 있는 날만 대 본다: 틀의 readings에 없고, 없어도 기록된다(안 물음). 넣으면 answers 안에서만."""
+    def test_numeric_seed_state_is_set_by_code(self):
+        """숫자 씨앗 상태(2026-11-04, E5): 틀의 readings에 없고, 숫자가 없으면 '안 물음', 조사 numbers에 숫자가 있으면 코드가 값을
+        정해 기록한다(숫자도 남긴다). 메인이 적은 값이 숫자와 다르면 거절, 쓴 조각의 값은 코드가 정한 값과 같아야 한다."""
         with tempfile.TemporaryDirectory() as tmp:
             root = make_root(tmp)
             d = dt.date(2025, 9, 2)
             D.prepare(root, d, at(d, 7, 37), fetch=False, ticker=TICK, echo=False)
             tpl = json.loads((root.day_dir(d) / "input.json").read_text(encoding="utf-8"))
-            self.assertNotIn("S_q_overnight_move", tpl["readings"])
-            self.assertIn("S_q_overnight_move", tpl["_seed_readings"])
-            seed_q = [r for r in tpl["research"] if r["state"] == "S_q_overnight_move"]
-            self.assertEqual(len(seed_q), 1)
-            self.assertTrue(seed_q[0]["asked"].startswith("[씨앗"))
+            self.assertNotIn("S_q_overnight_gap", tpl["readings"])
+            self.assertIn("S_q_overnight_gap", tpl["_seed_readings"])
+            gap_q = [r for r in tpl["research"] if r["state"] == "S_q_overnight_gap"]
+            self.assertEqual(len(gap_q), 1)
+            self.assertTrue(gap_q[0]["asked"].startswith("[숫자"))
+            self.assertGreater(gap_q[0]["numbers"]["kr_overnight_sd60_pct"], 0)  # 잣대는 코드가 시세로 미리 채운다
             inp = fill(tpl)
-            inp["research"] = [r for r in inp["research"] if r["state"] != "S_q_overnight_move"]  # 오늘은 안 물음
             p = root.day_dir(d) / "seed.json"
             p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
             self.assertEqual(D.record(root, d, at(d, 8, 30), p), 0)
-            self.assertNotIn("S_q_overnight_move", R.read(root.records, "hand_reading")[0]["values"])
-            # 다음 날: 물었으면 값은 answers(오름/내림/아니오/모름) 안에서, 씨앗 조각을 쓸 수 있다
+            self.assertNotIn("S_q_overnight_gap", R.read(root.records, "hand_reading")[0]["values"])  # 숫자 없음 = 안 물음
+            # 다음 날: 간밤 등락 −2.5%, 잣대 1.0% → |−2.5| > 1 → '예', 부호 −
             d2 = dt.date(2025, 9, 3)
             D.prepare(root, d2, at(d2, 7, 37), fetch=False, ticker=TICK, echo=False)
             inp = fill(json.loads((root.day_dir(d2) / "input.json").read_text(encoding="utf-8")))
-            inp["readings"]["S_q_overnight_move"] = {"value": "예", "why": "가짜", "places": ["P_yahoo_chart"]}
+            q = next(r for r in inp["research"] if r["state"] == "S_q_overnight_gap")
+            q["numbers"] = {"kr_overnight_pct": -2.5, "kr_overnight_sd60_pct": 1.0}
+            inp["readings"]["S_q_overnight_gap"] = {"value": "아니오", "why": "메인이 잘못 적음", "places": ["P_yahoo_ewy"]}
             p = root.day_dir(d2) / "seed2.json"
             p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
-            self.assertEqual(D.record(root, d2, at(d2, 8, 30), p), 1)
-            inp["readings"]["S_q_overnight_move"]["value"] = "오름"
+            self.assertEqual(D.record(root, d2, at(d2, 8, 30), p), 1)   # 숫자로는 '예' — 메인 값과 다르면 거절
+            del inp["readings"]["S_q_overnight_gap"]                     # 값은 코드가 정한다
             kr = next(h for h in inp["hand"] if h["asset"] == "069500" and h["horizon"] == 1)
-            kr["used"].append("Q_overnight_lead=오름")
+            kr["used"].append("Q_overnight_lead_v2=아니오")
+            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d2, at(d2, 8, 30), p), 1)   # 쓴 조각의 값도 코드가 정한 값과 같아야
+            kr["used"][-1] = "Q_overnight_lead_v2=예"
             p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
             self.assertEqual(D.record(root, d2, at(d2, 8, 30), p), 0)
-            self.assertEqual(R.read(root.records, "hand_reading")[-1]["values"]["S_q_overnight_move"], "오름")
+            hr = R.read(root.records, "hand_reading")[-1]
+            self.assertEqual(hr["values"]["S_q_overnight_gap"], "예")
+            self.assertEqual(hr["numbers"]["S_q_overnight_gap"], {"kr_overnight_pct": -2.5, "kr_overnight_sd60_pct": 1.0})
+            self.assertIn("규칙 'abs > 1'", hr["why"]["S_q_overnight_gap"])
+            self.assertTrue(hr["places"]["S_q_overnight_gap"])  # 숫자가 나온 조사 답의 '찾음' 볼 곳
 
     def test_noise_excuse_is_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
