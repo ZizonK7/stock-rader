@@ -168,12 +168,20 @@ class CoinBaseAndStart(unittest.TestCase):
         stale["time"] = C.final_dt(C.ASSETS["KRW-BTC"], stale["base_date"]) - dt.timedelta(minutes=5)
         self.assertIsNone(K.predict("KRW-BTC", 1, {}, self.pieces(), nums, stale).start)
 
-    def test_start_piece_is_loaded_from_knowledge(self):
+    def test_start_piece_is_retired_and_never_answers(self):
+        """출발점 조각은 2026-11-04 은퇴(결정 E3: 기준이 체결가라 이미 움직인 몫이 0). 판단 때 가격을 넘겨도 걸리지 않는다.
+        떠 둔 모음(v5)에는 살아 있지만 매일 실행이 판단 때 가격을 넘기지 않으므로 거기서도 걸리지 않는다."""
         pieces, _ = K.load_pieces()
-        self.assertEqual([p.id for p in pieces if p.start], ["C_started_move"])
+        self.assertEqual([p.id for p in pieces if p.start], [])
         base = [e for p in pieces for e in p.effects if p.id == "C_base_coin" and e.on == "up_odds"]
         self.assertEqual(len(base), 9)
-        self.assertTrue(all(e.fixed and (e.lo, e.hi) == (1.0, 1.0) for e in base))
+        self.assertTrue(all(e.fixed and (e.lo, e.hi) == (1.0, 1.0) for e in base))  # 다시 맞춰도 동전 그대로
+        r = K.predict("KRW-BTC", 1, {}, pieces, {"vol60": 0.02, "vol250": 0.02}, self.decision(101.0, 144.0))
+        self.assertIsNone(r.start)
+        self.assertNotEqual(r.layer(), "출발점")
+        old, _ = K.load_pieces(C.VERSIONS / "v5.toml")
+        self.assertEqual([p.id for p in old if p.start], ["C_started_move"])
+        self.assertIsNone(K.predict("KRW-BTC", 1, {}, old, {"vol60": 0.02, "vol250": 0.02}).start)
 
     def test_fixed_claim_is_not_fitted(self):
         """fixed = true인 주장은 맞추지 않는다: 시세가 무엇이든 주장의 range 그대로."""
@@ -182,8 +190,9 @@ class CoinBaseAndStart(unittest.TestCase):
         claims = F.claims_of([raw])
         self.assertEqual(claims[0].fixed, (1.0, 1.0))
         rows = fixtures.market(dt.date(2023, 6, 1), dt.date(2025, 6, 30))
-        up = {a: tuple(Row(r.date, r.open, r.high, r.low, r.close * (1.004 ** i), 1) for i, r in enumerate(rs))
-              for a, rs in rows.items()}  # 자주 오르는 시세: 맞추면 절편이 1보다 크게 나온다
+        up = {a: tuple(Row(r.date, r.open * (1.004 ** i), r.high * (1.004 ** (i + 1)), r.low * (1.004 ** i),
+                           r.close * (1.004 ** (i + 1)), 1) for i, r in enumerate(rs))
+              for a, rs in rows.items()}  # 자주 오르는 시세(봉 안에서도 오름 — 시가 → 종가로 맞춘다): 맞추면 절편이 1보다 크다
         for market in (rows, up):
             fitted = F.fit_all(market, claims, dt.date(2025, 6, 30))
             effs, text, _ = F.effects_for(raw, fitted, claims)
@@ -196,6 +205,26 @@ class CoinBaseAndStart(unittest.TestCase):
 
 class Analog(unittest.TestCase):
     """참고 칸: 같은 대상 최근 750봉에서 시세 상태가 같은 지난 날들 (확률에 쓰지 않는다, 2026-11-04)."""
+
+    def test_open_basis_matches_brute_force(self):
+        """시가를 넘기면 오른 비율은 체결가 기준(시가(t+1) → 종가(t+h), 결정 E2). 시가가 0인 봉의 후보는 뺀다."""
+        rows = fixtures.series("069500", dt.date(2022, 1, 1), dt.date(2025, 6, 30))
+        c, o = [r.close for r in rows], [r.open for r in rows]
+        values = P.read(c)[0]
+        reads = P.read_series(c)
+        last = len(c) - 1
+        o2 = list(o)
+        cand1 = [t for t in range(max(0, last + 1 - K.ANALOG_WINDOW), last) if reads[t] == values]
+        if cand1:
+            o2[cand1[0] + 1] = 0.0  # 거래 정지 봉
+        got = K.analog(c, (1, 5), values, opens=o2)
+        for h in (1, 5):
+            cand = [t for t in range(max(0, last + 1 - K.ANALOG_WINDOW), last - h + 1) if reads[t] == values and o2[t + 1] > 0]
+            if not cand:
+                self.assertIsNone(got[h])
+                continue
+            self.assertEqual(got[h]["n"], len(cand))
+            self.assertAlmostEqual(got[h]["up_rate"], round(sum(c[t + h] > o2[t + 1] for t in cand) / len(cand), 4))
 
     def test_matches_brute_force_and_never_sees_the_future(self):
         c = [r.close for r in fixtures.series("069500", dt.date(2022, 1, 1), dt.date(2025, 6, 30))]
@@ -235,6 +264,36 @@ class Pieces(unittest.TestCase):
         for sid, text in P.STATES.items():
             for w in C.ASSET_WORDS:
                 self.assertNotIn(w.lower(), (sid + text).lower())
+
+
+class OpenBasis(unittest.TestCase):
+    """맞추기 표본의 수익률 = 시가(t+1) → 종가(t+h) (2026-11-04, 결정 E3). 상태 값·흔들림 단위는 종가(t)까지 그대로."""
+
+    def test_sample_returns_are_next_open_to_close(self):
+        rows = fixtures.series("069500", dt.date(2023, 1, 1), dt.date(2025, 6, 30))
+        reads = P.read_series([r.close for r in rows])
+        vols = P.vol250_series([r.close for r in rows])
+        for h in (1, 5):
+            s = F.samples("069500", rows, h, dt.date(2025, 6, 30))
+            ts = [t for t in range(len(rows) - h) if reads[t] is not None]
+            self.assertEqual(len(s.rets), len(ts))
+            for k in (0, len(ts) // 2, -1):
+                t = ts[k]
+                self.assertAlmostEqual(s.rets[k], rows[t + h].close / rows[t + 1].open - 1, places=12)
+                self.assertEqual(s.readings[k], reads[t])
+                self.assertAlmostEqual(s.units[k], vols[t] * math.sqrt(h), places=12)
+            self.assertNotAlmostEqual(s.rets[0], rows[ts[0] + h].close / rows[ts[0]].close - 1, places=9)  # 옛 종가 → 종가가 아니다
+        # 시가가 0인 봉(거래 정지)의 표본은 뺀다
+        t0 = ts[0]
+        bad = list(rows)
+        bad[t0 + 1] = Row(rows[t0 + 1].date, 0.0, 0.0, 0.0, rows[t0 + 1].close, 0)
+        self.assertEqual(len(F.samples("069500", tuple(bad), 1, dt.date(2025, 6, 30)).rets),
+                         len(F.samples("069500", rows, 1, dt.date(2025, 6, 30)).rets) - 1)
+
+    def test_knowledge_fit_text_names_the_return(self):
+        raw = F.block_raws()
+        live = [r for r in raw if r.get("status", "hypothesis") != "retired"]
+        self.assertTrue(live and all("다음 봉 시가 → h봉째 종가" in r["fit"] for r in live))
 
 
 class FitUntil(unittest.TestCase):

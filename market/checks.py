@@ -320,7 +320,8 @@ def _info_cells() -> dict[str, set[str]]:
 def hand_vs_calc() -> tuple[str, str]:
     """H_hand_vs_calc: 같은 (대상·기간·기준 날짜)의 손 예측과 계산기 예측을 짝지어 확률 점수 평균을 비교.
     판정 규칙은 세울 때 그대로다(사후에 시험 규칙을 바꾸지 않는다). 2026-11-04부터 세부에 대상·기간별 확률 점수와
-    '판단 때 정보가 있는 칸(판단 때 가격을 적는 대상의 1봉)을 뺀 값'을 같이 보인다(분석 보고서 C4: 지지가 그 칸에서 나왔다)."""
+    '판단 때 정보가 있는 칸(판단 때 가격을 적는 대상의 1봉)을 뺀 값'을 같이 보인다(분석 보고서 C4: 지지가 그 칸에서 나왔다).
+    체결가 기준 줄(base_kind fill, 2026-11-05~)은 그런 칸이 없다 — 기준이 판단 뒤 첫 시가라 판단 때 보인 움직임이 결과에 들지 않는다."""
     cut = SEEN_UNTIL["hand_vs_calc"]
     pairs = _scored(C.RECORDS, lambda p: p["predictor"] in ("hand", "calc") and p["run"] > cut)
     info = _info_cells()
@@ -329,8 +330,9 @@ def hand_vs_calc() -> tuple[str, str]:
         if s["brier"] is not None:
             v = by.setdefault((p["asset"], p["horizon"], p["base_date"]), {})
             v[p["predictor"]] = s["brier"]
-            if p["predictor"] == "hand":
-                v["info"] = p["asset"] in info.get(p["run"], set()) and p["horizon"] == C.ASSETS[p["asset"]].horizons[0]
+            if p["predictor"] == "hand":  # 체결가 기준 줄(2026-11-05~)은 판단 때 이미 움직인 몫이 기준에 들어가 '정보 칸'이 없다
+                v["info"] = (p.get("base_kind") != "fill" and p["asset"] in info.get(p["run"], set())
+                             and p["horizon"] == C.ASSETS[p["asset"]].horizons[0])
     keyed = [(k, v) for k, v in by.items() if "hand" in v and "calc" in v]
     both = [(v["hand"], v["calc"]) for _, v in keyed]
     if len(both) < MIN_PAIRS:
@@ -373,7 +375,8 @@ def _block_boot(diffs: list[float], block: int, seed: str) -> tuple[float, float
 def layer_vs_baselines(node_id: str) -> tuple[str, str]:
     """계산기(층 구조, R_layer_v0)가 동전(0.25)·기준선(최근 250봉 baseline:base_rate, 알려진 전체 baseline:all)보다 확률 점수가
     낮은가. 노드의 seen_until 뒤 기준 날짜의 계산기 예측(한 번만 세기)만, 대상·기간마다. 출발점 조각(주장 op = "start")에
-    걸면 그 층이 답한 칸(layer = 출발점)만 본다. 판정(R_layer_v0 6, 미리 적음): 1봉은 대상마다 기준 날짜 LAYER_MIN_FIRST개,
+    걸면 그 층이 답한 칸(layer = 출발점)만 본다(2026-11-04 은퇴 — 체결가 기준 줄에는 그 층이 없다). 기준(옛 종가·체결가)을 가리지 않고
+    채점의 확률 점수로만 견준다. 판정(R_layer_v0 6, 미리 적음): 1봉은 대상마다 기준 날짜 LAYER_MIN_FIRST개,
     그 밖은 겹치지 않는 표본(기간마다 하나) LAYER_MIN_SPACED개가 모일 때마다 한 묶음으로 한 번 — '계산기 − 동전'의 덩어리
     부트스트랩 90% 구간이 0 아래면 지지, 위면 반박, 걸치면 모름. 칸의 판정은 마지막 묶음의 것. 모이기 전엔 시험 전."""
     node = _node(node_id)

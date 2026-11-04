@@ -1,12 +1,15 @@
 """계좌: 주문 내기, 체결(정산), 평가.
 
 체결 규칙 (docs/design.md "체결 규칙")
-- 판단은 날짜 D의 07:37. ETF 주문은 D와 같거나 뒤인 첫 거래일의 종가(15:30), 코인 주문은 D 일봉(09:00 시작)의 시가에 체결.
+- 2026-11-05~(결정 E1, 주문 기록 fill_rule = "open"): 판단한 실제 시각(decided_at) 뒤 첫 시가에 체결 — ETF·종목은 그 거래일 09:00
+  시가(09:00 전 판단이면 그날, 뒤면 다음 거래일), 코인은 09:00 일봉 시가. 시가가 0인 봉(거래 정지)은 건너뛴다.
+- 옛 규칙(fill_rule이 없는 주문: 2026-11-04까지 낸 주문, 1단계 재생): ETF·종목은 판단 뒤 첫 거래일 종가(15:30), 코인은 시가.
 - 수수료: 금액 × 비율, 원 단위 올림. ETF 1주 단위, 코인 1e-8 단위. 현금은 음수가 될 수 없다(사기 금액은 현금 안으로 줄인다).
   빚·공매도 없음(팔기는 가진 만큼만).
 - 금액은 원 단위 정수: 사는 금액은 올림, 파는 금액은 내림(계좌에 불리한 쪽).
 - 정산은 시간 순서대로 한다: 아직 값을 모르는 체결보다 뒤의 체결은 기다린다. 판단 시각에 알려진 일봉(끝난 일봉)만 쓰므로
-  코인 체결(D 09:00)은 D+2 실행, ETF 체결(D 15:30)은 대개 D+3 실행에서 정산된다(코인 일봉이 다음 날 09:00에 끝나서). 그사이 판단은 '체결 안 된 주문을 더한 예상 보유'로 한다.
+  시가 체결(D 09:00)은 코인·ETF 모두 D+2 실행에서 정산된다(코인 D 일봉이 D+1 09:00에 끝나서 D+1 07:37에는 아직 모른다).
+  옛 ETF 종가 체결(D 15:30)은 대개 D+3 실행. 그사이 판단은 '체결 안 된 주문을 더한 예상 보유'로 한다.
 """
 from __future__ import annotations
 
@@ -35,19 +38,27 @@ class Order:
     # 판단한 실제 시각(2단계 진짜 계좌). 있으면 이 시각 **뒤에** 정해지는 첫 공식 가격에 체결한다(늦은 실행에서 이미 나온
     # 가격으로 사는 일을 막는다). 없으면(1단계 재생) 판단 시각 07:37 기준의 옛 규칙 그대로.
     decided_at: dt.datetime | None = None
+    # 체결 규칙(2026-11-05~, 결정 E1): "open" = 판단 뒤 첫 시가. 없으면 옛 규칙(ETF·종목 종가) — config.fill_rule
+    fill_rule: str | None = None
 
     def record(self) -> dict:
         d = {"id": self.id, "run": self.run.isoformat(), "account": self.account, "asset": self.asset,
              "side": self.side, "qty_units": self.qty_units, "ref_price": self.ref_price, "reason": self.reason}
         if self.decided_at is not None:
             d["decided_at"] = self.decided_at.isoformat(timespec="seconds")
+        if self.fill_rule:
+            d["fill_rule"] = self.fill_rule
         return d
 
     @classmethod
     def from_record(cls, d: dict) -> "Order":
         at = d.get("decided_at")
         return cls(d["id"], dt.date.fromisoformat(d["run"]), d["account"], d["asset"], d["side"], d["qty_units"],
-                   d["ref_price"], d.get("reason", ""), dt.datetime.fromisoformat(at) if at else None)
+                   d["ref_price"], d.get("reason", ""), dt.datetime.fromisoformat(at) if at else None, d.get("fill_rule"))
+
+    def rule(self) -> tuple[str, dt.time]:
+        """(체결 가격 칸, 체결 시각) — config.fill_rule."""
+        return C.fill_rule(self.asset, self.fill_rule)
 
 
 @dataclass
@@ -94,8 +105,9 @@ class Account:
     # ---------- 주문 ----------
     def plan(self, run: dt.date, targets: dict[str, float | None], prices: dict[str, float],
              band: float = 0.02, reasons: dict[str, str] | None = None,
-             decided_at: dt.datetime | None = None) -> list[Order]:
-        """목표 비중(대상 → 0~1, None은 그대로 둠)으로 주문을 낸다. 차이가 계좌의 band보다 작으면 거래하지 않는다."""
+             decided_at: dt.datetime | None = None, fill_rule: str | None = None) -> list[Order]:
+        """목표 비중(대상 → 0~1, None은 그대로 둠)으로 주문을 낸다. 차이가 계좌의 band보다 작으면 거래하지 않는다.
+        fill_rule: 주문에 적을 체결 규칙(매일 실행은 config.FILL_RULE = 판단 뒤 첫 시가, 재생은 없음 = 옛 규칙)."""
         units, cash = self.expected(prices)
         total = cash + sum(n * prices[a] / C.ASSETS[a].unit for a, n in units.items() if a in prices)
         orders: list[Order] = []
@@ -115,7 +127,7 @@ class Account:
             q = min(units.get(a, 0), round(n) if C.is_stock(a) else math.floor(n))
             if q > 0:
                 orders.append(Order(f"{self.id}:{run.isoformat()}:{a}", run, self.id, a, "sell", q, prices[a],
-                                    (reasons or {}).get(a, ""), decided_at))
+                                    (reasons or {}).get(a, ""), decided_at, fill_rule))
                 cash += q * prices[a] / spec.unit * (1 - spec.fee)
         for a, diff in buys:
             spec = C.ASSETS[a]
@@ -131,7 +143,7 @@ class Account:
                     q = near
             if q > 0:
                 orders.append(Order(f"{self.id}:{run.isoformat()}:{a}", run, self.id, a, "buy", q, prices[a],
-                                    (reasons or {}).get(a, ""), decided_at))
+                                    (reasons or {}).get(a, ""), decided_at, fill_rule))
                 cash -= q * prices[a] / spec.unit * (1 + spec.fee)
         self.pending += orders
         return orders
@@ -147,7 +159,7 @@ class Account:
             row = fill_row(o, hists[o.asset])
             if row is None:
                 continue
-            when = C.fill_dt(C.ASSETS[o.asset], row.date)
+            when = C.fill_dt(C.ASSETS[o.asset], row.date, o.rule()[1])
             if cutoff is not None and when <= cutoff:
                 ready.append((when, 0 if o.side == "sell" else 1, o, row))
         fills = []
@@ -158,7 +170,8 @@ class Account:
 
     def _fill(self, o: Order, row: Row, run: dt.date) -> dict:
         spec = C.ASSETS[o.asset]
-        price = getattr(row, spec.fill_field)
+        kind = o.rule()[0]
+        price = getattr(row, kind)
         q, note = o.qty_units, ""
         if o.side == "sell":
             if q > self.units.get(o.asset, 0):
@@ -181,17 +194,19 @@ class Account:
             self.units[o.asset] = self.units.get(o.asset, 0) + q
             self.cash -= value + fee
         return {"id": f"fill:{o.id}", "run": run.isoformat(), "account": self.id, "order": o.id, "asset": o.asset,
-                "side": o.side, "fill_date": row.date.isoformat(), "price": price, "qty_units": q, "value": value,
-                "fee": fee, "cash_after": self.cash, "note": note}
+                "side": o.side, "fill_date": row.date.isoformat(), "price": price, "price_kind": kind, "qty_units": q,
+                "value": value, "fee": fee, "cash_after": self.cash, "note": note}
 
 
 def fill_row(o: Order, hist: History) -> Row | None:
     """주문이 체결되는 일봉 (아직 모르면 None). ETF: 주문일과 같거나 뒤인 첫 거래일, 코인: 주문일 일봉.
-    판단 시각(decided_at)이 있으면: 주문일과 같거나 뒤이고 체결 가격 시각이 판단 시각 뒤인 첫 일봉."""
+    판단 시각(decided_at)이 있으면: 주문일과 같거나 뒤이고 체결 가격 시각(규칙의 시가·종가)이 판단 시각 뒤인 첫 일봉.
+    그 가격이 0인 봉(거래 정지: 시가·고가·저가가 0으로 온다)은 건너뛴다 — 거래가 없던 값에 사지 않는다."""
     if o.decided_at is not None:
         spec = C.ASSETS[o.asset]
+        kind, at = o.rule()
         for r in hist.rows:
-            if r.date >= o.run and C.fill_dt(spec, r.date) > o.decided_at:
+            if r.date >= o.run and C.fill_dt(spec, r.date, at) > o.decided_at and getattr(r, kind) > 0:
                 return r
         return None
     if C.on_exchange(o.asset):
@@ -200,12 +215,14 @@ def fill_row(o: Order, hist: History) -> Row | None:
 
 
 def settle_cutoff(hists: dict[str, History]) -> dt.datetime | None:
-    """모든 대상의 체결 가격을 알고 있는 마지막 시각 (대상마다 '마지막으로 아는 체결 시각' 중 가장 이른 것)."""
+    """모든 대상의 체결 가격을 알고 있는 마지막 시각 (대상마다 '마지막으로 아는 체결 시각' 중 가장 이른 것).
+    대상마다 마지막 끝난 봉에서 체결 가격으로 쓸 수 있는 마지막 시각(config.known_price_dt: ETF·종목 15:30, 코인 09:00) —
+    시가 체결(2026-11-05~)과 옛 종가 체결이 같은 기준으로 시간 순서를 지킨다."""
     times = []
     for a, h in hists.items():
         if h.last is None:
             return None
-        times.append(C.fill_dt(C.ASSETS[a], h.last.date))
+        times.append(C.known_price_dt(a, h.last.date))
     return min(times) if times else None
 
 

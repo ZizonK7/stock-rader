@@ -111,8 +111,12 @@ def daily(folder: Path, day: dt.date) -> str:
             if mine:
                 parts.append(", ".join(mine) + f"를 {verb} 주문")
         kinds = "ETF·종목은" if any(C.is_stock(o["asset"]) for o in orders) else "ETF는"
-        first = ("오늘 " + "과 ".join(parts) + "을 냈다(값은 주문 뒤 처음 정해지는 공식 가격으로 치른다:"
-                 f" 비트코인은 다음 09:00 시가, {kinds} 장 마감 가격).")
+        if all(o.get("fill_rule") == C.FILL_RULE for o in orders):  # 2026-11-05~(결정 E1): 모두 판단 뒤 첫 시가
+            first = ("오늘 " + "과 ".join(parts) + "을 냈다(값은 주문 뒤 처음 정해지는 시가로 치른다:"
+                     f" 비트코인은 09:00 일봉 시가, {kinds} 장이 열리는 09:00 가격).")
+        else:
+            first = ("오늘 " + "과 ".join(parts) + "을 냈다(값은 주문 뒤 처음 정해지는 공식 가격으로 치른다:"
+                     f" 비트코인은 다음 09:00 시가, {kinds} 장 마감 가격).")
     else:
         first = "오늘은 거래하지 않았다."
     v = me["value"]
@@ -188,7 +192,7 @@ def daily(folder: Path, day: dt.date) -> str:
     if calc_acc:
         lines.append(f"| 참고: 계산기 계좌 | | {won(calc_acc['value'], False)} | | {pct(calc_acc['value'] / start - 1)} |")
     if waiting:
-        # 체결은 그 가격의 일봉이 끝난 뒤 실행에서 정산된다(코인 D+2, ETF 대개 D+3) — 그때까지 표의 보유는 그대로다.
+        # 체결은 그 가격의 일봉이 끝난 뒤 실행에서 정산된다(시가 체결은 코인·ETF 모두 D+2, 옛 ETF 종가 체결은 대개 D+3) — 그때까지 표의 보유는 그대로다.
         lines += ["", "체결을 기다리는 주문(값이 확정되는 날 실행에서 표에 들어간다): " + ", ".join(
             f"{asset_label(o['asset'])} {won_about(o['qty_units'] * o['ref_price'] / C.ASSETS[o['asset']].unit)}어치 "
             f"{'사기' if o['side'] == 'buy' else '팔기'}({int(o['run'][5:7])}월 {int(o['run'][8:])}일 주문)" for o in waiting) + "."]

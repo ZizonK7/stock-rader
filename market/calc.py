@@ -16,9 +16,11 @@
 - 출발점 조각(2026-11-04, C_started_move, 주장 op = "start"): 판단 때 가격이 있는 대상의 첫 기간(1봉)은, 판단 때 가격이
   기준 종가에서 이미 움직인 몫으로 오를 확률을 낸다 — p = Φ(ln(판단 때 가격 ÷ 기준 종가) ÷ (vol60 × √(남은 시간 ÷ 1일))), 0.10–0.90으로 자름.
   미리 정한 식이고 맞추지 않는다. 걸리면 그 칸의 오를 확률은 기준값·곱하기 대신 이 값이다(움직임 범위는 그대로).
+  **2026-11-04 은퇴(결정 E3)**: 예측 기준이 체결가(판단 뒤 첫 시가)가 되어 판단 때 이미 움직인 몫이 정의상 0이다. 매일 실행은
+  판단 때 가격을 넘기지 않는다(daily) — 식(start_p)은 떠 둔 모음(v5)을 읽을 수 있게 남겨 두었고, 넘기지 않으니 걸리지 않는다.
 - layer(답한 층): 출발점 / 조각(곱하기가 하나라도 걸림) / 동전(고정 기준값만) / 기준값(맞춘 기준값만, 이전 버전) / 모름.
 - analog(참고 칸, 확률에 쓰지 않는다): 같은 대상 최근 750봉 안에서 시세 상태 7개가 오늘과 모두 같고 목표 봉이 이미 끝난 날들의
-  수·이어진 구간 수·유효 수·오른 비율.
+  수·이어진 구간 수·유효 수·오른 비율. 시가를 넘기면(매일 실행, 2026-11-05~) 오른 비율은 체결가 기준(다음 봉 시가 → h봉째 종가).
 """
 from __future__ import annotations
 
@@ -318,27 +320,30 @@ def _reading_at(c: list[float], t: int) -> dict[str, str] | None:
     return got
 
 
-def analog(closes, horizons, values: dict[str, str], window: int = ANALOG_WINDOW) -> dict[int, dict | None]:
+def analog(closes, horizons, values: dict[str, str], window: int = ANALOG_WINDOW,
+           opens=None) -> dict[int, dict | None]:
     """기간마다 참고 칸 {n, runs, eff, up_rate} (후보가 없으면 None). 확률에 쓰지 않는다(분석 보고서 E1: 같은 스위치 층은
     이 분야의 방향에서 동전·지난 날 전체 비율을 못 넘었다). 쌓아 두는 까닭: R_layer_v0 8 '참고 칸이 판정 두 번 연속 동전보다
     나으면 검토'를 나중에 보려고.
     - 후보: 같은 대상, 최근 window봉 안의 기준 봉 t 중 시세 상태 7개가 오늘(values)과 모두 같고 t + 기간 ≤ 오늘 기준 봉(마지막 줄)
       — 목표 봉이 판단 때 이미 끝난 날만(미래 금지).
     - runs = 이어진 구간 수(후보 봉 사이가 기간보다 벌어지면 새 구간), eff = n ÷ 기간(겹치는 기간을 거칠게 덜어 낸 유효 수),
-      up_rate = 후보의 기간 수익률이 오른 비율."""
+      up_rate = 후보의 기간 수익률이 오른 비율. opens(시가 목록, closes와 같은 줄)를 넘기면 수익률은 체결가 기준
+      (시가(t+1) → 종가(t+h), 결정 E2 — 예측 줄과 같은 기준)이고 시가가 0인 봉(거래 정지)의 후보는 뺀다. 없으면 종가(t) → 종가(t+h)."""
     c = list(closes)
+    o = list(opens) if opens is not None else None
     last = len(c) - 1
     if not values or any(v not in ("예", "아니오") for v in values.values()):
         return {h: None for h in horizons}
     lo = max(0, last + 1 - window)
     out: dict[int, dict | None] = {}
     for h in horizons:
-        cand = [t for t in range(lo, last - h + 1) if _reading_at(c, t) == values]
+        cand = [t for t in range(lo, last - h + 1) if _reading_at(c, t) == values and (o is None or o[t + 1] > 0)]
         if not cand:
             out[h] = None
             continue
         runs = 1 + sum(1 for a, b in zip(cand, cand[1:]) if b - a > h)
-        ups = sum(c[t + h] > c[t] for t in cand)
+        ups = sum(c[t + h] > (c[t] if o is None else o[t + 1]) for t in cand)
         out[h] = {"n": len(cand), "runs": runs, "eff": round(len(cand) / h, 2), "up_rate": round(ups / len(cand), 4)}
     return out
 
@@ -356,7 +361,7 @@ def main(argv: list[str]) -> int:
         for h in C.ASSETS[asset].horizons:
             r = predict(asset, h, values, pieces, numbers)
             print(f"  {h}봉 ({r.layer()}): {r.reason()}")
-    print("\n(출발점 조각은 판단 때 가격이 있어야 걸린다 — 매일 실행(daily)만 넘기므로 여기서는 1봉도 조각·동전 층으로 보인다)")
+    print("\n(기준은 체결가 = 판단 뒤 첫 시가다(2026-11-05~). 출발점 조각은 2026-11-04 은퇴 — 판단 때 이미 움직인 몫이 정의상 0)")
     return 0
 
 

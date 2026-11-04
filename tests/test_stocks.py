@@ -124,7 +124,7 @@ class Registry(unittest.TestCase):
         self.assertFalse(C.is_stock("069500"))      # 세 대상은 종목이 아니다
         self.assertFalse(C.is_stock("KRW-BTC"))
         spec = C.ASSETS["005930"]
-        self.assertEqual((spec.kind, spec.unit, spec.horizons, spec.fill_field), ("stock", 1, (1, 5, 20), "close"))
+        self.assertEqual((spec.kind, spec.unit, spec.horizons, spec.fill_field), ("stock", 1, (1, 5, 20), "open"))
         self.assertNotIn("005930", C.ASSETS)        # 반복·in에는 세 대상만 (계산 조각 효과 대상 검사)
         self.assertEqual(C.ASSET_IDS, ("069500", "360750", "KRW-BTC"))
         self.assertTrue(C.on_exchange("005930"))
@@ -273,9 +273,9 @@ class DailyStocks(unittest.TestCase):
             RP.write(root, d0)
             first = (root.reports / f"{d0}.md").read_text(encoding="utf-8")
             self.assertIn("가짜반도체(종목)", first)
-            self.assertIn("ETF·종목은 장 마감 가격", first)
+            self.assertIn("ETF·종목은 장이 열리는 09:00 가격", first)
 
-            # 다음 날들: 든 종목은 틀에 나오고 매일 예측한다. ETF처럼 D+3 실행에서 정산된다
+            # 다음 날들: 든 종목은 틀에 나오고 매일 예측한다. ETF처럼 판단 뒤 첫 시가에 체결되어 D+2 실행에서 정산된다
             for d in (dt.date(2025, 9, 3), dt.date(2025, 9, 4), dt.date(2025, 9, 5)):
                 D.prepare(root, d, at(d, 7, 37), fetch=False, ticker=TICK, echo=False)
                 tpl = json.loads((root.day_dir(d) / "input.json").read_text(encoding="utf-8"))
@@ -286,16 +286,20 @@ class DailyStocks(unittest.TestCase):
                 self.assertEqual(code, 0, d)
                 RP.write(root, d)
             fills = [f for f in R.read(root.records, "fill") if f["asset"] == S1]
-            self.assertEqual(fills[0]["run"], "2025-09-05")
-            self.assertEqual(fills[0]["fill_date"], "2025-09-02")
+            self.assertEqual(fills[0]["run"], "2025-09-04")
+            self.assertEqual((fills[0]["fill_date"], fills[0]["price_kind"]), ("2025-09-02", "open"))
+            self.assertEqual(fills[0]["price"], next(r.open for r in PR.load(S1, root.prices) if r.date == d0))
             acc = [a for a in R.read(root.records, "account") if a["account"] == "live:hand" and a["run"] == "2025-09-05"][0]
             self.assertGreater(acc["positions"][S1], 0)
             self.assertIn(S1, acc["prices"])
             total = acc["cash"] + sum(n * acc["prices"][a][1] / C.ASSETS[a].unit for a, n in acc["positions"].items())
             self.assertAlmostEqual(total, acc["value"], 2)
-            # 종목 손 예측이 채점된다(1일 예측: 9-02 기준 종가 → 9-03 종가)
-            scored = {s["prediction"] for s in R.read(root.records, "score")}
+            # 종목 손 예측이 채점된다(1일 예측: 체결가 기준 — 9-02 08:30 판단 → 9-02 시가 → 9-02 종가)
+            scores = {s["prediction"]: s for s in R.read(root.records, "score")}
+            scored = set(scores)
             self.assertIn(f"{d0}:hand:{S1}:1", scored)
+            s1 = scores[f"{d0}:hand:{S1}:1"]
+            self.assertEqual((s1["fill_date"], s1["target_date"]), ("2025-09-02", "2025-09-02"))
             self.assertIn(f"{d0}:baseline:half:{S1}:1", scored)
             text = (root.reports / "2025-09-05.md").read_text(encoding="utf-8")
             row = next(line for line in text.splitlines() if line.startswith("| 가짜반도체(종목)"))

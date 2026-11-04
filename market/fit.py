@@ -5,7 +5,10 @@
   python -m market.fit --write    … 그리고 knowledge.toml의 계산 조각 구역(effect·fit·not_set 칸)을 다시 쓴다
 
 조각의 '모양'(claims: 무엇에·어떻게·언제·방향·이유)은 knowledge.toml에 손으로 적는다. 여기서는 범위 숫자만 정한다.
-대상 × 기간마다 따로 맞춘다. 표본 = 시점 t(그때까지 종가로 조각을 대 봄)와 t+h봉 뒤의 수익률. **목표 종가 날짜까지 FIT_UNTIL 이하**.
+대상 × 기간마다 따로 맞춘다. 표본 = 시점 t(그때까지 종가로 조각을 대 봄)와 그 뒤 수익률. **목표 종가 날짜까지 FIT_UNTIL 이하**.
+수익률(2026-11-04, 결정 E3) = 시가(t+1) → 종가(t+h): 매일 실행의 예측 기준이 체결가(판단 뒤 첫 시가)라 같은 구간으로 맞춘다
+(1봉이면 다음 봉의 시가 → 종가). 상태 값과 흔들림 단위(vol250)는 그대로 종가(t)까지로 잰다 — 판단 때 아는 값이다. 시가가 0인 봉
+(거래 정지)의 표본은 뺀다. 그 전(2026-11-04까지)의 숫자는 종가(t) → 종가(t+h)로 맞췄다(versions/v5.toml).
 
 - 오를 확률(up_odds): 로지스틱 회귀(조각이 '예'면 1). 절편 → 기준 승산, 계수 → 곱하기.
   범위 = exp(값 ± 표준오차). 겹치는 기간 표본이라 표준오차에 √h를 곱한다(유효 표본 = 표본 ÷ h).
@@ -187,7 +190,7 @@ _VOL_CACHE: dict = {}
 
 
 def samples(asset: str, rows: tuple[PR.Row, ...], horizon: int, until: dt.date) -> Samples:
-    """목표 종가 날짜가 until 이하인 (대 본 값, h봉 뒤 수익률) 표본."""
+    """목표 종가 날짜가 until 이하인 (대 본 값, 시가(t+1) → 종가(t+h) 수익률) 표본 (결정 E3)."""
     rows = tuple(r for r in rows if r.date <= until)
     closes = [r.close for r in rows]
     key = (asset, len(rows), rows[-1].date if rows else None, rows[-1].close if rows else None)
@@ -201,10 +204,10 @@ def samples(asset: str, rows: tuple[PR.Row, ...], horizon: int, until: dt.date) 
     vols = _VOL_CACHE[key]
     s = Samples(asset, horizon)
     for t in range(len(rows) - horizon):
-        if reads[t] is None:
+        if reads[t] is None or rows[t + 1].open <= 0:
             continue
         s.readings.append(reads[t])
-        s.rets.append(closes[t + horizon] / closes[t] - 1)
+        s.rets.append(closes[t + horizon] / rows[t + 1].open - 1)
         s.units.append(vols[t] * math.sqrt(horizon))
         s.first = s.first or rows[t].date
         s.last = rows[t + horizon].date
@@ -357,7 +360,7 @@ def effects_for(raw: dict, fitted: list[Fitted], claims: list[Claim]) -> tuple[l
             elif c.piece in f.dropped:
                 notset.append(f"{tag} {c.on}: {f.dropped[c.piece]}")
     total = len(made) + len(notset)
-    text = f"목표 종가 {C.FIT_UNTIL} 이하 시세에서 맞춤: 세움 {len(made)}/{total}" + (
+    text = f"목표 종가 {C.FIT_UNTIL} 이하 시세에서 맞춤(수익률 = 다음 봉 시가 → h봉째 종가): 세움 {len(made)}/{total}" + (
         f" ({', '.join(made)})" if made else "")
     if fixed:
         text += f"; 맞추지 않는 고정값 {len(fixed)}칸"
