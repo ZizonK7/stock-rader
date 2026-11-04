@@ -4,7 +4,12 @@
 (out/daily/<날짜>/input.json)과 docs/routine-prompt.md "입력 파일"에 있다.
 
 검사하는 것 (오류면 아무것도 쓰지 않는다):
-- 조사: 칸·결과 낱말·링크·요약 길이(기사 본문 금지). 목록에 없는 볼 곳은 new = true일 때만.
+- 조사: 칸·결과 낱말·링크·요약 길이(기사 본문 금지). 목록에 없는 볼 곳은 new = true일 때만. research.FAST_SINCE(2026-11-05)
+  판단부터 모든 답에 numbers(숫자 이름_단위 → 값)와 as_of(정보 시각, 시간대 붙은 ISO)가 있어야 하고, as_of는 판단 시각보다
+  늦으면 안 된다(판단 뒤 정보). numbers가 비면 경고.
+- 숫자 상태(2026-11-04, 상태에 number): 값은 코드가 숫자로 정한다(resolve_numbers). 숫자는 readings[상태].numbers → 그 상태를
+  물은 조사 답의 numbers → 그날 다른 조사 답의 numbers 순서로 찾는다. 메인이 적은 값이 숫자로 정한 값과 다르면 거절.
+  readings에 없어도 숫자가 있으면 코드가 채운다(이유·볼 곳도). 숫자가 없으면 '모름'(씨앗 상태는 '안 물음').
 - 손 대 보기: 살아 있는 조사 조각의 상태마다 값·이유. 값이 모름이 아니면 쓴 볼 곳이 있어야 한다. 상태에 answers가 있으면
   값은 그 안에서만(2026-11-03: 값 기준으로 대 보는 상태는 '일부'를 쓰지 않는다 — 검사가 '일부'를 셀 수 없다).
 - 손 예측: 오늘 예측할 수 있는 대상 × 기간마다 하나. 확률 0~1(모름이면 null), 크기 범위 폭 2배 이하, 이유, 확신도.
@@ -33,6 +38,7 @@ from pathlib import Path
 
 from . import config as C
 from . import records as R
+from . import research as RS
 
 CONF = ("낮음", "보통", "높음")
 INFO = ("조각", "출발점", "기타")   # 손 예측의 결론을 정한 것 (2026-11-04)
@@ -72,6 +78,85 @@ def info_of(h: dict, pieces: dict[str, dict]) -> str | None:
     return "출발점" if all((pieces.get(d) or {}).get("start") for d in dec) else "조각"
 
 
+def _find_number(key: str, own: dict, research: list[dict], st: str) -> tuple[float | None, int | None, list[float]]:
+    """숫자 하나 찾기: 대 보기의 numbers → 그 상태를 물은 조사 답 → 다른 조사 답. (값, 나온 조사 답 자리, 조사 답들이 준 값들).
+    값은 적힌 그대로(정수는 정수로) 돌려준다 — 기록에 옮겨 적을 때 모양이 바뀌지 않게."""
+    if isinstance(own.get(key), (int, float)) and not isinstance(own.get(key), bool):
+        return own[key], None, []
+    order = [i for i, r in enumerate(research) if r.get("state") == st] + \
+            [i for i, r in enumerate(research) if r.get("state") != st]
+    got = [(i, research[i]["numbers"][key]) for i in order if isinstance(research[i].get("numbers"), dict)
+           and isinstance(research[i]["numbers"].get(key), (int, float)) and not isinstance(research[i]["numbers"][key], bool)]
+    if not got:
+        return None, None, []
+    return got[0][1], got[0][0], [float(v) for _, v in got]
+
+
+def resolve_numbers(inp: dict, raw: dict, states: list[str], seeds: set[str],
+                    stock_states: list[str] = ()) -> tuple[dict, dict, dict, list[str], list[str]]:
+    """숫자 상태(상태에 number)의 손 대 보기 값을 코드가 정한다(2026-11-04, 결정 E5 — 대 보기를 객관으로).
+    돌려줌: (readings 사본 — 숫자 상태를 채움, stock_readings 사본, numbers — 상태 → {숫자 이름: 값}, 오류, 경고).
+    종목마다 대 보는 숫자 상태는 그 종목 대 보기의 numbers에서만 찾는다(조사 답의 숫자는 종목을 가리지 않아서)."""
+    specs = RS.numeric_states(raw)
+    readings = {k: (dict(v) if isinstance(v, dict) else v) for k, v in (inp.get("readings") or {}).items()}
+    stock_readings = {a: ({st: (dict(r) if isinstance(r, dict) else r) for st, r in rs.items()} if isinstance(rs, dict) else rs)
+                      for a, rs in (inp.get("stock_readings") or {}).items()}
+    research = [r for r in inp.get("research", []) if isinstance(r, dict)]
+    numbers, errs, warns = {}, [], []
+
+    def settle(where: str, spec: dict, rd, found: dict, src: int | None):
+        value, x = RS.number_value(spec, found)
+        given = rd.get("value") if isinstance(rd, dict) else None
+        if isinstance(given, str) and not given.strip():
+            given = None
+        if given is not None and str(given) != value:
+            errs.append(f"{where}: 값 '{given}'인데 숫자로 정한 값은 '{value}' ({RS.number_why(spec, found, x)}) — 숫자 상태는 "
+                        f"코드가 정한다. 값을 비우거나 숫자(numbers)를 고친다")
+        rd = dict(rd) if isinstance(rd, dict) else {}
+        rd["value"] = value
+        if not str(rd.get("why", "")).strip():
+            rd["why"] = RS.number_why(spec, found, x)
+        if not rd.get("places") and src is not None:
+            rd["places"] = list(dict.fromkeys(lk.get("place") for lk in research[src].get("looked", [])
+                                              if isinstance(lk, dict) and lk.get("result") == "찾음" and lk.get("place")))
+        return rd
+
+    for st in states:
+        spec = specs.get(st)
+        if spec is None:
+            continue
+        rd = readings.get(st)
+        own = rd.get("numbers") if isinstance(rd, dict) and isinstance(rd.get("numbers"), dict) else {}
+        found, src = {}, None
+        for k in RS.number_keys(spec):
+            v, i, alls = _find_number(k, own, research, st)
+            if v is None:
+                continue
+            found[k] = v
+            src = src if src is not None else i
+            if len(set(alls)) > 1:
+                warns.append(f"readings.{st}: 조사 답들이 {k}를 다르게 줌 {sorted(set(alls))} — 먼저 찾은 {v:g}를 썼다")
+        if rd is None and RS.number_of(spec, found) is None and st in seeds:
+            continue  # 숫자 씨앗: 숫자가 없고 메인도 안 적었으면 '안 물음'
+        readings[st] = settle(f"readings.{st}", spec, rd, found, src)
+        numbers[st] = found
+    for st, rd in readings.items():  # 메인이 대 보기에 적은 숫자도 남긴다(숫자 상태가 아니어도)
+        if isinstance(rd, dict) and isinstance(rd.get("numbers"), dict) and (rd["numbers"] or st in numbers):
+            numbers[st] = {**rd["numbers"], **numbers.get(st, {})}
+    numbers = {st: v for st, v in numbers.items() if v}
+    for a, rs in stock_readings.items():
+        if not isinstance(rs, dict):
+            continue
+        for st in stock_states:
+            spec = specs.get(st)
+            rd = rs.get(st)
+            if spec is None or rd is None:
+                continue
+            own = rd.get("numbers") if isinstance(rd, dict) and isinstance(rd.get("numbers"), dict) else {}
+            rs[st] = settle(f"stock_readings.{a}.{st}", spec, rd, dict(own), None)
+    return readings, stock_readings, numbers, errs, warns
+
+
 def _reading_errors(where: str, r, *, need_place: bool = True) -> list[str]:
     if not isinstance(r, dict):
         return [f"{where}: 대 보기가 없음 (모르면 value = \"모름\"과 이유)"]
@@ -96,20 +181,43 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
     pieces = _piece_index(ctx["raw"])
     places = set(ctx["places"])
 
-    # 조사
+    # 조사 (2026-11-05 판단부터 모든 답에 numbers·as_of — 오늘 판단용 빠른 정보, 결정 E4)
+    fast = str(day) >= RS.FAST_SINCE
+    decided = R.as_of_time(str(ctx["at"])) if ctx.get("at") else None
     for i, r in enumerate(inp.get("research", [])):
         line = research_line(day, i, r)
         errs += R.line_errors("research", line, f"research[{i}]")
         for lk in r.get("looked", []):
             if isinstance(lk, dict) and lk.get("place") not in places and not lk.get("new"):
                 errs.append(f"research[{i}]: 볼 곳 '{lk.get('place')}'가 places.toml에 없는데 new = false")
+        q = r.get("question", "")
+        if fast:
+            if not isinstance(r.get("numbers"), dict):
+                errs.append(f"research[{i}] {q}: numbers(숫자 이름_단위 → 값)가 없음 — {RS.FAST_SINCE}부터 모든 조사 답에 "
+                            f"숫자 칸을 둔다(못 찾았으면 빈 {{}}와 answer에 까닭)")
+            elif not r["numbers"]:
+                warns.append(f"research[{i}] {q}: 숫자 없는 답(numbers가 빔)")
+            if not str(r.get("as_of", "")).strip():
+                errs.append(f"research[{i}] {q}: as_of(답의 숫자가 가리키는 시각, 예: {day}T07:20+09:00)가 없음")
+        when = R.as_of_time(str(r.get("as_of", ""))) if str(r.get("as_of", "")).strip() else None
+        if when is not None and decided is not None and when > decided:
+            errs.append(f"research[{i}] {q}: as_of {r['as_of']}가 판단 시각 {ctx['at']}보다 늦음 — 판단 뒤 정보는 쓰지 않는다")
     if not inp.get("research"):
         warns.append("조사 기록이 하나도 없음")
 
-    # 손 대 보기 (씨앗 조각만 쓰는 상태는 관련 있는 날만 — 없으면 '안 물음')
+    # 손 대 보기 (씨앗 조각만 쓰는 상태는 관련 있는 날만 — 없으면 '안 물음'; 숫자 상태는 코드가 값을 정한다)
     answers = {s["id"]: s["answers"] for s in ctx["raw"].get("state", []) if s.get("answers")}
-    readings = inp.get("readings", {})
     seed_states = set(ctx.get("seed_states", []))
+    readings, stock_filled, numbers, nerrs, nwarns = resolve_numbers(inp, ctx["raw"], list(ctx["research_states"]),
+                                                                     seed_states, list(ctx.get("stock_states", [])))
+    errs += nerrs
+    warns += nwarns
+    for st, nums in numbers.items():
+        errs += R.number_errors(nums, f"readings.{st}.numbers")
+    for a, rs in stock_filled.items():
+        for st, r in (rs.items() if isinstance(rs, dict) else ()):
+            if isinstance(r, dict) and "numbers" in r:
+                errs += R.number_errors(r["numbers"], f"stock_readings.{a}.{st}.numbers")
     for st in ctx["research_states"]:
         if st in seed_states and st not in readings:
             continue
@@ -123,7 +231,7 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
                         + (" — 종목마다 대 보는 상태는 stock_readings에" if st in ctx.get("stock_states", []) else ""))
     stocks = list(ctx.get("stocks", []))
     stock_states = list(ctx.get("stock_states", []))
-    stock_readings = inp.get("stock_readings") or {}
+    stock_readings = stock_filled
     for a, rs in stock_readings.items():
         if a not in stocks:
             errs.append(f"stock_readings: '{a}'는 오늘 쓸 수 있는 종목이 아님")
@@ -318,9 +426,15 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
 
 # ---------- 기록 줄 만들기 ----------
 def research_line(day: str, i: int, r: dict) -> dict:
-    return {"id": f"research:{day}:{i + 1}", "run": day, "kind": "research", "question": str(r.get("question", "")),
+    line = {"id": f"research:{day}:{i + 1}", "run": day, "kind": "research", "question": str(r.get("question", "")),
             "state": str(r.get("state", "")), "angle": str(r.get("angle", "")), "asked": str(r.get("asked", "")),
             "answer": str(r.get("answer", "")), "looked": list(r.get("looked", [])), "agent": str(r.get("agent", ""))}
+    # 2026-11-04 (E6): 숫자와 정보 시각. 빈 as_of는 적지 않는다(2026-11-05 전 흉내 내기의 틀이 빈 칸을 가진다)
+    if "numbers" in r:
+        line["numbers"] = dict(r["numbers"]) if isinstance(r["numbers"], dict) else r["numbers"]
+    if r.get("as_of") not in (None, ""):
+        line["as_of"] = r["as_of"]
+    return line
 
 
 def lines(inp: dict, ctx: dict, digest: str, base: dict[str, dict]) -> dict[str, list[dict]]:
@@ -335,8 +449,8 @@ def lines(inp: dict, ctx: dict, digest: str, base: dict[str, dict]) -> dict[str,
         line = research_line(day, i, r)
         line.pop("kind")
         out["research"].append(line)
-    readings = inp.get("readings", {})
-    stock_readings = inp.get("stock_readings") or {}
+    readings, stock_readings, numbers, _, _ = resolve_numbers(
+        inp, ctx["raw"], list(ctx["research_states"]), set(ctx.get("seed_states", [])), list(ctx.get("stock_states", [])))
     if readings or stock_readings:
         line = {
             "id": f"hand_reading:{day}", "run": day,
@@ -344,9 +458,12 @@ def lines(inp: dict, ctx: dict, digest: str, base: dict[str, dict]) -> dict[str,
             "why": {k: v["why"] for k, v in readings.items()},
             "places": {k: list(v.get("places", [])) for k, v in readings.items()},
             "research": [r["id"] for r in out["research"]]}
-        if stock_readings:  # 종목마다 대 본 값 (2026-10-29): 종목 → 상태 → {value, why, places}
-            line["by_asset"] = {a: {st: {"value": r["value"], "why": str(r["why"]), "places": list(r.get("places", []))}
+        if stock_readings:  # 종목마다 대 본 값 (2026-10-29): 종목 → 상태 → {value, why, places[, numbers]}
+            line["by_asset"] = {a: {st: {"value": r["value"], "why": str(r["why"]), "places": list(r.get("places", [])),
+                                         **({"numbers": dict(r["numbers"])} if isinstance(r.get("numbers"), dict) else {})}
                                     for st, r in rs.items()} for a, rs in stock_readings.items()}
+        if numbers:  # 숫자 상태가 쓴 숫자 (2026-11-04, E6): 상태 → {숫자 이름: 값}
+            line["numbers"] = numbers
         out["hand_reading"].append(line)
     hand_values = {k: v["value"] for k, v in readings.items()}
     pieces = _piece_index(ctx["raw"])

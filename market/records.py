@@ -10,7 +10,10 @@
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
+import math
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -56,7 +59,12 @@ OPTIONAL: dict[str, dict[str, tuple]] = {
     # analog = 계산기 줄의 참고 칸(같은 대상 3년 창에서 시세 상태가 같은 지난 날들 {n, runs, eff, up_rate}, 없으면 null)
     # 2026-11-05~: base_kind = "fill"(기준이 체결가 — base_date = 체결 봉 날짜, base_close = null). 없으면 옛 기준(마지막 끝난 종가)
     "prediction": {"confidence": (str,), "layer": (str,), "analog": (dict, type(None)), "base_kind": (str,)},
-    "hand_reading": {"by_asset": (dict,)},   # 종목마다 대 본 조사 상태 (2026-10-29): 종목 → 상태 → {value, why, places}
+    "hand_reading": {"by_asset": (dict,),    # 종목마다 대 본 조사 상태 (2026-10-29): 종목 → 상태 → {value, why, places[, numbers]}
+                     # 숫자 상태(2026-11-04, E6): 상태 → {숫자 이름: 값} — 코드가 값(예/아니오/모름)을 정할 때 쓴 숫자
+                     "numbers": (dict,)},
+    # 조사의 숫자와 정보 시각(2026-11-04, E6): numbers = 숫자 이름(끝이 단위) → 값, as_of = 답의 숫자가 가리키는 시각(시간대가 붙은
+    # ISO, 예: 2026-11-05T07:20+09:00). 2026-11-05 판단부터 hand.validate가 모든 조사 답에 요구한다(research.FAST_SINCE)
+    "research": {"numbers": (dict,), "as_of": (str,)},
 }
 WHY = ("맞음", "잡음", "대 보기 틀림", "조건 흐림", "이유 틀림", "바깥 상황")
 # 예측 줄 layer 낱말 (2026-11-04): 계산기 출발점/조각/동전/모름, 이전 버전 조각/기준값, 손 예측 조각/출발점/기타(입력 info)
@@ -65,6 +73,12 @@ BASE_KINDS = ("fill",)            # 예측 줄 base_kind (2026-11-05~): 체결�
 PRICE_KINDS = ("open", "close")   # 체결 줄 price_kind
 LOOK_RESULT = ("찾음", "없음", "늦음", "막힘")
 SUMMARY_MAX = 300  # 조사 기록의 요약 칸 최대 글자 수 — 기사 본문을 옮기지 않는다(요약 + 링크)
+# 숫자 이름(2026-11-04): 소문자·숫자·밑줄, 끝 낱말이 단위다 — 같은 뜻은 날마다 같은 이름으로 적어야 견줄 수 있다.
+# pct = %, pp = %p, bp = 0.01%p, x = 평소 하루 움직임의 배수, z = 표준화 값, krw = 원, krw100m = 억 원, usd = 달러,
+# usdm = 백만 달러, usdbn = 십억 달러, pt = 지수 포인트, btc = 코인 개수, n = 개수
+NUMBER_UNITS = ("pct", "pp", "bp", "x", "z", "krw", "krw100m", "usd", "usdm", "usdbn", "pt", "btc", "n")
+NUMBER_KEY = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*_(?:" + "|".join(NUMBER_UNITS) + r")$")
+NUMBER_KEY_MAX = 48
 DESCRIBE = {
     "run": "실행 한 번: mode(replay/live), steps(단계별 결과·실패), notes",
     "reading": "대 보기: 대상 하나의 조각 값(values: 상태 id → 예/아니오/모름)과 계산에 쓴 숫자(numbers), known_through = 본 마지막 일봉 날짜",
@@ -75,8 +89,8 @@ DESCRIBE = {
     "account": "계좌 상태: 현금(원), 보유(최소 단위; 세 대상은 늘, 종목은 들고 있을 때만), 평가 가격(대상 → [날짜, 가격]; 세 대상 + 들거나 기다리는 종목), 평가액, 아직 체결 안 된 주문",
     "review": "돌아보기(2단계): 예측 id, 틀린 조각 id, 까닭(조건 흐림/이유 틀림/바깥 상황/잡음/대 보기 틀림), 이유",
     "correction": "정정: 고칠 기록 id(target)와 설명. 지난 줄은 고치지 않는다",
-    "research": "조사(질문 하나): 대 볼 상태 id(열린 질문이면 ''), 각도, 질문, 답 요약, 본 곳마다 결과(찾음/없음/늦음/막힘)·새 곳 여부·링크·날짜, 맡은 에이전트",
-    "hand_reading": "손 대 보기(하루 하나): 조사로 대 본 상태 값(예/아니오/일부/모름 또는 값), 상태마다 이유와 쓴 볼 곳, 근거 조사 id, (있으면) by_asset = 종목마다 대 본 상태",
+    "research": "조사(질문 하나): 대 볼 상태 id(각도 질문·2차 조사면 ''), 각도, 질문, 답 요약, 본 곳마다 결과(찾음/없음/늦음/막힘)·새 곳 여부·링크·날짜, 맡은 에이전트, (2026-11-05~) numbers = 숫자 이름_단위 → 값, as_of = 정보 시각",
+    "hand_reading": "손 대 보기(하루 하나): 조사로 대 본 상태 값(예/아니오/일부/모름 또는 값), 상태마다 이유와 쓴 볼 곳, 근거 조사 id, (있으면) by_asset = 종목마다 대 본 상태, numbers = 숫자 상태가 쓴 숫자(상태 → 이름 → 값)",
     "reading_check": "대 보기 다시 보기: 지난 손 대 보기의 상태 값을 나중에 알게 된 것으로 다시 봄(맞음/틀림/모름), 판단 뒤에야 정보가 나온 볼 곳(late)",
 }
 
@@ -136,6 +150,14 @@ def line_errors(kind: str, d: dict, where: str) -> list[str]:
         errs.append(f"{where}: why는 {list(WHY)} 중 하나")
     if kind == "research":
         errs += _research_errors(d, where)
+    if kind == "hand_reading" and isinstance(d.get("numbers"), dict):
+        for st, nums in d["numbers"].items():
+            errs += number_errors(nums, f"{where} numbers.{st}")
+    if kind == "hand_reading" and isinstance(d.get("by_asset"), dict):
+        for a, rs in d["by_asset"].items():
+            for st, r in (rs.items() if isinstance(rs, dict) else ()):
+                if isinstance(r, dict) and "numbers" in r:
+                    errs += number_errors(r["numbers"], f"{where} by_asset.{a}.{st}.numbers")
     if kind == "order" and d.get("side") not in ("buy", "sell"):
         errs.append(f"{where}: side는 buy/sell")
     if kind == "account" and isinstance(d.get("cash"), int) and d["cash"] < 0:
@@ -165,7 +187,33 @@ def _research_errors(d: dict, where: str) -> list[str]:
             errs.append(f"{w}: 찾았으면 출처 링크(url)가 있어야 함")
         if isinstance(lk.get("note"), str) and len(lk["note"]) > SUMMARY_MAX:
             errs.append(f"{w}: note가 {SUMMARY_MAX}자를 넘음 — 요약만")
+    if "numbers" in d and isinstance(d["numbers"], dict):
+        errs += number_errors(d["numbers"], f"{where} numbers")
+    if isinstance(d.get("as_of"), str) and as_of_time(d["as_of"]) is None:
+        errs.append(f"{where}: as_of '{d['as_of']}'는 시간대가 붙은 ISO 시각이어야 함(예: 2026-11-05T07:20+09:00)")
     return errs
+
+
+def number_errors(nums, where: str) -> list[str]:
+    """숫자 칸(이름 → 값): 이름은 NUMBER_KEY(끝이 단위), 값은 유한한 수(참/거짓 아님)."""
+    if not isinstance(nums, dict):
+        return [f"{where}: 사전(이름_단위 → 값)이 아님"]
+    errs = []
+    for k, v in nums.items():
+        if not isinstance(k, str) or len(k) > NUMBER_KEY_MAX or not NUMBER_KEY.match(k):
+            errs.append(f"{where}: 이름 '{k}'는 소문자·숫자·밑줄로, 끝이 단위({'/'.join(NUMBER_UNITS)})여야 함 — 예: kr_overnight_pct")
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            errs.append(f"{where}: '{k}'의 값 {v!r}는 수가 아님 (못 찾았으면 그 이름을 빼고 answer에 적는다)")
+    return errs
+
+
+def as_of_time(text: str) -> dt.datetime | None:
+    """as_of 글 → 시간대가 붙은 시각. 틀렸거나 시간대가 없으면 None."""
+    try:
+        t = dt.datetime.fromisoformat(str(text).strip())
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None else None
 
 
 def check_folder(folder: Path) -> list[str]:

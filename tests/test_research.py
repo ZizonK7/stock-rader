@@ -53,9 +53,9 @@ class ResearchRecords(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             folder = Path(d)
             R.write(folder, "research", [
-                research("2026-10-22", 1, "S_q_rate_up", "금리·환율·정책",
+                research("2026-10-22", 1, "S_q_rate_up", "일정·예상치",
                          [look("P_fed_calendar"), look("P_fedwatch", "없음", url=""), look("P_new_site", "찾음", new=True)]),
-                research("2026-10-22", 2, "S_q_risk_off", "미국 시장", [look("P_cboe_vix", "늦음")])])
+                research("2026-10-22", 2, "S_q_risk_off", "간밤 반응", [look("P_cboe_vix", "늦음")])])
             R.write(folder, "hand_reading", [{"id": "hand_reading:2026-10-22", "run": "2026-10-22",
                                               "values": {"S_q_rate_up": "예"}, "why": {"S_q_rate_up": "w"},
                                               "places": {"S_q_rate_up": ["P_fed_calendar"]}, "research": []}])
@@ -70,8 +70,8 @@ class ResearchRecords(unittest.TestCase):
             self.assertFalse(cards["P_new_site"]["listed"])
             self.assertIn("P_new_site", RS.table(cards))
             warns = RS.new_share_warnings(R.read(folder, "research"), places, set())
-            self.assertFalse(any("금리" in w for w in warns))     # 새 곳을 시도함
-            self.assertTrue(any("미국 시장" in w for w in warns))  # 시도 안 함
+            self.assertFalse(any("일정·예상치" in w for w in warns))  # 새 곳을 시도함
+            self.assertTrue(any("간밤 반응" in w for w in warns))     # 시도 안 함
             # 다시 볼 차례: 7일 지난 손 대 보기 중 아직 안 본 것
             self.assertEqual(RS.due_checks(folder, dt.date(2026, 11, 1)), [])
 
@@ -205,15 +205,27 @@ class Seeds(unittest.TestCase):
 
     def test_seed_states_and_questions(self):
         raw = tomllib.loads(TEXT)
-        self.assertEqual(RS.seed_states(raw), {"S_q_overnight_move"})
+        # 2026-11-04 (E5): 씨앗 셋 모두 숫자 상태 — 질문 앞 표시는 [숫자 …](숫자가 있는 날이 곧 관련 있는 날)
+        seeds = {"S_q_overnight_gap", "S_q_surprise", "S_q_foreign_net"}
+        self.assertEqual(RS.seed_states(raw), seeds)
         qs = {q["state"]: q for q in RS.questions(dt.date(2026, 11, 5), raw, RS.load_places(), {}) if q["state"]}
-        self.assertTrue(qs["S_q_overnight_move"]["seed"])
-        self.assertTrue(qs["S_q_overnight_move"]["asked"].startswith(RS.SEED_MARK))
-        self.assertLessEqual(len(qs["S_q_overnight_move"]["asked"]), R.SUMMARY_MAX)
+        for st in seeds:
+            self.assertTrue(qs[st]["seed"])
+            self.assertTrue(qs[st]["asked"].startswith(RS.NUMBER_MARK), st)
+            self.assertLessEqual(len(qs[st]["asked"]), R.SUMMARY_MAX)
+        self.assertEqual(qs["S_q_overnight_gap"]["numbers"], ["kr_overnight_pct", "kr_overnight_sd60_pct"])
         self.assertFalse(qs["S_q_rate_up"]["seed"])
+        self.assertNotIn("S_q_overnight_move", qs)  # 옛 씨앗(Q_overnight_lead)은 은퇴 — 그 상태는 묻지 않는다
         lead = next(h for h in raw["hypothesis"] if h["id"] == "Q_overnight_lead")
-        self.assertTrue(lead["seed"])
-        self.assertEqual({c["when"] for c in lead["claims"]}, {"오름", "내림"})
+        self.assertEqual((lead["status"], lead["replaced_by"]), ("retired", ["Q_overnight_lead_v2"]))
+        v2 = next(h for h in raw["hypothesis"] if h["id"] == "Q_overnight_lead_v2")
+        self.assertTrue(v2["seed"])
+        self.assertEqual([(c["dir"], c["when"]) for c in v2["claims"]], [("sign", "예")])
+        # 숫자 상태가 아닌 씨앗은 예전처럼 [씨앗 …] 표시
+        fake = {"state": [{"id": "S_x", "text": "t", "read_by": "조사", "angle": "공시·뉴스", "ask": "물음"}],
+                "hypothesis": [{"id": "Q_x", "read_by": "조사", "seed": True, "conditions": ["S_x"], "claims": []}]}
+        q = RS.questions(dt.date(2026, 11, 5), fake, [], {})[0]
+        self.assertTrue(q["asked"].startswith(RS.SEED_MARK))
 
     def test_directional_answers_are_counted(self):
         """답이 오름/내림처럼 예/아니오가 아니어도 상태의 answers에 있으면 센다(모름·일부는 세지 않는다)."""
@@ -274,7 +286,8 @@ class Devices(unittest.TestCase):
                     f'conditions = ["S_q_overnight_move"]\ncheck = ["research_direction"]\nseen_until = "2026-11-04"\n'
                     f'seed = true\nstrength = "{strength}"\n'
                     f'claims = [{{ on = "up_odds", dir = "up", when = "오름", scope = "equity", reason = "r" }}]\n')
-        few = "".join(seed(i) for i in range(CH.MAX_SEED_PIECES - 1))  # 지금 씨앗 1 + 11 = 12: 정식 상한 6과 따로
+        now = sum(1 for h in tomllib.loads(TEXT)["hypothesis"] if h.get("seed") and h.get("status") != "retired")
+        few = "".join(seed(i) for i in range(CH.MAX_SEED_PIECES - now))  # 지금 씨앗 + 더한 것 = 12: 정식 상한 6과 따로
         errors, _ = CH.audit(self.kn(TEXT + few), self.want())
         self.assertFalse(any("상한" in e for e in errors), errors)
         errors, _ = CH.audit(self.kn(TEXT + few + seed(99)), self.want())

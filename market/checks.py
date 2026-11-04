@@ -108,17 +108,20 @@ def _holds(readings: dict, claim: dict, state: str, known: dict | None = None) -
 
 
 def _compare(on: str, dirn: str, y: list[float], n: list[float]) -> tuple[bool | None, str]:
-    """(주장대로인가 — 동점이면 None, 보일 글)."""
+    """(주장대로인가 — 동점이면 None, 보일 글).
+    dirn = "sign"(2026-11-04, 숫자 상태의 부호 쪽): 수익률은 부르는 쪽이 그날 숫자의 부호를 곱해 넘긴다(research_direction) —
+    그러면 '오름' = 부호 쪽으로 감이다. 주장은 '예'인 날(숫자가 크다) 부호 쪽으로 간 비율이 '아니오'인 날보다 높다."""
     if on == "up_odds":
         a, b = sum(r > 0 for r in y) / len(y), sum(r > 0 for r in n) / len(n)
-        shown = f"오른 비율 예 {a:.2f} vs 아니오 {b:.2f}"
+        shown = (f"부호 쪽으로 간 비율 예 {a:.2f} vs 아니오 {b:.2f}" if dirn == "sign"
+                 else f"오른 비율 예 {a:.2f} vs 아니오 {b:.2f}")
     else:
         a = sorted(abs(r) for r in y)[len(y) // 2]
         b = sorted(abs(r) for r in n)[len(n) // 2]
         shown = f"움직임 가운데 값 예 {a * 100:.2f}% vs 아니오 {b * 100:.2f}%"
     if a == b:
         return None, shown
-    return ((a > b) if dirn == "up" else (a < b)), shown
+    return ((a > b) if dirn in ("up", "sign") else (a < b)), shown
 
 
 def _runs(entries: list[tuple], side: bool) -> int:
@@ -266,7 +269,9 @@ def research_direction(node_id: str) -> tuple[str, str]:
     종목마다 대 보는 조각(조건 상태 per_asset)은 종목을 한 칸으로 묶는다(2026-11-03): 주장이 '어떤 회사든'에 대한 것이고,
     한 종목은 실적이 분기에 한 번이라 종목마다 칸을 나누면 '예'·'아니오'가 다섯씩 모이지 않는다. 같은 날 '예' 종목과
     '아니오' 종목(비교군, 지시문 '종목마다 묻는 질문')을 견준다.
-    예/아니오가 아니라 세지 않은 값(일부·모름·안 물음)은 세부에 수를 보인다 — '시험 전'의 까닭이 보이게."""
+    예/아니오가 아니라 세지 않은 값(일부·모름·안 물음)은 세부에 수를 보인다 — '시험 전'의 까닭이 보이게.
+    주장의 dir = "sign"(2026-11-04): 조건 상태가 숫자 상태면 그날 손 대 보기에 남은 숫자(hand_reading.numbers)의 부호를 수익률에
+    곱한다 — '예'인 날과 '아니오'인 날 모두 '부호 쪽으로 갔나'를 견준다. 부호가 없는 날(숫자 0·없음)은 세지 않는다."""
     node = _node(node_id)
     if not node:
         return "불명 (노드 없음)", ""
@@ -276,6 +281,7 @@ def research_direction(node_id: str) -> tuple[str, str]:
     raw = _raw()
     pooled = any(s.get("id") == state and s.get("per_asset") for s in raw.get("state", []))
     known = {s["id"]: set(s.get("answers", [])) - {"모름", "일부"} for s in raw.get("state", []) if s.get("answers")}
+    spec = RS.numeric_states(raw).get(state)
     hrs = {h["run"]: h for h in R.read(C.RECORDS, "hand_reading")}
     cells: dict = {}
     skipped: dict = {}
@@ -286,6 +292,8 @@ def research_direction(node_id: str) -> tuple[str, str]:
         # 종목마다 대 본 값(by_asset)은 그 종목에만 (2026-10-29). 종목의 결과는 그날 종목 계산기('모름') 줄의 채점에서 온다
         by = (h.get("by_asset") or {}).get(p["asset"], {})
         vals = {**h["values"], **{k: v["value"] if isinstance(v, dict) else v for k, v in by.items()}}
+        nums = (by.get(state) or {}).get("numbers") if isinstance(by.get(state), dict) else None
+        nums = nums if isinstance(nums, dict) else (h.get("numbers") or {}).get(state, {})
         hz = C.ASSETS[p["asset"]].horizons.index(p["horizon"])
         for c in claims:
             if not C.in_scope(p["asset"], c.get("scope")):
@@ -298,9 +306,17 @@ def research_direction(node_id: str) -> tuple[str, str]:
                     v = vals.get(k, "안 물음")
                     if v not in ("예", "아니오") and v not in known.get(k, ()):
                         skipped[f"{k}={v}"] = skipped.get(f"{k}={v}", 0) + 1
+            ret = s["ret"]
+            if c.get("dir") == "sign":  # 숫자의 부호 쪽으로 갔나: 수익률 × 부호
+                x = RS.number_of(spec, nums) if spec else None
+                sign = (x > 0) - (x < 0) if x is not None else 0
+                if on is not None and not sign:
+                    skipped[f"{state}=부호 없음"] = skipped.get(f"{state}=부호 없음", 0) + 1
+                    on = None
+                ret = ret * sign
             where = POOLED if pooled else p["asset"]
             cells.setdefault((c["on"], c.get("dir"), where, p["horizon"]), []).append(
-                (p["base_date"], p["asset"], on, s["ret"]))
+                (p["base_date"], p["asset"], on, ret))
     verdict, detail = _verdict(cells, "판단의 손 대 보기", cut)
     if skipped:
         detail += "\n    세지 않은 채점(예/아니오가 아닌 값): " + ", ".join(f"{k} {n}" for k, n in sorted(skipped.items()))
@@ -540,6 +556,7 @@ def audit(kn, want: dict[str, list[dict]] | None = None) -> tuple[list[str], lis
         if not node.data.get("effect") and fitted_claims(node):
             warns.append(f"[계산 조각] {node.id}: 세운 효과가 하나도 없음 — 모든 대상·기간에서 맞춘 시세가 방향을 받쳐 주지 않았다(not_set)")
     errors += _research_errors(kn, research + stock_pieces + seeds)
+    errors += _number_errors(kn)
     errors += ST.check(ST.load())
     errors += V.check()
     errors += RS.check_places(RS.load_places(), {s.id for s in kn.of("state")})
@@ -596,8 +613,11 @@ def _research_errors(kn, research) -> list[str]:
         if d.get("effect"):
             errs.append(f"[조사 조각] {node.id}: 조사 조각에는 효과 숫자를 두지 않는다(손 예측이 쓴다)")
         for c in d.get("claims", []):
-            if c.get("on") not in ("up_odds", "move") or c.get("dir") not in ("up", "down") or not c.get("reason"):
-                errs.append(f"[조사 조각] {node.id}: 주장은 on(up_odds/move)·dir(up/down)·reason이 있어야 함")
+            if c.get("on") not in ("up_odds", "move") or c.get("dir") not in ("up", "down", "sign") or not c.get("reason"):
+                errs.append(f"[조사 조각] {node.id}: 주장은 on(up_odds/move)·dir(up/down/sign)·reason이 있어야 함")
+            if c.get("dir") == "sign" and (c.get("on") != "up_odds" or st is None or not isinstance(st.data.get("number"), dict)):
+                errs.append(f"[조사 조각] {node.id}: dir = \"sign\"(숫자의 부호 쪽)은 on = \"up_odds\"이고 첫 조건이 숫자 상태"
+                            f"(number 칸)일 때만 — 부호를 읽을 숫자가 있어야 한다")
             scope = c.get("scope", "all")
             names = [scope] if isinstance(scope, str) else scope
             bad = [x for x in names if x != "all" and x not in C.TRAIT_LABEL]
@@ -605,6 +625,33 @@ def _research_errors(kn, research) -> list[str]:
                 errs.append(f"[조사 조각] {node.id}: scope의 {bad}는 config.TRAIT_LABEL에 없음")
             if any(x not in SPANS for x in c.get("span", [])):
                 errs.append(f"[조사 조각] {node.id}: span은 {list(SPANS)} 중에서")
+    return errs
+
+
+def _number_errors(kn) -> list[str]:
+    """숫자 상태(2026-11-04, 상태에 number = { from, per?, rule, unit }): 이름 모양(records.NUMBER_KEY), rule 문법(research.
+    parse_rule), 단위 글, 답(answers)은 예/아니오/모름 안에서, 조사로 대 보는 상태(read_by = "조사")."""
+    errs = []
+    for st in kn.of("state"):
+        spec = st.data.get("number")
+        if spec is None:
+            continue
+        if not isinstance(spec, dict):
+            errs.append(f"[숫자 상태] {st.id}: number는 {{ from, rule, unit }} 표여야 함")
+            continue
+        for k in ("from", "per"):
+            if (k == "from" or spec.get(k)) and not R.NUMBER_KEY.match(str(spec.get(k, ""))):
+                errs.append(f"[숫자 상태] {st.id}: number.{k} '{spec.get(k)}'는 숫자 이름(이름_단위, records.NUMBER_KEY)이어야 함")
+        try:
+            RS.parse_rule(spec.get("rule", ""))
+        except ValueError as exc:
+            errs.append(f"[숫자 상태] {st.id}: {exc}")
+        if not str(spec.get("unit", "")).strip():
+            errs.append(f"[숫자 상태] {st.id}: number.unit(값의 단위·뜻)이 없음")
+        if set(st.data.get("answers", ["예", "아니오", "모름"])) - {"예", "아니오", "모름"}:
+            errs.append(f"[숫자 상태] {st.id}: 숫자 상태의 답은 예/아니오/모름 — 코드가 rule로 정한다")
+        if st.data.get("read_by") != "조사":
+            errs.append(f"[숫자 상태] {st.id}: 숫자 상태는 조사 답의 숫자로 정한다(read_by = \"조사\")")
     return errs
 
 

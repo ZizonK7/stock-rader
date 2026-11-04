@@ -451,9 +451,11 @@ def briefing(D: Day, fetched: dict, tick: dict, late: str = "") -> str:
             ref = (f" [참고 칸, 확률에 안 씀: 같은 스위치 지난 날 {an['n']}개·{an['runs']}구간, 오른 비율 {an['up_rate']:.0%}]"
                    if an else "")
             L_.append(f"- {p['asset']} {p['horizon']}봉 ({p.get('layer', '?')}): {p['reason']}{ref}")
-    L_ += ["", "## 오늘 조사 질문 (각도별로 조사 에이전트에게; [씨앗]은 관련 있는 날만 — 묻지 않으면 틀에서 그 줄을 지운다)"]
+    L_ += ["", "## 오늘 조사 질문 (각도별로 조사 에이전트에게; [씨앗]은 관련 있는 날만 — 묻지 않으면 틀에서 그 줄을 지운다; "
+           "[숫자]는 코드가 numbers로 값을 정한다; 모든 답에 numbers·as_of)"]
     for q in D.questions:
-        L_.append(f"- [{q['angle']}] `{q['question']}` {q['asked']}\n  추천 볼 곳: {', '.join(q['suggest']) or '없음'}")
+        L_.append(f"- [{q['angle']}] `{q['question']}` {q['asked']}\n  추천 볼 곳: {', '.join(q['suggest']) or '없음'}"
+                  + (f"\n  숫자(numbers): {', '.join(q.get('numbers') or [])}" if q.get("numbers") else ""))
     L_.append(f"\n새 곳 시도 몫: 각도마다 {RS.NEW_PER_ANGLE}곳 이상(목록에 없거나 {RS.FRESH_DAYS}일 넘게 안 본 곳). "
               f"오래 안 본 목록 곳: {', '.join(sorted(D.stale)) or '없음'}")
     if D.day.weekday() == 6:
@@ -472,8 +474,14 @@ def control_note(D: Day, names: dict) -> str:
 
 def template(D: Day) -> dict:
     """메인이 채울 입력 틀. '_'로 시작하는 칸은 참고용이고 검사하지 않는다."""
-    from .research import research_states, seed_states
+    from .research import NUMBER_KEYS, deep_question, numeric_states, number_keys, research_states, seed_states
     seeds = seed_states(D.raw)
+    specs = numeric_states(D.raw)
+    meaning = {k: v for keys in NUMBER_KEYS.values() for k, v in keys.items()}
+    # 코드가 시세로 미리 채우는 숫자(2026-11-04): 국내 묶음의 평소 하루 움직임 % — 간밤 격차를 '평소의 몇 배'로 재는 잣대
+    kr = D.hists.get("069500")
+    tm = S.typical_move(kr, 1) if kr is not None and kr.last else None
+    prefill = {"kr_overnight_sd60_pct": round(tm * 100, 3)} if tm else {}
     states = [s["id"] for s in research_states(D.raw, per_asset=False) if s["id"] not in seeds]
     per_asset = [s["id"] for s in research_states(D.raw, per_asset=True) if s["id"] not in seeds]
     answers = {s["id"]: s.get("answers") for s in D.raw.get("state", [])}
@@ -491,8 +499,16 @@ def template(D: Day) -> dict:
                     for k, v in pieces.items()},
         "_info_form": "hand의 info = 결론을 정한 것: 조각 / 출발점(판단 때 가격·간밤 값처럼 판단 때 이미 일어난 움직임) / 기타. "
                       "decisive(결론 조각)가 비면 반드시 적는다(모름 0.5면 '기타'). decisive가 있으면 비워도 된다('조각'으로 기록)",
-        "_seed_readings": {st: f"씨앗 조각의 상태 — 관련 있는 날만 readings에 더한다(value·why·places). 답: {answers.get(st) or '예/아니오/일부/모름'}. "
-                               f"안 물으면 넣지 않는다(안 물음)" for st in sorted(seeds)},
+        "_seed_readings": {st: (f"숫자 씨앗 상태 — 값은 코드가 numbers의 {' ÷ '.join(number_keys(specs[st]))}로 정한다(규칙 "
+                                f"'{specs[st]['rule']}'). research의 numbers에 그 숫자를 적으면 readings에 안 넣어도 기록된다. "
+                                f"숫자가 없으면 '안 물음'" if st in specs else
+                                f"씨앗 조각의 상태 — 관련 있는 날만 readings에 더한다(value·why·places). 답: {answers.get(st) or '예/아니오/일부/모름'}. "
+                                f"안 물으면 넣지 않는다(안 물음)") for st in sorted(seeds)},
+        "_numbers_form": ("research마다 numbers(숫자 이름_단위 → 값: 이름 끝이 단위 pct·pp·bp·x·z·krw·krw100m·usd·usdm·usdbn·pt·btc·n)와 "
+                          "as_of(답의 숫자가 가리키는 시각, 예: " + D.day.isoformat() + "T07:20+09:00, 판단 시각보다 이르게). "
+                          "2026-11-05부터 record가 요구한다. 숫자 상태(_seed_readings의 [숫자])의 값은 코드가 numbers로 정하니 메인은 "
+                          "숫자만 옮겨 적는다. 틀에 미리 찬 숫자(평소 하루 움직임)는 코드가 시세로 계산한 것 — 지우지 않는다"),
+        "_deep_form": deep_question(D.day, "<대상 코드>", "<대상 이름>"),
         "_used_form": "used·decisive는 '조각 id=값'. 값은 그 조각 조건 상태의 오늘 값(조사 조각은 readings, 종목마다 대 보는 "
                       "조사 조각은 stock_readings의 그 종목 값, 계산 조각은 _values)",
         "_stocks": {a: {"name": names.get(a, a), "held": a in D.held, "base_date": D.base[a]["base_date"],
@@ -504,6 +520,8 @@ def template(D: Day) -> dict:
         "_stock_control": control_note(D, names) if per_asset else "",
         "research": [{"question": q["question"], "state": q["state"], "angle": q["angle"], "asked": q["asked"],
                       "answer": "", "agent": "", "_suggest": q["suggest"],
+                      "numbers": {k: v for k, v in prefill.items() if k in q.get("numbers", [])}, "as_of": "",
+                      "_numbers": {k: meaning.get(k, "숫자 상태가 보는 숫자") for k in q.get("numbers", [])},
                       "looked": [{"place": "", "result": "찾음", "new": False, "url": "", "date": "", "note": ""}]}
                      for q in D.questions],
         "readings": {st: {"value": "모름", "why": "", "places": []} for st in states},
@@ -550,6 +568,7 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
            "calc_values": D.calc_values, "due_reviews": D.due_reviews, "due_checks": D.due_checks,
            "node_ids": {n.get("id") for k in ("goal", "state", "fact", "hypothesis", "rule") for n in D.raw.get(k, [])},
            "record_ids": {x["id"] for items in D.recs.values() for x in items}}
+    ctx["at"] = at.isoformat(timespec="seconds")  # 조사 as_of가 판단 시각보다 늦으면 거절(2026-11-04, E4)
     errs, warns = H.validate(inp, ctx)
     if errs:
         print(f"입력 오류 {len(errs)}건 — 아무것도 쓰지 않았다:")
