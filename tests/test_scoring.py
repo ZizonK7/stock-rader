@@ -57,6 +57,16 @@ class Score(unittest.TestCase):
         self.assertLessEqual(w[1] / w[0], 2.0 + 1e-9)
         self.assertEqual(S.base_rate(PR.History("069500", h.rows[:100]), 1), (None, None))
 
+    def test_all_rate_uses_whole_known_history(self):
+        """baseline:all (2026-11-04): 알려진 전체 시세에서 h봉 수익률이 오른 비율 — 최근 250봉만 보는 기저율과 다르다."""
+        closes = [100 + i for i in range(200)] + [300 - i for i in range(300)]  # 앞 200봉은 오르고 뒤 300봉은 내림
+        h = PR.History("069500", rows(closes, D(2024, 1, 1)))
+        p, w = S.all_rate(h, 1)
+        self.assertAlmostEqual(p, 200 / 499)  # 오른 199번 + 꺾이는 곳(299 → 300) 한 번
+        self.assertLessEqual(w[1] / w[0], 2.0 + 1e-9)
+        self.assertEqual(S.base_rate(h, 1)[0], 0.0)  # 최근 250봉은 모두 내림
+        self.assertEqual(S.all_rate(PR.History("069500", h.rows[:20]), 1), (None, None))
+
     def test_summarize(self):
         sc = [{"predictor": "calc", "brier": 0.1, "direction_hit": True, "size_hit": False, "up": True},
               {"predictor": "calc", "brier": 0.3, "direction_hit": None, "size_hit": None, "up": False}]

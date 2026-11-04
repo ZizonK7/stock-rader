@@ -1,9 +1,11 @@
 """2단계 장치: 조사 기록 칸, 볼 곳 성적, 새 곳 시도 몫, 한 번만 세기, 조사 조각·버전·볼 곳 점검, 더한 조건 맞추기."""
 import datetime as dt
+import json
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from market import checks as CH
 from market import config as C
@@ -102,6 +104,128 @@ class ResearchRecords(unittest.TestCase):
         self.assertIn("S_q_rate_up=안 물음", detail)
 
 
+class Verdict(unittest.TestCase):
+    """방향 시험 판정(2026-11-04): 날이 아니라 구간(같은 값이 이어진 날들)을 세고, 동점은 세지 않는다(모름)."""
+
+    @staticmethod
+    def days(start: dt.date, pattern: str, ups: str, gap_after: int | None = None):
+        """pattern: 날마다 'y'(조건 켜짐)/'n'(꺼짐)/'?'(모름), ups: 날마다 '+'(오름)/'-'."""
+        out, d = [], start
+        for i, (s, u) in enumerate(zip(pattern, ups)):
+            side = {"y": True, "n": False, "?": None}[s]
+            out.append((d.isoformat(), "A", side, 0.01 if u == "+" else -0.01))
+            d += dt.timedelta(days=1 + (10 if gap_after is not None and i == gap_after else 0))
+        return out
+
+    def test_one_long_regime_is_one_run(self):
+        cells = {("up_odds", "up", "A", 1): self.days(dt.date(2026, 1, 1), "y" * 19 + "n" * 19, "+" * 19 + "-" * 19)}
+        verdict, detail = CH._verdict(cells, "x", "c")
+        self.assertTrue(verdict.startswith("시험 전"), verdict)
+        self.assertIn("예 19일 1구간", detail)
+        self.assertIn("아니오 19일 1구간", detail)
+
+    def test_runs_break_on_change_unknown_and_gap(self):
+        e = self.days(dt.date(2026, 1, 1), "yy?yynyy", "+" * 8, gap_after=6)
+        self.assertEqual(CH._runs(e, True), 4)   # yy | (모름) | yy | (아니오) | y | (11일 벌어짐) | y
+        self.assertEqual(CH._runs(e, False), 1)
+        pooled = [(d, "A", True, r) for d, _, _, r in e[:3]] + [(d, "B", True, r) for d, _, _, r in e[:3]]
+        self.assertEqual(CH._runs(pooled, True), 2)  # 묶은 칸은 종목마다 센다
+
+    def test_tie_is_not_wrong_and_clear_side_counts(self):
+        pattern = ("y" * 3 + "n" * 3) * 5
+        tie = {("up_odds", "up", "A", 1): self.days(dt.date(2026, 1, 1), pattern, ("++-" + "+-+") * 5)}
+        verdict, detail = CH._verdict(tie, "x", "c")
+        self.assertTrue(verdict.startswith("시험 전") and "동점 1칸" in verdict, verdict)
+        self.assertIn("동점 — 세지 않음(모름)", detail)
+        clear = {("up_odds", "up", "A", 1): self.days(dt.date(2026, 1, 1), pattern, ("+++" + "--+") * 5)}
+        self.assertTrue(CH._verdict(clear, "x", "c")[0].startswith("지지됨"))
+        wrong = {("up_odds", "down", "A", 1): clear[("up_odds", "up", "A", 1)]}
+        self.assertTrue(CH._verdict(wrong, "x", "c")[0].startswith("반박됨"))
+
+
+class LayerVsBaselines(unittest.TestCase):
+    """layer_vs_baselines (2026-11-04): 표본이 모이기 전엔 시험 전, 모이면 '계산기 − 동전'의 덩어리 부트스트랩 90% 구간."""
+
+    def write(self, folder: Path, n: int, calc_brier: float, layer: str = "동전", asset: str = "069500", h: int = 1):
+        preds, scores = [], []
+        for i in range(n):
+            base = (dt.date(2026, 11, 5) + dt.timedelta(days=i)).isoformat()
+            for who, b in (("calc", calc_brier), ("baseline:all", 0.26), ("baseline:base_rate", 0.27)):
+                pid = f"{base}:{who}:{asset}:{h}"
+                preds.append({"kind": "prediction", "id": pid, "run": base, "predictor": who, "asset": asset, "horizon": h,
+                              "base_date": base, "layer": layer})
+                scores.append({"kind": "score", "id": f"score:{pid}", "run": base, "prediction": pid, "brier": b})
+        folder.mkdir(parents=True, exist_ok=True)
+        for kind, rows in (("prediction", preds), ("score", scores)):
+            (folder / f"{kind}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    def check(self, folder: Path, node: dict):
+        with mock.patch.object(C, "RECORDS", folder), mock.patch.object(CH, "_node", lambda nid: node):
+            return CH.layer_vs_baselines("X")
+
+    def test_waits_then_judges(self):
+        node = {"seen_until": "2026-11-04", "claims": []}
+        with tempfile.TemporaryDirectory() as d:
+            self.write(Path(d), CH.LAYER_MIN_FIRST - 1, 0.10)
+            verdict, detail = self.check(Path(d), node)
+            self.assertTrue(verdict.startswith("시험 전"), verdict)
+            self.assertIn(f"기준 날짜 {CH.LAYER_MIN_FIRST - 1}개", detail)
+        with tempfile.TemporaryDirectory() as d:
+            self.write(Path(d), CH.LAYER_MIN_FIRST, 0.10)
+            verdict, detail = self.check(Path(d), node)
+            self.assertTrue(verdict.startswith("지지됨"), verdict)
+            self.assertIn("전체 0.2600", detail)
+        with tempfile.TemporaryDirectory() as d:
+            self.write(Path(d), CH.LAYER_MIN_FIRST, 0.40)
+            self.assertTrue(self.check(Path(d), node)[0].startswith("반박됨"))
+        with tempfile.TemporaryDirectory() as d:  # 1봉이 아닌 기간: 겹치지 않는 표본(기간마다 하나) 12개
+            self.write(Path(d), 5 * (CH.LAYER_MIN_SPACED - 1), 0.10, h=5)      # 날 55개 = 표본 11개
+            self.assertTrue(self.check(Path(d), node)[0].startswith("시험 전"))
+            self.write(Path(d), 5 * (CH.LAYER_MIN_SPACED - 1) + 1, 0.10, h=5)  # 날 56개 = 표본 12개
+            self.assertTrue(self.check(Path(d), node)[0].startswith("지지됨"))
+
+    def test_start_piece_sees_only_its_layer(self):
+        start = {"seen_until": "2026-11-04", "claims": [{"on": "up_odds", "op": "start"}]}
+        with tempfile.TemporaryDirectory() as d:
+            self.write(Path(d), CH.LAYER_MIN_FIRST, 0.10, layer="동전")
+            self.assertIn("없음", self.check(Path(d), start)[1])
+            self.write(Path(d), CH.LAYER_MIN_FIRST, 0.10, layer="출발점")
+            self.assertTrue(self.check(Path(d), start)[0].startswith("지지됨"))
+
+    def test_attached_to_layer_nodes(self):
+        raw = tomllib.loads(TEXT)
+        nodes = {n["id"]: n for n in raw["hypothesis"] + raw["rule"]}
+        for nid in ("C_started_move", "R_layer_v0"):
+            self.assertIn("layer_vs_baselines", nodes[nid]["check"])
+            self.assertEqual(nodes[nid]["seen_until"], "2026-11-04")
+
+
+class Seeds(unittest.TestCase):
+    """씨앗 조각(2026-11-04): 상한 6 밖, 관련 있는 날만 묻는다."""
+
+    def test_seed_states_and_questions(self):
+        raw = tomllib.loads(TEXT)
+        self.assertEqual(RS.seed_states(raw), {"S_q_overnight_move"})
+        qs = {q["state"]: q for q in RS.questions(dt.date(2026, 11, 5), raw, RS.load_places(), {}) if q["state"]}
+        self.assertTrue(qs["S_q_overnight_move"]["seed"])
+        self.assertTrue(qs["S_q_overnight_move"]["asked"].startswith(RS.SEED_MARK))
+        self.assertLessEqual(len(qs["S_q_overnight_move"]["asked"]), R.SUMMARY_MAX)
+        self.assertFalse(qs["S_q_rate_up"]["seed"])
+        lead = next(h for h in raw["hypothesis"] if h["id"] == "Q_overnight_lead")
+        self.assertTrue(lead["seed"])
+        self.assertEqual({c["when"] for c in lead["claims"]}, {"오름", "내림"})
+
+    def test_directional_answers_are_counted(self):
+        """답이 오름/내림처럼 예/아니오가 아니어도 상태의 answers에 있으면 센다(모름·일부는 세지 않는다)."""
+        claim = {"when": "오름"}
+        known = {"S": {"오름", "내림", "아니오"}}
+        self.assertTrue(CH._holds({"S": "오름"}, claim, "S", known))
+        self.assertFalse(CH._holds({"S": "내림"}, claim, "S", known))
+        self.assertIsNone(CH._holds({"S": "모름"}, claim, "S", known))
+        self.assertIsNone(CH._holds({}, claim, "S", known))        # 안 물음
+        self.assertIsNone(CH._holds({"S": "오름"}, claim, "S"))     # answers를 모르면 예/아니오만
+
+
 class CountOnce(unittest.TestCase):
     def test_first_only_keeps_earliest_said(self):
         def pair(run, base="2026-10-23"):
@@ -144,6 +268,43 @@ class Devices(unittest.TestCase):
         for word in ("대상 이름", "ask", "seen_until", "research_direction", "scope", "span"):
             self.assertIn(word, errors)
 
+    def test_seed_cap_and_strength(self):
+        def seed(i, strength="낮음"):
+            return (f'\n[[hypothesis]]\nid = "Q_seed{i}"\ntext = "t"\nsource = "s"\nreason = "r"\nread_by = "조사"\n'
+                    f'conditions = ["S_q_overnight_move"]\ncheck = ["research_direction"]\nseen_until = "2026-11-04"\n'
+                    f'seed = true\nstrength = "{strength}"\n'
+                    f'claims = [{{ on = "up_odds", dir = "up", when = "오름", scope = "equity", reason = "r" }}]\n')
+        few = "".join(seed(i) for i in range(CH.MAX_SEED_PIECES - 1))  # 지금 씨앗 1 + 11 = 12: 정식 상한 6과 따로
+        errors, _ = CH.audit(self.kn(TEXT + few), self.want())
+        self.assertFalse(any("상한" in e for e in errors), errors)
+        errors, _ = CH.audit(self.kn(TEXT + few + seed(99)), self.want())
+        self.assertTrue(any("[씨앗 조각]" in e and "상한" in e for e in errors), errors)
+        errors, _ = CH.audit(self.kn(TEXT + seed(0, "보통")), self.want())
+        self.assertTrue(any("[씨앗 조각]" in e and "strength" in e for e in errors), errors)
+
+    def test_retire_candidate_warning(self):
+        """정식 조사 조각이 세운 뒤 30 판단일이 지나도 시험 전이면 '은퇴 후보' 경고(씨앗은 아님)."""
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            runs = [{"kind": "run", "id": f"live:{x}", "run": x, "mode": "live", "steps": {}, "notes": []}
+                    for x in ((dt.date(2026, 11, 5) + dt.timedelta(days=i)).isoformat() for i in range(CH.RETIRE_AFTER_RUNS))]
+            (folder / "run.jsonl").write_text("".join(json.dumps(r) + "\n" for r in runs), encoding="utf-8")
+            with mock.patch.object(C, "RECORDS", folder):
+                _, warns = CH.audit(self.kn(TEXT), self.want())
+        cands = [w for w in warns if "은퇴 후보" in w]
+        self.assertTrue(any("Q_risk_off_level" in w for w in cands), warns)
+        self.assertFalse(any("Q_overnight_lead" in w for w in cands))  # 씨앗(세운 날 11-04 뒤 30일)은 경고하지 않는다
+        _, warns = CH.audit(self.kn(TEXT), self.want())
+        self.assertFalse(any("은퇴 후보" in w for w in warns))  # 지금 기록으로는 아직
+
+    def test_start_piece_is_not_counted_in_calc_cap(self):
+        start = "".join(f'\n[[hypothesis]]\nid = "C_start{i}"\ntext = "t"\nsource = "s"\nreason = "r"\n'
+                        f'seen_until = "2026-11-04"\nclaims = [{{ on = "up_odds", op = "start", fixed = true, reason = "r" }}]\n'
+                        for i in range(3))
+        errors, warns = CH.audit(self.kn(TEXT + start), self.want())
+        self.assertFalse(any("[계산 조각]" in e and "상한" in e for e in errors), errors)
+        self.assertFalse(any("C_start" in w and "세운 효과" in w for w in warns), warns)
+
     def test_versions_and_places_are_checked(self):
         self.assertEqual(V.check(), [])
         with tempfile.TemporaryDirectory() as d:
@@ -161,7 +322,9 @@ class Devices(unittest.TestCase):
         got = CH.piece_direction("C_trend_60")
         self.assertIsInstance(got, list)
         self.assertEqual([src for src, _, _ in got], ["replay", "measured"])
-        self.assertTrue(got[0][1].startswith("반박"))  # 재생: 9칸 중 4
+        # 재생: 예전에는 날 수로 세어 '9칸 중 4 반박'이었다. 2026-11-04부터 양쪽 5구간 — 재생 넉 달은 칸마다 구간이 1~2개라 시험 전
+        self.assertTrue(got[0][1].startswith("시험 전"), got[0][1])
+        self.assertIn("구간", got[0][2])
         # 2026-10-21에 세운 쪼갠 조각은 재생 기록으로 시험하지 않는다
         self.assertEqual([src for src, _, _ in CH.piece_direction("C_trend_20_calm")], ["measured"])
         kn = SCHEMA.load(C.KNOWLEDGE)

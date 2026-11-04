@@ -2,6 +2,7 @@
 import datetime as dt
 import math
 import unittest
+from statistics import NormalDist
 
 from market import calc as K
 from market import config as C
@@ -105,6 +106,119 @@ class ScaledBase(unittest.TestCase):
         self.assertIsNone(vs[P.NEED - 2])
         self.assertAlmostEqual(vs[-1], P.read(c)[1]["vol250"], places=6)
         self.assertAlmostEqual(vs[400], P.read(c[:401])[1]["vol250"], places=6)
+
+
+class CoinBaseAndStart(unittest.TestCase):
+    """방향 기본값 = 동전(고정값), 출발점 조각, 답한 층, 참고 칸 (2026-11-04)."""
+
+    KST = C.KST
+
+    def coin(self, asset="KRW-BTC", h=1):
+        return K.Effect("C_c", "up_odds", "base", 1.0, 1.0, asset, h, (), None, "이유", None, True)
+
+    def decision(self, price=101.0, minutes_left=144.0, base=dt.date(2026, 11, 2)):
+        end = C.final_dt(C.ASSETS["KRW-BTC"], C.next_bar("KRW-BTC", base))
+        return {"price": price, "time": end - dt.timedelta(minutes=minutes_left), "base_date": base, "base_close": 100.0}
+
+    def pieces(self, start=True):
+        out = [K.Piece("C_c", "", "", [self.coin(), self.coin(h=7)])]
+        return out + ([K.Piece("C_s", "", "", [], True)] if start else [])
+
+    def test_fixed_base_is_coin_and_layer_coin(self):
+        r = K.predict("KRW-BTC", 7, {}, self.pieces(False))
+        self.assertAlmostEqual(r.p_up(), 0.5)
+        self.assertEqual(r.layer(), "동전")
+        self.assertEqual(r.conclusion()[0], "반반")
+        mul = eff("C_m", "up_odds", "mul", 1.2, 1.3, [("S_a", "예")], "up", asset="KRW-BTC", h=7)
+        r = K.predict("KRW-BTC", 7, {"S_a": "예"}, self.pieces(False) + [K.Piece("C_m", "", "", [mul])])
+        self.assertGreater(r.p_up(), 0.5)
+        self.assertEqual(r.layer(), "조각")
+        fitted = K.predict("069500", 1, {}, [K.Piece("C_b", "", "", [eff("C_b", "up_odds", "base", 1.1, 1.2)])])
+        self.assertEqual(fitted.layer(), "기준값")  # 이전 버전 모음(맞춘 절편)
+        self.assertEqual(K.predict("005930", 1, {}, self.pieces()).layer(), "모름")  # 종목: 기준값 없음
+
+    def test_start_formula(self):
+        r = K.predict("KRW-BTC", 1, {}, self.pieces(), {"vol60": 0.02}, self.decision(101.0, 144.0))
+        z = math.log(1.01) / (0.02 * math.sqrt(144 / 1440))
+        self.assertAlmostEqual(r.p_up(), min(max(NormalDist().cdf(z), K.START_P_MIN), 1 - K.START_P_MIN), places=12)
+        self.assertEqual(r.layer(), "출발점")
+        f = K.record_fields(r)
+        self.assertIsNone(f["p_range"])
+        self.assertEqual(f["used"][0], "C_s:up_odds")
+        self.assertNotIn("C_c:up_odds", f["used"])     # 출발점이 걸리면 기준값의 오를 확률은 쓰지 않은 것
+        self.assertIn("C_s:up_odds", f["decisive"])     # 빼면 반반으로 돌아간다
+        self.assertIn("출발점", f["reason"])
+        down = K.predict("KRW-BTC", 1, {}, self.pieces(), {"vol60": 0.02}, self.decision(99.0, 144.0))
+        self.assertLess(down.p_up(), 0.5)
+
+    def test_start_boundaries(self):
+        nums = {"vol60": 0.02}
+        # 남은 시간 아래 끝 10분: 목표 봉이 이미 끝난 뒤의 가격이어도 0으로 나누지 않는다
+        late = K.predict("KRW-BTC", 1, {}, self.pieces(), nums, self.decision(101.0, -30.0))
+        self.assertAlmostEqual(late.start.minutes, K.START_MIN_MINUTES)
+        self.assertGreater(NormalDist().cdf(math.log(1.01) / (0.02 * math.sqrt(10 / 1440))), 0.99)  # 식 그대로면 거의 1
+        self.assertAlmostEqual(late.p_up(), 1 - K.START_P_MIN, places=12)  # 양 끝 0.10–0.90으로 자른다(두꺼운 꼬리)
+        self.assertAlmostEqual(K.predict("KRW-BTC", 1, {}, self.pieces(), nums, self.decision(99.0, -30.0)).p_up(), K.START_P_MIN, places=12)
+        # 걸리지 않는 곳: 가격 없음, 흔들림 숫자 없음, 첫 기간이 아님, 조각이 없음(이전 버전 모음), 기준 봉이 끝나기 전 가격
+        for args in ((nums, None), (nums, {**self.decision(), "price": None}), ({}, self.decision())):
+            self.assertEqual(K.predict("KRW-BTC", 1, {}, self.pieces(), *args).layer(), "동전", args)
+        self.assertIsNone(K.predict("KRW-BTC", 7, {}, self.pieces(), nums, self.decision()).start)
+        self.assertIsNone(K.predict("KRW-BTC", 1, {}, self.pieces(False), nums, self.decision()).start)
+        stale = self.decision(101.0, 144.0)
+        stale["time"] = C.final_dt(C.ASSETS["KRW-BTC"], stale["base_date"]) - dt.timedelta(minutes=5)
+        self.assertIsNone(K.predict("KRW-BTC", 1, {}, self.pieces(), nums, stale).start)
+
+    def test_start_piece_is_loaded_from_knowledge(self):
+        pieces, _ = K.load_pieces()
+        self.assertEqual([p.id for p in pieces if p.start], ["C_started_move"])
+        base = [e for p in pieces for e in p.effects if p.id == "C_base_coin" and e.on == "up_odds"]
+        self.assertEqual(len(base), 9)
+        self.assertTrue(all(e.fixed and (e.lo, e.hi) == (1.0, 1.0) for e in base))
+
+    def test_fixed_claim_is_not_fitted(self):
+        """fixed = true인 주장은 맞추지 않는다: 시세가 무엇이든 주장의 range 그대로."""
+        raw = {"id": "C_x", "claims": [{"on": "up_odds", "op": "base", "fixed": True, "range": [1.0, 1.0], "reason": "동전"},
+                                       {"on": "move", "op": "base", "reason": "r"}]}
+        claims = F.claims_of([raw])
+        self.assertEqual(claims[0].fixed, (1.0, 1.0))
+        rows = fixtures.market(dt.date(2023, 6, 1), dt.date(2025, 6, 30))
+        up = {a: tuple(Row(r.date, r.open, r.high, r.low, r.close * (1.004 ** i), 1) for i, r in enumerate(rs))
+              for a, rs in rows.items()}  # 자주 오르는 시세: 맞추면 절편이 1보다 크게 나온다
+        for market in (rows, up):
+            fitted = F.fit_all(market, claims, dt.date(2025, 6, 30))
+            effs, text, _ = F.effects_for(raw, fitted, claims)
+            odds = [e for e in effs if e["on"] == "up_odds"]
+            self.assertEqual(len(odds), 9)
+            self.assertTrue(all(e["range"] == [1.0, 1.0] and e["fixed"] is True for e in odds))
+            self.assertIn("고정값 9칸", text)
+        self.assertGreater(F.fit_all(up, claims, dt.date(2025, 6, 30))[0].base[0], 1.0)  # 맞춘 절편은 따로 있다(쓰지 않음)
+
+
+class Analog(unittest.TestCase):
+    """참고 칸: 같은 대상 최근 750봉에서 시세 상태가 같은 지난 날들 (확률에 쓰지 않는다, 2026-11-04)."""
+
+    def test_matches_brute_force_and_never_sees_the_future(self):
+        c = [r.close for r in fixtures.series("069500", dt.date(2022, 1, 1), dt.date(2025, 6, 30))]
+        values = P.read(c)[0]
+        got = K.analog(c, (1, 5, 20), values)
+        reads = P.read_series(c)
+        last = len(c) - 1
+        for h in (1, 5, 20):
+            cand = [t for t in range(max(0, last + 1 - K.ANALOG_WINDOW), last - h + 1) if reads[t] == values]
+            if not cand:
+                self.assertIsNone(got[h])
+                continue
+            self.assertLessEqual(max(cand) + h, last)  # 목표 봉이 판단 때 이미 끝난 날만
+            self.assertEqual(got[h]["n"], len(cand))
+            self.assertAlmostEqual(got[h]["up_rate"], round(sum(c[t + h] > c[t] for t in cand) / len(cand), 4))
+            self.assertAlmostEqual(got[h]["eff"], round(len(cand) / h, 2))
+            self.assertEqual(got[h]["runs"], 1 + sum(1 for a, b in zip(cand, cand[1:]) if b - a > h))
+        # 뒤에 시세를 더해도(독) 그날까지 자른 답은 같다
+        poisoned = c + [x * 5 for x in c[-30:]]
+        self.assertEqual(K.analog(poisoned[:len(c)], (1, 5, 20), values), got)
+
+    def test_unknown_values_give_none(self):
+        self.assertEqual(K.analog([100.0] * 100, (1,), P.read([100.0] * 100)[0]), {1: None})
 
 
 class Pieces(unittest.TestCase):

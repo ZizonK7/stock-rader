@@ -77,9 +77,26 @@ class DailyLoop(unittest.TestCase):
             first = [a for a in recs["account"] if a["run"] == "2025-09-02"]
             self.assertEqual({a["account"] for a in first}, set(C.LIVE_ACCOUNTS))
             self.assertTrue(all(a["value"] == C.START_CASH for a in first))
-            # 예측기: 손·계산기·이전 버전·기준선
+            # 예측기: 손·계산기·이전 버전·기준선 셋 (v1은 2026-11-04 쉼)
             preds = {p["predictor"] for p in recs["prediction"]}
-            self.assertLessEqual({"hand", "calc", "version:v1", "baseline:half", "baseline:base_rate"}, preds)
+            self.assertLessEqual({"hand", "calc", "version:v4", "baseline:half", "baseline:base_rate", "baseline:all"}, preds)
+            self.assertNotIn("version:v1", preds)
+            # 답한 층(layer)과 참고 칸(analog) — 2026-11-04
+            calc = [p for p in recs["prediction"] if p["predictor"] == "calc"]
+            self.assertTrue(all(p["layer"] in ("출발점", "조각", "동전") for p in calc))
+            self.assertTrue(all("analog" in p for p in calc))
+            got = [p["analog"] for p in calc if p["analog"]]
+            self.assertTrue(got)
+            self.assertTrue(all(set(a) == {"n", "runs", "eff", "up_rate"} and 1 <= a["runs"] <= a["n"] for a in got))
+            # 출발점: 판단 때 가격(TICK, 9-02 07:37)이 있는 첫날의 코인 1봉만. 뒤 날들은 그 가격이 기준 봉이 끝나기 전 것이라 안 씀
+            start = [p for p in calc if p["layer"] == "출발점"]
+            self.assertEqual([(p["run"], p["asset"], p["horizon"]) for p in start], [("2025-09-02", "KRW-BTC", 1)])
+            self.assertIn("C_started_move:up_odds", start[0]["used"])
+            self.assertTrue(all(p["layer"] in ("조각", "기준값") for p in recs["prediction"] if p["predictor"].startswith("version:")))
+            self.assertTrue(all(p["layer"] == "조각" for p in recs["prediction"] if p["predictor"] == "hand"))
+            # 계산기 계좌는 R_weights_v2: 동전(0.5)이면 정확히 1/3
+            reasons = [o["reason"] for o in recs["order"] if o["account"] == "live:calc"]
+            self.assertTrue(reasons and all(r.startswith("R_weights_v2") for r in reasons), reasons)
             # 정산: 코인은 D+2, ETF는 D+3 실행에서 (판단 시각 뒤 첫 공식 가격)
             fills = recs["fill"]
             self.assertTrue(any(f["asset"] == "KRW-BTC" and f["run"] == "2025-09-04" for f in fills), fills)
@@ -189,6 +206,70 @@ class DailyLoop(unittest.TestCase):
             p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
             self.assertEqual(D.record(root, d, at(d, 8, 30), p), 1)
             self.assertFalse(list(root.records.glob("*.jsonl")))
+
+    def test_info_required_without_decisive(self):
+        """결론 조각(decisive)이 없으면 손 예측에 info(결론을 정한 것)를 적어야 한다 — 기록의 layer가 된다 (2026-11-04)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_root(tmp)
+            d = dt.date(2025, 9, 2)
+            D.prepare(root, d, at(d, 7, 37), fetch=False, ticker=TICK, echo=False)
+            tpl = json.loads((root.day_dir(d) / "input.json").read_text(encoding="utf-8"))
+            self.assertIn("info", tpl["hand"][0])
+            self.assertIn("_info_form", tpl)
+            inp = fill(tpl)
+            coin = next(h for h in inp["hand"] if h["asset"] == "KRW-BTC" and h["horizon"] == 1)
+            self.assertEqual(coin["_calc_layer"], "출발점")
+            coin.update(decisive=[], info="")
+            p = root.day_dir(d) / "noinfo.json"
+            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d, at(d, 8, 30), p), 1)
+            self.assertFalse(list(root.records.glob("*.jsonl")))
+            coin["info"] = "아무거나"
+            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d, at(d, 8, 30), p), 1)
+            coin["info"] = "조각"  # 결론 조각 없이 '조각'이라고 쓰면 layer가 거짓이 된다
+            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d, at(d, 8, 30), p), 1)
+            self.assertFalse(list(root.records.glob("*.jsonl")))
+            coin["info"] = "출발점"
+            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d, at(d, 8, 30), p), 0)
+            hand = {(x["asset"], x["horizon"]): x for x in R.read(root.records, "prediction") if x["predictor"] == "hand"}
+            self.assertEqual(hand[("KRW-BTC", 1)]["layer"], "출발점")
+            self.assertEqual(hand[("069500", 1)]["layer"], "조각")  # decisive가 있으면 '조각'
+
+    def test_seed_state_is_asked_only_when_relevant(self):
+        """씨앗 조각의 상태는 관련 있는 날만 대 본다: 틀의 readings에 없고, 없어도 기록된다(안 물음). 넣으면 answers 안에서만."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_root(tmp)
+            d = dt.date(2025, 9, 2)
+            D.prepare(root, d, at(d, 7, 37), fetch=False, ticker=TICK, echo=False)
+            tpl = json.loads((root.day_dir(d) / "input.json").read_text(encoding="utf-8"))
+            self.assertNotIn("S_q_overnight_move", tpl["readings"])
+            self.assertIn("S_q_overnight_move", tpl["_seed_readings"])
+            seed_q = [r for r in tpl["research"] if r["state"] == "S_q_overnight_move"]
+            self.assertEqual(len(seed_q), 1)
+            self.assertTrue(seed_q[0]["asked"].startswith("[씨앗"))
+            inp = fill(tpl)
+            inp["research"] = [r for r in inp["research"] if r["state"] != "S_q_overnight_move"]  # 오늘은 안 물음
+            p = root.day_dir(d) / "seed.json"
+            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d, at(d, 8, 30), p), 0)
+            self.assertNotIn("S_q_overnight_move", R.read(root.records, "hand_reading")[0]["values"])
+            # 다음 날: 물었으면 값은 answers(오름/내림/아니오/모름) 안에서, 씨앗 조각을 쓸 수 있다
+            d2 = dt.date(2025, 9, 3)
+            D.prepare(root, d2, at(d2, 7, 37), fetch=False, ticker=TICK, echo=False)
+            inp = fill(json.loads((root.day_dir(d2) / "input.json").read_text(encoding="utf-8")))
+            inp["readings"]["S_q_overnight_move"] = {"value": "예", "why": "가짜", "places": ["P_yahoo_chart"]}
+            p = root.day_dir(d2) / "seed2.json"
+            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d2, at(d2, 8, 30), p), 1)
+            inp["readings"]["S_q_overnight_move"]["value"] = "오름"
+            kr = next(h for h in inp["hand"] if h["asset"] == "069500" and h["horizon"] == 1)
+            kr["used"].append("Q_overnight_lead=오름")
+            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d2, at(d2, 8, 30), p), 0)
+            self.assertEqual(R.read(root.records, "hand_reading")[-1]["values"]["S_q_overnight_move"], "오름")
 
     def test_noise_excuse_is_checked(self):
         with tempfile.TemporaryDirectory() as tmp:

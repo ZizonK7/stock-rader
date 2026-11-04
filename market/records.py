@@ -49,16 +49,20 @@ FIELDS: dict[str, dict[str, tuple]] = {
 OPTIONAL: dict[str, dict[str, tuple]] = {
     "score": {"counted": OPT_BOOL},
     "order": {"decided_at": (str,)},
-    "prediction": {"confidence": (str,)},
+    # 2026-11-04: layer = 답한 층(계산기 출발점/조각/동전/모름, 이전 버전 조각/기준값, 손 조각/출발점/기타),
+    # analog = 계산기 줄의 참고 칸(같은 대상 3년 창에서 시세 상태가 같은 지난 날들 {n, runs, eff, up_rate}, 없으면 null)
+    "prediction": {"confidence": (str,), "layer": (str,), "analog": (dict, type(None))},
     "hand_reading": {"by_asset": (dict,)},   # 종목마다 대 본 조사 상태 (2026-10-29): 종목 → 상태 → {value, why, places}
 }
 WHY = ("맞음", "잡음", "대 보기 틀림", "조건 흐림", "이유 틀림", "바깥 상황")
+# 예측 줄 layer 낱말 (2026-11-04): 계산기 출발점/조각/동전/모름, 이전 버전 조각/기준값, 손 예측 조각/출발점/기타(입력 info)
+LAYERS = ("출발점", "조각", "동전", "기준값", "모름", "기타")
 LOOK_RESULT = ("찾음", "없음", "늦음", "막힘")
 SUMMARY_MAX = 300  # 조사 기록의 요약 칸 최대 글자 수 — 기사 본문을 옮기지 않는다(요약 + 링크)
 DESCRIBE = {
     "run": "실행 한 번: mode(replay/live), steps(단계별 결과·실패), notes",
     "reading": "대 보기: 대상 하나의 조각 값(values: 상태 id → 예/아니오/모름)과 계산에 쓴 숫자(numbers), known_through = 본 마지막 일봉 날짜",
-    "prediction": "예측: predictor(calc / hand / version:<id> / baseline:half / baseline:base_rate), 기간(봉 수), 기준 종가, 오를 확률과 범위, 움직임 크기 범위(%, 절댓값), 쓴 조각·결론을 바꾸는 조각, 이유, 논리집 지문",
+    "prediction": "예측: predictor(calc / hand / version:<id> / baseline:half / baseline:base_rate / baseline:all), 기간(봉 수), 기준 종가, 오를 확률과 범위, 움직임 크기 범위(%, 절댓값), 쓴 조각·결론을 바꾸는 조각, 이유, 논리집 지문, (있으면) 답한 층 layer·참고 칸 analog",
     "score": "채점: 기한이 된 예측의 목표 종가와 수익률, 방향 적중(확률 0.5면 null), 확률 점수(Brier), 크기 적중",
     "order": "주문: 계좌, 대상(세 대상 또는 종목 코드), buy/sell, 수량(최소 단위 개수: ETF·종목 주, 코인 1e-8), 판단 때 가격",
     "fill": "체결: 주문 id, 체결일, 가격, 수량(현금이 모자라면 줄어듦 — note), 금액·수수료(원), 체결 뒤 현금",
@@ -106,6 +110,8 @@ def line_errors(kind: str, d: dict, where: str) -> list[str]:
             errs.append(f"{where}: '{k}' 타입이 {[t.__name__ for t in types]}가 아님")
     if kind == "prediction" and isinstance(d.get("p_up"), NUM) and not 0 <= d["p_up"] <= 1:
         errs.append(f"{where}: p_up은 0~1")
+    if kind == "prediction" and "layer" in d and d["layer"] not in LAYERS:
+        errs.append(f"{where}: layer는 {list(LAYERS)} 중 하나")
     for k, types in OPTIONAL.get(kind, {}).items():
         if k in d and (not isinstance(d[k], types) or (isinstance(d[k], bool) and bool not in types)):
             errs.append(f"{where}: '{k}' 타입이 {[t.__name__ for t in types]}가 아님")

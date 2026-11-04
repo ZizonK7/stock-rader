@@ -8,7 +8,8 @@ id = "v1"
 file = "v1.toml"
 saved = 2026-10-21
 digest = "3a322e89980b"
-active = true
+# 2026-11-04 쉼(active = false): v4를 떠 두면서 동시에 도는 버전 상한 3개가 찼다. 넷 중 가장 오래된 모음(1단계 재생 때, C_trend_20을 쪼개기 전)이라 뺐다. 쪼갠 뒤의 모음 v2·v3·v4와 지금 계산기는 계속 나란히 채점된다
+active = false
 why = "1단계 재생(2026-07-01~10-19)에 쓴 조각 모음 그대로. 2026-10-21 첫 돌아보기에서 C_trend_20을 쪼개기 전의 것 — 쪼갠 새 버전(계산기 calc)과 같은 날들로 나란히 채점한다"
 
 [[version]]
@@ -26,3 +27,11 @@ saved = 2026-11-03
 digest = "f380e5a5fa5e"
 active = true
 why = "2026-11-03 논리집 점검 반영 전의 모음: C_base(움직임 기준값을 고정 크기로)를 최근 250봉 흔들림의 배수로 바꾸는 새 버전, C_drawdown 움직임 주장에 '흔들림 큼' 조건을 더해 쪼개기 전 (docs/worklog/2026-11-03-logic-check.md)"
+
+[[version]]
+id = "v4"
+file = "v4.toml"
+saved = 2026-11-04
+digest = "dc873b5c52d9"
+active = true
+why = "계산기 분석 반영 전: 방향 기본값 동전(C_base_coin), R_weights v2, 출발점 조각, 씨앗 조각 (docs/worklog/2026-11-04-calc-analysis.md)"

@@ -86,10 +86,21 @@ class Plan(unittest.TestCase):
         self.assertEqual(again, [])  # 체결 안 된 주문을 이미 셌다
 
     def test_target_weight_rule(self):
-        self.assertEqual(L.target_weight(0.40), 0)
-        self.assertAlmostEqual(L.target_weight(0.50), 1 / 6)
-        self.assertAlmostEqual(L.target_weight(0.70), 1 / 3)
-        self.assertIsNone(L.target_weight(None))
+        """R_weights_v2 (2026-11-04): 1/3 + (p − 0.5) × 4/3, 0~0.5. 모름·동전(0.5)이면 정확히 기준선 1/3."""
+        self.assertAlmostEqual(L.target_weight(0.50), 1 / 3)
+        self.assertAlmostEqual(L.target_weight(None), 1 / 3)       # 모름도 기준선(현금으로 물러서지 않는다)
+        self.assertAlmostEqual(L.target_weight(0.40), 1 / 3 - 0.1 * 4 / 3)
+        self.assertAlmostEqual(L.target_weight(0.55), 1 / 3 + 0.05 * 4 / 3)
+        self.assertEqual(L.target_weight(0.25), 0.0)               # 1/3 − 1/3 = 0
+        self.assertEqual(L.target_weight(0.10), 0.0)               # 아래로 자름
+        self.assertEqual(L.target_weight(0.80), 0.5)               # 위로 자름(반 넘게는 들지 않는다)
+
+    def test_target_weight_v1_kept_for_replay(self):
+        """이전 규칙(R_weights v1)은 1단계 재생이 쓴 그대로 남는다: p = 0.5에서 1/6만 산다(모름 = 현금 보유)."""
+        self.assertEqual(L.target_weight_v1(0.40), 0)
+        self.assertAlmostEqual(L.target_weight_v1(0.50), 1 / 6)
+        self.assertAlmostEqual(L.target_weight_v1(0.70), 1 / 3)
+        self.assertIsNone(L.target_weight_v1(None))
 
 
 if __name__ == "__main__":

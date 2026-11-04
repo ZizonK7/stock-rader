@@ -254,15 +254,20 @@ class DailyStocks(unittest.TestCase):
             self.assertIn((S1, "buy"), {(o["asset"], o["side"]) for o in orders})
             preds = R.read(root.records, "prediction")
             mine = {p["predictor"] for p in preds if p["asset"] == S1}
-            self.assertEqual(mine, {"hand", "calc", "baseline:half", "baseline:base_rate"})  # 이전 버전은 종목에 없음
+            # 이전 버전은 종목에 없음. 기준선 셋(2026-11-04 baseline:all 더함 — 계산기가 '모름'인 종목의 견줄 줄)
+            self.assertEqual(mine, {"hand", "calc", "baseline:half", "baseline:base_rate", "baseline:all"})
+            self.assertTrue(all(p["p_up"] is not None for p in preds if p["asset"] == S1 and p["predictor"] == "baseline:all"))
             self.assertTrue(all(p["p_up"] is None for p in preds if p["asset"] == S1 and p["predictor"] == "calc"))
+            self.assertTrue(all(p["layer"] == "모름" and "analog" in p for p in preds
+                                if p["asset"] == S1 and p["predictor"] == "calc"))  # 계산기는 종목에 '모름'(2026-11-04 layer)
             hr = R.read(root.records, "hand_reading")[0]
             self.assertEqual(hr["by_asset"][S1]["S_q_earnings_beat"]["value"], "예")
             hand_wk = next(p for p in preds if p["id"] == f"{d0}:hand:{S1}:5")
             self.assertEqual(hand_wk["readings"]["S_q_earnings_beat"], "예")
             self.assertEqual([p for p in preds if p["asset"] == S5], [])  # 손대지 않은 종목은 기록하지 않는다
             # 비교군('아니오' 종목)은 대 보기와 계산기('모름')·기준선 줄이 생겨 채점된다(손 예측은 없다)
-            self.assertEqual({p["predictor"] for p in preds if p["asset"] == S2}, {"calc", "baseline:half", "baseline:base_rate"})
+            self.assertEqual({p["predictor"] for p in preds if p["asset"] == S2},
+                             {"calc", "baseline:half", "baseline:base_rate", "baseline:all"})
             self.assertEqual(hr["by_asset"][S2]["S_q_earnings_beat"]["value"], "아니오")
             self.assertEqual(R.check_folder(root.records), [])
             RP.write(root, d0)

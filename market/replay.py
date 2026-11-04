@@ -77,7 +77,7 @@ class Replay:
                     out["prediction"].append({"id": f"{run}:calc:{asset}:{hz}", "predictor": "calc", **base,
                                               "readings": values, "knowledge": self.digest, **f})
                     if i == WEIGHT_HORIZON_INDEX:
-                        weights[asset] = L.target_weight(f["p_up"])
+                        weights[asset] = L.target_weight_v1(f["p_up"])  # 재생이 돈 규칙 그대로(R_weights v1)
                         reasons[asset] = f"R_weights: 1주 오를 확률 {f['p_up']} → 목표 비중 {weights[asset]}"
                     out["prediction"].append({"id": f"{run}:baseline:half:{asset}:{hz}", "predictor": "baseline:half",
                                               **base, "p_up": 0.5, "p_range": None, "size_lo": None, "size_hi": None,

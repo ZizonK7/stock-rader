@@ -207,7 +207,7 @@ id = "P_yahoo_chart"
 name = "야후 파이낸스 차트 값 (VIX·S&P500·금리·환율)"
 url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=1y&interval=1d"
 angle = "미국 시장"
-covers = ["S_q_risk_off", "S_q_fear_above_year"]
+covers = ["S_q_risk_off", "S_q_fear_above_year", "S_q_overnight_move"]
 official = false
 added = 2026-10-22
 note = "판단 직전 미국 장 마감값(VIX, S&P500, 10년물 금리, 원/달러)을 한 곳에서 받았다"
@@ -287,7 +287,7 @@ id = "P_cboe_delayed_api"
 name = "Cboe 지연 시세 JSON (VIX·S&P500·나스닥100)"
 url = "https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json"
 angle = "미국 시장"
-covers = ["S_q_risk_off", "S_q_fear_above_year"]
+covers = ["S_q_risk_off", "S_q_fear_above_year", "S_q_overnight_move"]
 official = true
 added = 2026-10-24
 note = "2026-10-24 새로 시도: 장 끝나고 바로 VIX·S&P500 종가가 나온다(_SPX, _NDX도). 야후 차트가 429일 때 대신 썼다. curl은 -L(넘겨주기 따라가기)이 필요. _TNX·_SOX는 낡은 값"

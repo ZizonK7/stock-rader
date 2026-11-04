@@ -213,8 +213,18 @@ def last_prices(hists: dict[str, History]) -> dict[str, tuple[dt.date, float]]:
     return {a: (h.last.date, h.last.close) for a, h in hists.items() if h.last}
 
 
-def target_weight(p: float | None) -> float | None:
-    """R_weights: 1/3 × clamp((p − 0.40) ÷ 0.20, 0, 1). 모름이면 None(그대로 둠)."""
+def target_weight(p: float | None) -> float:
+    """R_weights_v2 (2026-11-04, 계산기 계좌): 1/3 + (p − 0.5) × 4/3, 0~0.5로 자름. 모름(None)이면 1/3.
+    손 계좌 규칙(지시문 '목표 비중')과 같다. p = 0.5(모름·동전)에서 정확히 기준선(셋 나눠 들기)이 되어 기준선과의 차이가 전부
+    예측에서 나온다. v1(target_weight_v1)은 p = 0.5에서 1/6만 사서 '모름'이 현금 보유 = '내린다' 내기가 됐다."""
+    if p is None:
+        return 1 / 3
+    return min(max(1 / 3 + (p - 0.5) * 4 / 3, 0.0), 0.5)
+
+
+def target_weight_v1(p: float | None) -> float | None:
+    """R_weights v1 (이전 버전, 1단계 재생이 쓴 규칙 — replay.py가 그대로 쓴다): 1/3 × clamp((p − 0.40) ÷ 0.20, 0, 1).
+    모름이면 None(그대로 둠)."""
     if p is None:
         return None
     return (1 / 3) * min(max((p - 0.40) / 0.20, 0.0), 1.0)

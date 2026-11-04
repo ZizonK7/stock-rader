@@ -15,6 +15,9 @@
 - 판단 시각 = record를 돌린 실제 시각. 주문은 그 시각 **뒤에** 정해지는 첫 공식 가격에 체결된다(늦은 실행에서 이미 나온
   가격으로 사지 않게). 판단 시각까지 끝났어야 할 일봉이 시세 파일에 없으면 그 대상은 그날 예측·주문하지 않는다.
 - 07:37 업비트 현재가를 '판단 때 가격'으로 따로 적는다(결정 3, 손 예측 근거). 채점 기준(끝난 일봉 종가)은 그대로.
+  2026-11-04부터 계산기(와 이전 버전 모음)의 첫 기간은 이 값을 출발점 조각(C_started_move)으로 쓴다(calc.start_p).
+- 예측 줄(2026-11-04): 계산기·이전 버전·손에 layer(답한 층), 계산기에 analog(같은 스위치 지난 날들, 참고 칸),
+  기준선 셋(baseline:half, baseline:base_rate, baseline:all).
 - 채점은 같은 (예측기·대상·기간·기준 날짜)를 처음 말한 것 하나만 센다(score.counted, 결정 1). 예측은 매일 적는다.
 - 모든 네트워크 요청에 시간 제한 30초(config.NET_TIMEOUT).
 """
@@ -84,11 +87,8 @@ class Root:
 
 # ---------- 시각과 시세 ----------
 def expected_next(asset: str, last: dt.date) -> dt.date:
-    """마지막 일봉 다음에 나올 일봉 날짜 (ETF는 주말만 건너뛴다 — 휴장일은 모른다)."""
-    d = last + dt.timedelta(days=1)
-    while C.on_exchange(asset) and d.weekday() >= 5:
-        d += dt.timedelta(days=1)
-    return d
+    """마지막 일봉 다음에 나올 일봉 날짜 (ETF는 주말만 건너뛴다 — 휴장일은 모른다). config.next_bar와 같다."""
+    return C.next_bar(asset, last)
 
 
 def skip_reason(asset: str, hist: PR.History, at: dt.datetime, fetch: dict) -> str:
@@ -245,16 +245,18 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
         D.base[a] = {"base_date": h.last.date.isoformat(), "base_close": h.last.close}
         D.readings.append({"id": f"reading:{run}:{a}", "run": run, "asset": a, "known_through": h.last.date.isoformat(),
                            "values": values, "numbers": numbers})
+        dec = decision_of(ticker, a, h)
+        ana = K.analog(h.closes, C.ASSETS[a].horizons, values)
         for i, hz in enumerate(C.ASSETS[a].horizons):
             base = {"run": run, "asset": a, "horizon": hz, **D.base[a]}
-            f = K.record_fields(K.predict(a, hz, values, pieces, numbers))
+            f = K.record_fields(K.predict(a, hz, values, pieces, numbers, dec))
             D.preds.append({"id": f"{run}:calc:{a}:{hz}", "predictor": "calc", **base, "readings": values,
-                            "knowledge": digest, **f})
+                            "knowledge": digest, **f, "analog": ana[hz]})
             if i == WEIGHT_HORIZON_INDEX:
                 calc_w[a] = L.target_weight(f["p_up"])
-                reasons[a] = f"R_weights: 1주 오를 확률 {f['p_up']} → 목표 비중 {calc_w[a]}"
-            for vid, vpieces, vdig in versions:
-                vf = K.record_fields(K.predict(a, hz, values, vpieces, numbers))
+                reasons[a] = f"R_weights_v2: 1주 오를 확률 {f['p_up']} → 목표 비중 {calc_w[a]:.4f}"
+            for vid, vpieces, vdig in versions:  # 출발점 조각이 없는 모음(v1–v4)은 판단 때 가격을 받아도 그대로다
+                vf = K.record_fields(K.predict(a, hz, values, vpieces, numbers, dec))
                 D.preds.append({"id": f"{run}:version:{vid}:{a}:{hz}", "predictor": f"version:{vid}", **base,
                                 "readings": values, "knowledge": vdig, **vf})
             D.preds += baselines(run, a, hz, h, base)
@@ -272,11 +274,12 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
         values, numbers = P.read(h.closes)
         D.readings.append({"id": f"reading:{run}:{a}", "run": run, "asset": a, "known_through": h.last.date.isoformat(),
                            "values": values, "numbers": numbers})
+        ana = K.analog(h.closes, C.ASSETS[a].horizons, values)
         for hz in C.ASSETS[a].horizons:
             base = {"run": run, "asset": a, "horizon": hz, **D.base[a]}
             f = K.record_fields(K.predict(a, hz, values, pieces, numbers))
             D.preds.append({"id": f"{run}:calc:{a}:{hz}", "predictor": "calc", **base, "readings": values,
-                            "knowledge": digest, **f})
+                            "knowledge": digest, **f, "analog": ana[hz]})
             D.preds += baselines(run, a, hz, h, base)
     if not already:
         D.calc_orders = [o.record() for o in accounts["live:calc"].plan(day, calc_w, D.prices, 0.02, reasons, at)]
@@ -307,9 +310,19 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     return D
 
 
+def decision_of(ticker: dict, a: str, h: PR.History) -> dict | None:
+    """판단 때 가격(prepare가 받은 업비트 현재가)을 출발점 조각에 넘길 꼴로. 없으면 None."""
+    t = (ticker or {}).get(a)
+    if not isinstance(t, dict) or not t.get("price") or not t.get("time") or h.last is None:
+        return None
+    return {"price": float(t["price"]), "time": dt.datetime.fromisoformat(t["time"]), "base_date": h.last.date,
+            "base_close": h.last.close}
+
+
 def baselines(run: str, a: str, hz: int, h: PR.History, base: dict) -> list[dict]:
-    """기준선 예측 둘: 늘 50%, 최근 250봉에서 오른 비율."""
+    """기준선 예측 셋: 늘 50%, 최근 250봉에서 오른 비율, 알려진 전체 시세에서 오른 비율(2026-11-04)."""
     br, w = S.base_rate(h, hz)
+    ar, aw = S.all_rate(h, hz)
     return [{"id": f"{run}:baseline:half:{a}:{hz}", "predictor": "baseline:half", **base, "p_up": 0.5,
              "p_range": None, "size_lo": None, "size_hi": None, "readings": {}, "used": [],
              "decisive": [], "reason": "늘 50%", "knowledge": ""},
@@ -317,7 +330,12 @@ def baselines(run: str, a: str, hz: int, h: PR.History, base: dict) -> list[dict
              "p_up": round(br, 4) if br is not None else None, "p_range": None,
              "size_lo": round(w[0], 4) if w else None, "size_hi": round(w[1], 4) if w else None,
              "readings": {}, "used": [], "decisive": [],
-             "reason": f"최근 {S.BASE_RATE_WINDOW}봉에서 {hz}봉 수익률이 오른 비율", "knowledge": ""}]
+             "reason": f"최근 {S.BASE_RATE_WINDOW}봉에서 {hz}봉 수익률이 오른 비율", "knowledge": ""},
+            {"id": f"{run}:baseline:all:{a}:{hz}", "predictor": "baseline:all", **base,
+             "p_up": round(ar, 4) if ar is not None else None, "p_range": None,
+             "size_lo": round(aw[0], 4) if aw else None, "size_hi": round(aw[1], 4) if aw else None,
+             "readings": {}, "used": [], "decisive": [],
+             "reason": f"알려진 전체 시세({len(h)}봉)에서 {hz}봉 수익률이 오른 비율", "knowledge": ""}]
 
 
 # ---------- prepare ----------
@@ -403,11 +421,14 @@ def briefing(D: Day, fetched: dict, tick: dict) -> str:
     L_ += ["", f"## 다시 볼 손 대 보기 ({len(D.due_checks)}건) — 입력 reading_checks에"]
     for (t, st), c in D.due_checks.items():
         L_.append(f"- {t} {st} = {c['then']} (그때 이유: {c['why_then'][:80]})")
-    L_ += ["", "## 계산기 (오늘, 시세 조각만)"]
+    L_ += ["", "## 계산기 (오늘, 시세 조각과 출발점 — 방향 기본값은 동전)"]
     for p in D.preds:
         if p["predictor"] == "calc":
-            L_.append(f"- {p['asset']} {p['horizon']}봉: {p['reason']}")
-    L_ += ["", "## 오늘 조사 질문 (각도별로 조사 에이전트에게)"]
+            an = p.get("analog")
+            ref = (f" [참고 칸, 확률에 안 씀: 같은 스위치 지난 날 {an['n']}개·{an['runs']}구간, 오른 비율 {an['up_rate']:.0%}]"
+                   if an else "")
+            L_.append(f"- {p['asset']} {p['horizon']}봉 ({p.get('layer', '?')}): {p['reason']}{ref}")
+    L_ += ["", "## 오늘 조사 질문 (각도별로 조사 에이전트에게; [씨앗]은 관련 있는 날만 — 묻지 않으면 틀에서 그 줄을 지운다)"]
     for q in D.questions:
         L_.append(f"- [{q['angle']}] `{q['question']}` {q['asked']}\n  추천 볼 곳: {', '.join(q['suggest']) or '없음'}")
     L_.append(f"\n새 곳 시도 몫: 각도마다 {RS.NEW_PER_ANGLE}곳 이상(목록에 없거나 {RS.FRESH_DAYS}일 넘게 안 본 곳). "
@@ -428,9 +449,11 @@ def control_note(D: Day, names: dict) -> str:
 
 def template(D: Day) -> dict:
     """메인이 채울 입력 틀. '_'로 시작하는 칸은 참고용이고 검사하지 않는다."""
-    from .research import research_states
-    states = [s["id"] for s in research_states(D.raw, per_asset=False)]
-    per_asset = [s["id"] for s in research_states(D.raw, per_asset=True)]
+    from .research import research_states, seed_states
+    seeds = seed_states(D.raw)
+    states = [s["id"] for s in research_states(D.raw, per_asset=False) if s["id"] not in seeds]
+    per_asset = [s["id"] for s in research_states(D.raw, per_asset=True) if s["id"] not in seeds]
+    answers = {s["id"]: s.get("answers") for s in D.raw.get("state", [])}
     calc = {(p["asset"], p["horizon"]): p for p in D.preds if p["predictor"] == "calc"}
     hand_acc = D.accounts["live:hand"]
     units, cash = hand_acc.expected(D.prices)
@@ -438,9 +461,15 @@ def template(D: Day) -> dict:
     pieces = {pid: info["state"] for pid, info in H._piece_index(D.raw).items()}
     assets = list(D.predictable) + list(D.held)
     names = {str(s["code"]): s["name"] for s in D.pool}
+    starts = {pid for pid, info in H._piece_index(D.raw).items() if info["start"]}
     return {
         "day": D.day.isoformat(), "agents": 0, "notes": [],
-        "_pieces": {k: f"조건 상태 {v}" if v else "기준값(값 없이 조각 id만)" for k, v in pieces.items()},
+        "_pieces": {k: f"조건 상태 {v}" if v else ("출발점(값 없이 조각 id만)" if k in starts else "기준값(값 없이 조각 id만)")
+                    for k, v in pieces.items()},
+        "_info_form": "hand의 info = 결론을 정한 것: 조각 / 출발점(판단 때 가격·간밤 값처럼 판단 때 이미 일어난 움직임) / 기타. "
+                      "decisive(결론 조각)가 비면 반드시 적는다(모름 0.5면 '기타'). decisive가 있으면 비워도 된다('조각'으로 기록)",
+        "_seed_readings": {st: f"씨앗 조각의 상태 — 관련 있는 날만 readings에 더한다(value·why·places). 답: {answers.get(st) or '예/아니오/일부/모름'}. "
+                               f"안 물으면 넣지 않는다(안 물음)" for st in sorted(seeds)},
         "_used_form": "used·decisive는 '조각 id=값'. 값은 그 조각 조건 상태의 오늘 값(조사 조각은 readings, 종목마다 대 보는 "
                       "조사 조각은 stock_readings의 그 종목 값, 계산 조각은 _values)",
         "_stocks": {a: {"name": names.get(a, a), "held": a in D.held, "base_date": D.base[a]["base_date"],
@@ -457,9 +486,10 @@ def template(D: Day) -> dict:
         "stock_readings": {a: {st: {"value": "모름", "why": "", "places": []} for st in per_asset} for a in D.held}
                           if per_asset else {},
         "hand": [{"asset": a, "horizon": hz, "p_up": None, "size_lo": None, "size_hi": None, "used": [],
-                  "decisive": [], "reason": "", "confidence": "낮음",
+                  "decisive": [], "info": "", "reason": "", "confidence": "낮음",
                   "_calc": calc[(a, hz)]["reason"] if (a, hz) in calc else "",
                   "_calc_p_up": calc[(a, hz)]["p_up"] if (a, hz) in calc else None,
+                  "_calc_layer": calc[(a, hz)].get("layer") if (a, hz) in calc else None,
                   "_values": D.calc_values.get(a, {})}
                  for a in assets for hz in C.ASSETS[a].horizons],
         "weights": {a: {"target": round(units.get(a, 0) * D.prices[a] / C.ASSETS[a].unit / total, 4) if total else 0.0,
@@ -489,6 +519,7 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
     ctx = {"day": day.isoformat(), "raw": D.raw,
            "research_states": [s["id"] for s in RS.research_states(D.raw, per_asset=False)],
            "stock_states": [s["id"] for s in RS.research_states(D.raw, per_asset=True)],
+           "seed_states": sorted(RS.seed_states(D.raw)),
            "places": [p["id"] for p in D.places], "stale": D.stale, "predictable": D.predictable,
            "stocks": D.stock_ok, "held": D.held, "buyable": {str(s["code"]) for s in D.pool if s.get("buy", True)},
            "hand_units": D.accounts["live:hand"].expected(D.prices)[0],

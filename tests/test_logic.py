@@ -44,6 +44,19 @@ class Devices(unittest.TestCase):
         errors, _ = CH.audit(self.kn(text), fitted_now())
         self.assertTrue(any("맞춘 값과 다름" in e for e in errors), errors)
 
+    def test_fixed_value_cannot_be_changed_by_hand(self):
+        """고정값(fixed, 2026-11-04 C_base_coin의 동전)은 맞추지 않지만, 주장에 적은 값과 다르면 audit 오류다."""
+        text = TEXT.replace('range = [1.0, 1.0]\nasset = "069500"\nhorizon = 1\nfixed = true',
+                            'range = [1.0, 1.05]\nasset = "069500"\nhorizon = 1\nfixed = true', 1)
+        self.assertNotEqual(text, TEXT)
+        errors, _ = CH.audit(self.kn(text), fitted_now())
+        self.assertTrue(any("C_base_coin" in e and "맞춘 값과 다름" in e for e in errors), errors)
+        bad = TEXT.replace('{ on = "up_odds", op = "base", fixed = true, range = [1.0, 1.0],',
+                           '{ on = "up_odds", op = "base", fixed = true,', 1)
+        self.assertNotEqual(bad, TEXT)
+        errors, _ = CH.audit(self.kn(bad), fitted_now())
+        self.assertTrue(any("고정값 주장" in e for e in errors), errors)
+
     def test_range_wider_than_cap_fails_validate(self):
         text = TEXT.replace("range = [1.03, 1.22]", "range = [1.03, 2.5]", 1)
         self.assertTrue(any("상한" in e for e in SCHEMA.validate(self.kn(text))))

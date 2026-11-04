@@ -148,6 +148,14 @@ def final_dt(asset: Asset, day: dt.date) -> dt.datetime:
     return dt.datetime.combine(day + dt.timedelta(days=asset.final_days), asset.final_time, KST)
 
 
+def next_bar(asset_id: str, last: dt.date) -> dt.date:
+    """마지막 일봉 다음에 나올 일봉 날짜 (ETF·종목은 주말만 건너뛴다 — 휴장일은 모른다)."""
+    d = last + dt.timedelta(days=1)
+    while on_exchange(asset_id) and d.weekday() >= 5:
+        d += dt.timedelta(days=1)
+    return d
+
+
 def fill_dt(asset: Asset, day: dt.date) -> dt.datetime:
     """날짜 day의 체결 가격이 정해지는 시각 (ETF 종가 15:30, 코인 시가 09:00)."""
     return dt.datetime.combine(day, asset.fill_time, KST)

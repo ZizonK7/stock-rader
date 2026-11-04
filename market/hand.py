@@ -10,6 +10,10 @@
 - 손 예측: 오늘 예측할 수 있는 대상 × 기간마다 하나. 확률 0~1(모름이면 null), 크기 범위 폭 2배 이하, 이유, 확신도.
   쓴 조각은 '조각 id=값'이고 값은 그날 대 본 값과 같아야 한다(조사 조각은 손 대 보기, 계산 조각은 시세 대 보기).
   결론을 바꾼 조각(decisive)은 쓴 조각 안에서.
+  info(2026-11-04, 결론을 정한 것: 조각 / 출발점 / 기타)는 decisive가 비면 반드시 적는다 — 손 1봉 45개 중 41개가 조각 없이
+  판단 때 정보로 정했는데 그 사실이 기록에 없었다(분석 보고서 F1). decisive가 있으면 비워도 되고 '조각'으로 채운다
+  (decisive가 출발점 조각뿐이면 '출발점'). 기록의 예측 줄 layer 칸이 된다.
+- 씨앗 조각(seed = true)만 쓰는 조사 상태는 관련 있는 날만 대 본다: 손 대 보기에 없어도 된다(안 물음).
 - 목표 비중: 0~1, 합 1 이하, 대상마다 이유.
 - 종목(2026-10-29): 손 계좌가 든 종목은 매일 손 예측 셋과 비중을 낸다(팔려면 0). 목표 > 0이면 손 예측 셋이 있고, 1주
   오를 확률 > 0.5이고, 1주 예측에 결론 조각(decisive)이 있어야 한다(이유 없이 사지 않는다). 한 종목 상한
@@ -31,6 +35,7 @@ from . import config as C
 from . import records as R
 
 CONF = ("낮음", "보통", "높음")
+INFO = ("조각", "출발점", "기타")   # 손 예측의 결론을 정한 것 (2026-11-04)
 MAX_RATIO = 2.0
 
 
@@ -50,8 +55,21 @@ def _piece_index(raw: dict) -> dict[str, dict]:
         conds = h.get("conditions") or []
         out[h["id"]] = {"state": conds[0] if conds else None, "research": h.get("read_by") == "조사",
                         "per_asset": bool(conds) and conds[0] in per_asset,
-                        "scope": [c.get("scope", "all") for c in h.get("claims", [])]}
+                        "scope": [c.get("scope", "all") for c in h.get("claims", [])],
+                        "start": any(c.get("op") == "start" for c in h.get("claims", [])),
+                        "seed": bool(h.get("seed"))}
     return out
+
+
+def info_of(h: dict, pieces: dict[str, dict]) -> str | None:
+    """손 예측의 layer: 적은 info, 없으면 decisive에서(출발점 조각뿐이면 '출발점', 아니면 '조각'). decisive도 없으면 None."""
+    info = str(h.get("info") or "").strip()
+    if info:
+        return info
+    dec = [str(d).partition("=")[0] for d in h.get("decisive", [])]
+    if not dec:
+        return None
+    return "출발점" if all((pieces.get(d) or {}).get("start") for d in dec) else "조각"
 
 
 def _reading_errors(where: str, r, *, need_place: bool = True) -> list[str]:
@@ -88,10 +106,13 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
     if not inp.get("research"):
         warns.append("조사 기록이 하나도 없음")
 
-    # 손 대 보기
+    # 손 대 보기 (씨앗 조각만 쓰는 상태는 관련 있는 날만 — 없으면 '안 물음')
     answers = {s["id"]: s["answers"] for s in ctx["raw"].get("state", []) if s.get("answers")}
     readings = inp.get("readings", {})
+    seed_states = set(ctx.get("seed_states", []))
     for st in ctx["research_states"]:
+        if st in seed_states and st not in readings:
+            continue
         errs += _reading_errors(f"readings.{st}", readings.get(st))
         v = (readings.get(st) or {}).get("value") if isinstance(readings.get(st), dict) else None
         if st in answers and v is not None and str(v) not in answers[st]:
@@ -111,6 +132,8 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
             if st not in stock_states:
                 errs.append(f"stock_readings.{a}: '{st}'는 종목마다 대 보는 조사 상태가 아님")
         for st in stock_states:
+            if st in seed_states and st not in rs:
+                continue
             errs += _reading_errors(f"stock_readings.{a}.{st}", rs.get(st))
     # 종목 비교군 (2026-11-03): '예' 종목만 대 보면 '아니오' 쪽이 없어 그 조각이 시험되지 않는다
     for st in stock_states:
@@ -180,6 +203,14 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
         for d in h.get("decisive", []):
             if str(d).partition("=")[0] not in used:
                 errs.append(f"{w}: decisive '{d}'는 used에 없음 (빼면 결론이 바뀌는 조각만, 쓴 조각 안에서)")
+        info = str(h.get("info") or "").strip()
+        if info and info not in INFO:
+            errs.append(f"{w}: info는 {list(INFO)} 중 하나 (결론을 정한 것)")
+        elif not info and not h.get("decisive"):
+            errs.append(f"{w}: 결론 조각(decisive)이 없으면 info(결론을 정한 것: {'/'.join(INFO)})를 적는다 — 판단 때 가격·간밤 값으로 "
+                        f"정했으면 '출발점', 그 밖이면 '기타'(모름 0.5도)")
+        elif info == "조각" and not h.get("decisive"):  # '조각' = decisive에 적은 조각이 정함 — 없으면 기록의 layer가 거짓이 된다
+            errs.append(f"{w}: info '조각'은 결론 조각(decisive)이 있을 때만 — 조각 없이 정했으면 '출발점' 또는 '기타'")
     weights = inp.get("weights") or {}
     held = list(ctx.get("held", []))
     targeted = [a for a, wgt in weights.items() if a in stocks and isinstance(wgt, dict)
@@ -318,6 +349,7 @@ def lines(inp: dict, ctx: dict, digest: str, base: dict[str, dict]) -> dict[str,
                                     for st, r in rs.items()} for a, rs in stock_readings.items()}
         out["hand_reading"].append(line)
     hand_values = {k: v["value"] for k, v in readings.items()}
+    pieces = _piece_index(ctx["raw"])
     for h in inp.get("hand", []):
         a, hz = h["asset"], h["horizon"]
         out["prediction"].append({
@@ -327,7 +359,8 @@ def lines(inp: dict, ctx: dict, digest: str, base: dict[str, dict]) -> dict[str,
             "readings": {**ctx["calc_values"].get(a, {}), **hand_values,
                          **{st: r["value"] for st, r in (stock_readings.get(a) or {}).items()}},
             "used": list(h.get("used", [])), "decisive": list(h.get("decisive", [])),
-            "reason": str(h["reason"]), "knowledge": digest, "confidence": h["confidence"]})
+            "reason": str(h["reason"]), "knowledge": digest, "confidence": h["confidence"],
+            "layer": info_of(h, pieces) or "기타"})
     for rv in inp.get("reviews", []):
         out["review"].append({"id": f"review:{rv['prediction']}", "run": day, "prediction": rv["prediction"],
                               "wrong": list(rv.get("wrong", [])), "why": rv["why"], "reason": str(rv["reason"])})

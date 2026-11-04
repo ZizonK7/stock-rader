@@ -5,22 +5,22 @@
 
 | 파일 | 하는 일 | 명령 (저장소 루트) |
 |---|---|---|
-| `config.py` | 대상·수수료·기간·시각·경로, 판단 시각(07:37 KST), 맞추기 끝 날짜(`FIT_UNTIL` 2026-06-30), 재생 기간, 대상의 성질(`TRAITS`, 종목 `STOCK_TRAITS`), 진짜 계좌 id, 조사 조각 세운 날(`RESEARCH_SINCE`), 잡음 기준, 종목 장치(`STOCK_MAX_WEIGHT`·`STOCK_MAX_COUNT`), 종목 비교군 수(`STOCK_CONTROL_MIN`). `ASSETS[코드]`는 종목 코드면 종목 명세를 만든다(반복·`in`에는 세 대상만) | – |
+| `config.py` | 대상·수수료·기간·시각·경로, 판단 시각(07:37 KST), 맞추기 끝 날짜(`FIT_UNTIL` 2026-06-30), 재생 기간, 대상의 성질(`TRAITS`, 종목 `STOCK_TRAITS`), 진짜 계좌 id, 조사 조각 세운 날(`RESEARCH_SINCE`), 잡음 기준, 종목 장치(`STOCK_MAX_WEIGHT`·`STOCK_MAX_COUNT`), 종목 비교군 수(`STOCK_CONTROL_MIN`), 다음 일봉 날짜(`next_bar`). `ASSETS[코드]`는 종목 코드면 종목 명세를 만든다(반복·`in`에는 세 대상만) | – |
 | `stocks.py` | 종목 목록(`stocks.toml`) 읽기·검사·더하기, 종목 시세 받기(네이버 차트, 받은 이름 확인, 처음이면 최근 600줄) | `python -m market.stocks [add <코드> <이름> "<왜>"]` |
 | `prices.py` | 시세 받기(네이버·야후·업비트, 시간 제한 30초)·덧붙이기·읽기, `view`(그 시각에 끝나 있던 일봉만) | `python -m market.prices update / backfill / show` |
 | `records.py` | 기록 종류별 칸(있을 때만 보는 칸 `OPTIONAL` 포함), 쓰기(칸이 틀리면 아무것도 안 씀), 검사(칸·id·날짜 순서·git HEAD와 비교) | `python -m market.records check` |
-| `ledger.py` | 계좌: 목표 비중 → 주문, 체결(정산), 평가, 기록에서 되살리기(`rebuild`). `target_weight` = R_weights | – |
-| `scoring.py` | 채점(방향·확률 점수·크기), 기준선 예측(기저율), 모아 보기, **한 번만 세기**(`first_only`, `mark_counted`), 평소 움직임·잡음 | – |
+| `ledger.py` | 계좌: 목표 비중 → 주문, 체결(정산), 평가, 기록에서 되살리기(`rebuild`). `target_weight` = R_weights_v2(계산기 계좌), `target_weight_v1` = 재생이 쓴 R_weights v1 | – |
+| `scoring.py` | 채점(방향·확률 점수·크기), 기준선 예측(기저율 `base_rate`, 알려진 전체 비율 `all_rate`), 모아 보기, **한 번만 세기**(`first_only`, `mark_counted`), 평소 움직임·잡음 | – |
 | `pieces.py` | 가격으로 대 보는 상태 7개(예/아니오/모름)와 대 보기 숫자(`vol250` 등), 맞추기용 시점별 `vol250_series` | – |
-| `calc.py` | 계산기: 대 보기 값 → 오를 확률·움직임 범위·결론·결론을 바꾸는 조각. 지식 파일 지문(`digest`, 줄바꿈 LF로 맞춤) | `python -m market.calc [날짜]` (보여 주기만) |
-| `fit.py` | 조각의 숫자를 `FIT_UNTIL`까지의 시세로 기계적으로 맞추고 knowledge.toml 구역을 다시 씀. 주장에 더한 조건(`also`), 흔들림 배수 기준값(`scale = "vol250"`) 지원 | `python -m market.fit [--write]` |
+| `calc.py` | 계산기: 대 보기 값(+ 판단 때 가격) → 오를 확률·움직임 범위·결론·결론을 바꾸는 조각·답한 층(`layer`), 출발점 조각 식(`start_p`), 참고 칸(`analog`). 지식 파일 지문(`digest`, 줄바꿈 LF로 맞춤) | `python -m market.calc [날짜]` (보여 주기만; 판단 때 가격은 안 넘김) |
+| `fit.py` | 조각의 숫자를 `FIT_UNTIL`까지의 시세로 기계적으로 맞추고 knowledge.toml 구역을 다시 씀. 주장에 더한 조건(`also`), 흔들림 배수 기준값(`scale = "vol250"`), 맞추지 않는 고정값(`fixed = true`) 지원 | `python -m market.fit [--write]` |
 | `replay.py` | 날짜 순서 재생 → `records/replay/`(1단계, 한 번 돌림), 보고 표 | `python -m market.replay report` |
 | `versions.py` | 이전 버전 조각 모음 떠 두기·목록·검사, active 버전의 조각 | `python -m market.versions [save <id> "<왜>"]` |
-| `research.py` | 볼 곳 목록(`places.toml`), 오늘 조사 질문, 볼 곳 성적표, 다시 볼 손 대 보기, 새 곳 시도 몫 | `python -m market.research places / questions [날짜]` |
+| `research.py` | 볼 곳 목록(`places.toml`), 오늘 조사 질문(씨앗 상태는 `seed_states`·표시 `SEED_MARK`), 볼 곳 성적표, 다시 볼 손 대 보기, 새 곳 시도 몫 | `python -m market.research places / questions [날짜]` |
 | `hand.py` | 메인 입력(조사·손 대 보기·손 예측·비중·돌아보기·다시 보기·정정) 검사 → 기록 줄 | (daily가 부른다) |
 | `daily.py` | **매일 실행**: prepare(시세→정산→채점→돌아볼 목록→조사 질문, 틀) / record(검사 후 한 번에 덧붙임) / report | `python -m market.daily prepare / record <입력> / report [--check]` |
 | `report.py` | 일지·주간 결산 뼈대(숫자는 기록에서, 말은 `[[채울 것]]` 자리) | (daily가 부른다) |
-| `checks.py` | 논리집 자동 검사(CHECKS·SOURCE·SEEN_UNTIL, 재생·실측 따로)와 분야 점검(AUDIT) | (logic이 부른다) |
+| `checks.py` | 논리집 자동 검사(CHECKS·SOURCE·SEEN_UNTIL, 재생·실측 따로; `layer_vs_baselines` 포함)와 분야 점검(AUDIT: 조각 수 상한 넷, 고정값·출발점 주장 모양, 은퇴 후보 경고 등) | (logic이 부른다) |
 | `logic.py` | PROVISO 코어(schema·score·audit)를 불러 이 논리집을 검사 | `python -m market.logic validate / check / audit` |
 
 ## 결정과 이유
@@ -30,20 +30,31 @@
 - **prepare는 기록을 쓰지 않는다.** 계산(정산·채점)은 prepare와 record가 같은 함수(`daily.compute`)로 다시 한다. record는 모두 검사한 뒤 한 번에 덧붙인다(하나라도 틀리면 아무것도 안 씀). 같은 날 두 번 쓰지 않는다.
 - **한 번만 세기**(결정 1): 예측은 매일 적고, 채점·성적표는 같은 (예측기·대상·기간·기준 날짜) 중 **처음 말한 것**만 센다. 고르는 규칙이 결과를 보기 전에 정해지고, 나중 것을 고르면 더 본 뒤의 말에 무게가 쏠려서다. 새 채점 줄은 `counted` 칸을 단다. 재생 기록도 검사(`checks`)에서는 같은 규칙으로 센다.
 - **계산기** (PROVISO agent_usage `predict.py`와 같은 모양): 오를 확률의 승산 = 기준 × 켜진 곱하기들. 범위는 로그 반폭을 제곱합 제곱근으로 합치고 2배 폭을 넘으면 가운데 둘레로 자른다. 기준값이 없으면 '모름'. 설명에는 빼면 결론이 바뀌는 조각만.
+- **층 구조**(2026-11-04, 규칙 `R_layer_v0`, 분석 보고서 docs/worklog/2026-11-04-calc-analysis.md): 방향은 ① 출발점 → ② 조각(곱하기) → ③ 동전 순서로 답한다. 같은 스위치 지난 날은 확률에 쓰지 않고 참고 칸에만 적는다. 예측 줄 `layer` = `Result.layer()`(출발점 / 조각 — 오를 확률이든 움직임이든 곱하기가 하나라도 걸림 / 동전 — 고정 기준값만 / 기준값 — 맞춘 기준값만, 이전 버전 모음 / 모름).
+  - **동전 기준값**(`C_base_coin`): 오를 확률 기준값은 효과 칸 `fixed = true`, range [1, 1](승산 1 = 50%). 까닭: 맞춘 절편은 '맞춘 기간의 평균'인데 오른 비율은 국면마다 바뀌어, 홀드아웃 791번에서 동전보다 +0.021 나빴다. `fit`은 고정값 주장을 맞추지 않고 모든 대상·기간에 그 range를 적는다(`--write`를 다시 돌려도 그대로). 곱하기는 예전처럼 절편과 함께 맞춘다(곱하기 숫자는 '켜진 날 승산 ÷ 안 켜진 날 승산'이라 기준을 고정해도 뜻이 같다). audit는 고정값 효과를 주장에 적은 range와 견준다.
+  - **출발점 조각**(`C_started_move`, 주장 `op = "start"`, 효과 숫자 없음, fit 구역 밖): `calc.start_p` — z = ln(판단 때 가격 ÷ 기준 종가) ÷ (vol60 × √(남은 분 ÷ 1440)), p = Φ(z)(`statistics.NormalDist`). 남은 시간 = 목표 봉이 끝나는 시각(`config.final_dt(next_bar(기준 날짜))`) − 판단 때 가격의 시각, 아래 끝 10분(`START_MIN_MINUTES`). 걸리는 곳은 판단 때 가격이 있는 대상의 첫 기간뿐(지금 코인 1봉). 판단 때 가격이 기준 봉이 끝나기 전 것이면(늦은 실행에서 기준 봉이 바뀐 경우) 걸지 않는다. 걸리면 오를 확률은 이 값이 기준값·곱하기 대신이고(p_range null), 움직임은 그대로. `daily.compute`가 `decision_of(ticker)`로 넘기고, 재생·`calc` 명령은 넘기지 않는다. 남은 시간을 판단 시각(record 시각) 대신 가격의 시각으로 재는 까닭: 가격을 받은 뒤의 움직임은 모르는 몫이라서다.
+  - **참고 칸**(`calc.analog`, 확률에 쓰지 않음): 같은 대상 최근 750봉에서 시세 상태 7개가 오늘과 모두 같고 `t + 기간 ≤ 오늘 기준 봉`(목표 봉이 판단 때 이미 끝남)인 날들의 {n, runs, eff, up_rate}. 값에 '모름'이 있거나 후보가 없으면 null. `pieces.read`를 창마다 부르되 마지막 251개 종가로 기억해 둔다(`_READ_MEMO`). 쌓는 까닭: R_layer_v0 8 '참고 칸이 판정 두 번 연속 동전보다 나으면 검토'.
 - **맞추기**: 오를 확률은 로지스틱 회귀, 움직임은 log|수익률| 최소제곱. 겹치는 기간 표본이라 표준오차 × √기간. 범위 = 값 ± 표준오차. 방향이 어긋나거나 1을 넘나들면, 폭이 2배를 넘으면, 곱하기 수가 유효 표본 ÷ 10을 넘으면 세우지 않는다. 이전 버전(retired) 조각은 맞춘 기록(effect·fit·not_set)을 지우지 않는다.
 - **움직임 기준값 = 최근 흔들림의 배수**(2026-11-03, `C_base_vol`, 이유 틀림 → 새 버전): 기준값 주장에 `scale = "vol250"`이 있으면 `fit.fit_one`이 움직임 표본을 그때의 '최근 250봉 하루 변동성 × √기간'(`Samples.units`, `pieces.vol250_series`)으로 나눈 배수로 맞추고(그 대상·기간의 곱하기들도 같은 배수 위에서), 효과에 `scale`을 적는다. `calc.predict(…, numbers)`가 판단 때의 `vol250` × √기간 × 100을 곱해 %로 바꾼다(`Result.unit`). 숫자가 없으면 움직임은 '모름'. 크기 등급(작음/보통/큼)은 배수끼리 비교한다. 까닭: 하루 변동성은 해마다 두 배까지 바뀌는데(한국 묶음 맞춘 기간 전체 1.34% vs 2026 최근 250봉 2.86–3.87%) 고정 크기 기준값은 그걸 못 따라가 기준선(최근 250봉)보다 크기를 못 맞혔다. 이전 버전 모음(v1–v3)은 scale이 없어 그대로 계산된다.
 - **손 예측 검사**(`hand.py`): 쓴 조각의 값은 그날 대 본 값과 같아야 하고, 크기 범위 폭 2배 이하, 이유·확신도 필수, 비중 합 1 이하. '잡음'은 움직임이 평소(60봉 하루 변동성 × √기간)의 0.25배보다 작을 때만. 상태에 `answers`가 있으면 손 대 보기 값은 그 안에서만(2026-11-03, 값 기준 상태에 '일부' 금지).
 - **조사 질문은 조사 조건 모두**(2026-11-03, `research.research_states`): 살아 있는 조사 조각의 첫 조건만이 아니라 `read_by = "조사"`인 조건을 다 묻는다. 쪼개며 더한 조건(`also`)도 매일 기록돼야 `checks._holds`가 그 조건을 본다.
 - **조사 조각 성적표**(`checks.research_direction`, 2026-11-03): 예/아니오가 아니라 빠진 값(일부·모름·안 물음)의 수를 세부에 보인다('시험 전'의 까닭). 종목마다 대 보는 조각은 종목을 한 칸(`checks.POOLED`)으로 묶어 같은 날의 '예' 종목과 '아니오' 종목을 견준다. **종목 비교군**: 그 상태에 '예' 종목이 있는 날은 '아니오' 종목 `config.STOCK_CONTROL_MIN`개 이상(`hand.validate`가 막는다, 틀 `_stock_control`이 고르는 순서를 준다). 비교군은 손 예측·비중 없이 대 보기만 적어도 focus에 들어가 계산기('모름')·기준선 줄이 생긴다.
-- **판단 때 가격**(결정 3): prepare가 07:37 업비트 현재가를 받아 run 기록과 briefing에 남기고, 주문 수량을 잡는 데 쓴다. 채점 기준(끝난 일봉 종가)은 그대로.
-- 예측 기록의 `predictor`: `calc` / `hand` / `version:<id>` / `baseline:half` / `baseline:base_rate`.
+- **판단 때 가격**(결정 3): prepare가 07:37 업비트 현재가를 받아 run 기록과 briefing에 남기고, 주문 수량을 잡는 데 쓴다. 채점 기준(끝난 일봉 종가)은 그대로. 2026-11-04부터 출발점 조각의 입력이기도 하다.
+- 예측 기록의 `predictor`: `calc` / `hand` / `version:<id>` / `baseline:half` / `baseline:base_rate` / `baseline:all`(2026-11-04, `scoring.all_rate`: 판단 때 끝난 전체 시세에서 h봉 수익률이 오른 비율, 크기는 전체의 2배 폭 창, 표본 30개 미만이면 없음 — 옛 계산기 기준값과 같은 성질이라 '동전으로 바꾼 것'이 맞았는지 나란히 본다. 세 대상과 종목 모두).
+- **계산기 계좌 비중 R_weights_v2**(2026-11-04, `ledger.target_weight`): 1/3 + (p − 0.5) × 4/3, 0~0.5, 모름이면 1/3 — 손 계좌 규칙과 같다. v1(`target_weight_v1`, p = 0.5에서 1/6)은 '모름'이 현금 = '내린다' 내기가 되어 은퇴했고, 재생 코드만 v1을 쓴다. `checks.account_vs_equal(node_id)`는 규칙의 `seen_until` 뒤 첫 계좌 기록부터 늘어난 비율을 견준다(한 계좌를 새 버전이 물려받아도 그 버전 몫만 보이게; v1 판정은 예전과 같다).
+- **손 예측 `info`**(2026-11-04, `hand.INFO`): 결론을 정한 것 조각 / 출발점 / 기타. decisive가 비면 필수, '조각'은 decisive가 있을 때만. 기록의 손 예측 `layer` = info, 비었으면 decisive에서(출발점 조각뿐이면 '출발점', 아니면 '조각'; `hand.info_of`). 까닭: 손 1봉 45개 중 41개가 조각 없이 판단 때 정보로 정했는데 기록에 그 사실이 없었다.
+- **씨앗 조각**(2026-11-04, 조사 조각에 `seed = true`): 정식 조사 조각 상한 6에 세지 않고 따로 12(`checks.MAX_SEED_PIECES`), 근거 강도는 '낮음'이어야 한다(audit 오류). 씨앗만 쓰는 상태(`research.seed_states`)는 질문 앞에 `[씨앗: …]` 표시가 붙고, 틀의 `readings`에 넣지 않고 `_seed_readings`로 안내하며, `hand.validate`가 값 없음을 허용한다. `checks.research_direction`은 값 없음을 '안 물음'으로 센다. 상태의 `answers`에 예/아니오 말고 셀 수 있는 답(예: 오름/내림)이 있으면 `_holds`가 그 값 그대로 주장의 `when`과 견준다. 정식 조각이 세운 뒤 30 판단일(`RETIRE_AFTER_RUNS`)이 지나도 '시험 전'이면 audit 경고 '은퇴 후보'(은퇴는 메인이 돌아보기에서).
+- **방향 시험 판정**(2026-11-04, `checks._verdict`): 칸마다 조건 있음·없음이 각각 5**구간**(`MIN_SIDE_RUNS`; 같은 값이 이어진 날들 — 값이 바뀌거나 모름이 끼거나 7일(`GAP_DAYS`) 넘게 벌어지면 새 구간, 종목을 묶은 칸은 종목마다) 이상이어야 센다. 동점은 세지 않는다(세부에 '동점'). 까닭: 한 국면 19일이 관찰 19개로 세어져 하루 차이로 판정이 뒤집혔고, 동점이 '틀림'으로 세어졌다.
+- **`hand_vs_calc` 세부**(2026-11-04): 판정 규칙은 그대로이고, 세부에 대상·기간별 확률 점수와 '판단 때 가격을 적는 대상의 1봉을 뺀 값'을 같이 보인다(지지가 그 칸에서 나왔다).
+- **`layer_vs_baselines`**(2026-11-04, `C_started_move`·`R_layer_v0`에 닮): 노드의 seen_until 뒤 기준 날짜의 계산기 예측(한 번만 세기)을 대상·기간마다 동전(0.25)·최근 250봉·전체 기준선·손과 견준다. 1봉은 기준 날짜 60개, 그 밖은 겹치지 않는 표본(기간마다 하나) 12개가 모일 때마다 한 번, '계산기 − 동전'의 20일 덩어리 부트스트랩 90% 구간(1,000번, 씨앗 고정)이 0 아래면 지지·위면 반박·걸치면 모름. 출발점 조각에 달면 layer = 출발점인 칸만 본다. 크기 비교와 참고 칸의 확률 점수는 아직 계산하지 않는다.
+- **계산 조각 상한 8은 숫자를 맞추는 조각만 센다**(2026-11-04, `checks.fitted_claims`): 상한의 까닭이 '맞춘 숫자가 많으면 외워서 맞추는 쪽'이라, 미리 정한 식(출발점)은 그 위험이 없다.
 - **개별 종목**(2026-10-29, 루트 CLAUDE.md '개별 종목'): 종목은 `config.is_stock`(6자리 코드, 세 대상 아님), kind `stock`, ETF와 같은 끝남·체결 시각(`config.on_exchange`). `daily.compute`가 목록 + 기록에 나온 종목의 시세를 읽어 정산·채점·평가하고, 손 계좌가 든 종목과 그날 입력에 나온 종목(focus)만 시세 대 보기·계산기('모름')·기준선 둘 줄을 쓴다(이전 버전 줄은 없음). 계산기 계좌·셋 나눠 사 두기는 세 대상만. 정산의 시간 순서는 세 대상 + 그 계좌가 기다리는 종목만 본다(다른 종목 시세가 늦어도 막히지 않게). 종목 주문은 가까운 주 수(상한 + 5%p를 넘으면 내림, `ledger.STOCK_SLACK`). 계좌 기록의 보유 칸에는 세 대상(늘)과 든 종목, 평가 가격에는 세 대상과 든·기다리는 종목. `hand.validate`가 종목 장치(상한·결론 조각·든 종목 매일 예측)와 종목마다 대 보는 조사 상태(`per_asset`, 입력 `stock_readings` → 기록 `hand_reading.by_asset`)를 검사한다. `checks`: 계산 조각 시험은 세 대상만, `research_direction`은 by_asset을 그 종목의 결과와 짝짓고 종목을 한 칸으로 묶음(2026-11-03), audit는 종목 이름·코드를 조각 문장에서 막고 종목 조각(상한 3, scope single)을 따로 센다.
 
 ## 규칙
 - 모든 네트워크 호출에 시간 제한(`config.NET_TIMEOUT` 30초). 네이버는 User-Agent가 없으면 응답 없이 걸린다(`prices.UA`).
 - 기록은 `records.write`로만 쓴다(덧붙이기). 매일 실행의 기록은 `daily.record`로만 쓴다. 지난 줄을 고치는 코드를 만들지 않는다.
 - 조각 id·문장에 대상 이름을 넣지 않는다(`config.ASSET_WORDS`, audit 오류). 조사 조각의 주장 범위는 대상 이름 대신 성질(`config.TRAITS`)로.
-- knowledge.toml의 effect 숫자를 손으로 고치지 않는다(`fit --write`만, audit가 다시 맞춰 비교).
+- knowledge.toml의 effect 숫자를 손으로 고치지 않는다(`fit --write`만, audit가 다시 맞춰 비교). 고정값을 바꾸려면 주장의 range를 바꾸고(새 버전으로) `fit --write`.
 - 기본 저장소에서 `daily`에 `--day`/`--at`을 쓰지 못한다(지난 날짜로 예측하지 않는다). 흉내 내기는 `--root <임시 폴더>`(`daily.copy_for_simulation`).
 
 ## 다른 폴더와의 관계

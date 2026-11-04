@@ -17,6 +17,9 @@
   범위가 주장한 방향과 어긋나거나 1을 넘나듦(값이 표준오차 하나 안쪽) → '방향이 데이터와 안 맞음'.
   범위 폭이 상한(2배)을 넘음 → '너무 불확실'. 곱하기 수가 유효 표본 ÷ 10을 넘음 → 가장 약한 것부터 뺀다.
   기준값 범위가 상한을 넘으면 그 대상·기간은 '모름'(계산기가 지어내지 않는다).
+- 고정값(2026-11-04): 주장에 fixed = true와 range가 있으면 맞추지 않는다. 모든 대상·기간에 그 range를 효과로 적고(fixed = true),
+  맞춘 값으로 덮어쓰지 않는다(C_base_coin의 오를 확률 기준값 = 승산 1.0, 동전). 곱하기는 예전처럼 절편과 함께 맞춘다 —
+  곱하기 숫자는 '그 조각이 켜진 날의 승산 ÷ 켜지지 않은 날의 승산'이라 기준값을 고정해도 뜻이 같다.
 """
 from __future__ import annotations
 
@@ -144,6 +147,7 @@ class Claim:
     when: str | None = None
     also: tuple[tuple[str, str], ...] = ()   # 더한 조건(쪼갠 새 버전): 상태 id = 값이 모두 맞을 때만 켜진다
     scale: str | None = None                 # 기준값의 단위: None = %, "vol250" = 최근 250봉 하루 변동성 × √기간의 배수
+    fixed: tuple[float, float] | None = None  # 맞추지 않는 고정값 range (주장에 fixed = true, 2026-11-04)
 
 
 def claims_of(raws: list[dict]) -> list[Claim]:
@@ -153,9 +157,10 @@ def claims_of(raws: list[dict]) -> list[Claim]:
             continue
         conds = r.get("conditions", [])
         for c in r.get("claims", []):
+            fixed = (float(c["range"][0]), float(c["range"][1])) if c.get("fixed") and c.get("range") else None
             out.append(Claim(r["id"], c["on"], c.get("op", "mul"), c.get("reason", ""), c.get("dir"),
                              conds[0] if conds and c.get("op", "mul") != "base" else None, c.get("when"),
-                             tuple(sorted((c.get("also") or {}).items())), c.get("scale")))
+                             tuple(sorted((c.get("also") or {}).items())), c.get("scale"), fixed))
     return out
 
 
@@ -327,13 +332,17 @@ def effects_for(raw: dict, fitted: list[Fitted], claims: list[Claim]) -> tuple[l
     """조각 하나의 effect 목록, fit 설명, not_set 목록."""
     pid = raw["id"]
     mine = [c for c in claims if c.piece == pid]
-    effs, made, notset = [], [], []
+    effs, made, notset, fixed = [], [], [], []
     for f in fitted:
         for c in mine:
             if c.on != f.on:
                 continue
             tag = f"{f.asset}:{f.horizon}"
-            if c.op == "base":
+            if c.op == "base" and c.fixed:  # 맞추지 않는 고정값: 맞춘 결과와 상관없이 주장의 range 그대로
+                effs.append({"on": c.on, "op": "base", "range": list(c.fixed), "asset": f.asset, "horizon": f.horizon,
+                             "fixed": True, "reason": c.reason})
+                fixed.append(tag)
+            elif c.op == "base":
                 if f.base:
                     effs.append({"on": c.on, "op": "base", "range": list(f.base), "asset": f.asset, "horizon": f.horizon,
                                  **({"scale": c.scale} if c.scale else {}), "n": f.n, "reason": c.reason})
@@ -350,6 +359,8 @@ def effects_for(raw: dict, fitted: list[Fitted], claims: list[Claim]) -> tuple[l
     total = len(made) + len(notset)
     text = f"목표 종가 {C.FIT_UNTIL} 이하 시세에서 맞춤: 세움 {len(made)}/{total}" + (
         f" ({', '.join(made)})" if made else "")
+    if fixed:
+        text += f"; 맞추지 않는 고정값 {len(fixed)}칸"
     return effs, text, notset
 
 
@@ -431,14 +442,20 @@ def show(fitted: list[Fitted]) -> str:
     return "\n".join(lines)
 
 
+def fixed_note(claims: list[Claim]) -> str:
+    fx = [f"{c.piece} {c.on} [{c.fixed[0]:g}, {c.fixed[1]:g}]" for c in claims if c.op == "base" and c.fixed]
+    return ("\n고정값(맞추지 않음, 모든 대상·기간): " + "; ".join(fx)
+            + " — 위 '기준'의 그 값 쪽 숫자는 맞춘 절편을 보여 주기만 하고 쓰지 않는다") if fx else ""
+
+
 def main(argv: list[str]) -> int:
+    claims = claims_of(block_raws())
     if "--write" in argv:
         fitted = write()
-        print(show(fitted))
+        print(show(fitted) + fixed_note(claims))
         print("\nknowledge.toml 계산 조각 구역을 다시 썼다")
     else:
-        raws = block_raws()
-        print(show(fit_all(PR.load_all(), claims_of(raws))))
+        print(show(fit_all(PR.load_all(), claims)) + fixed_note(claims))
     return 0
 
 

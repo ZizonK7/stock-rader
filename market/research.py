@@ -6,6 +6,8 @@
 
 - 조사 질문은 논리집이 정한다: 살아 있는 조사 조각(read_by = "조사")의 조건 상태마다 질문 하나(상태의 ask),
   그리고 각도마다 열린 질문 하나("오늘 이 각도에서 판단을 바꿀 새 일이 있나" — 빠진 조각을 찾으려고).
+- 씨앗 조각(2026-11-04, 조각에 seed = true): 씨앗만 쓰는 상태는 '오늘 물을지 메인이 정하는 질문'이다(seed_states).
+  관련 있는 날만 묻고 대 본다. 안 물은 날은 손 대 보기에 값이 없고, 성적표는 '안 물음'으로 센다.
 - 볼 곳 성적(코드가 기록에서 계산): 다룬 질문 수, 본 횟수, 찾음/없음/늦음/막힘, 새로 시도한 횟수,
   그곳 정보로 한 대 보기를 나중에 다시 봤을 때 맞은 비율(reading_check), 판단 뒤에야 나와 늦었던 횟수(늦음 + reading_check.late).
 - 새 곳 시도 몫: 각도마다 하루 한 곳 이상은 목록에 없거나 최근 14일 안 본 곳을 시도한다(쓰던 곳만 보면 그곳이 좋아서인지
@@ -27,6 +29,8 @@ NEW_PER_ANGLE = 1        # 각도마다 하루에 새로 시도할 곳 수 (최�
 FRESH_DAYS = 14          # 이만큼 안 본 곳은 다시 봐도 '새 곳'으로 친다
 SUGGEST = 3              # 질문마다 추천하는 볼 곳 수 (성적 순)
 CHECK_AFTER_DAYS = 7     # 손 대 보기를 이만큼 지난 뒤 다시 본다(reading_check)
+# 씨앗 상태 질문 앞 표시: 오늘 물을지 메인이 정한다. 안 물으면 이 질문 줄을 research에서 지우고 readings에도 넣지 않는다(안 물음)
+SEED_MARK = "[씨앗: 관련 있는 날만 — 안 물으면 이 줄을 지운다] "
 
 
 # ---------- 볼 곳 ----------
@@ -72,6 +76,14 @@ def research_pieces(raw: dict) -> list[tuple[dict, dict]]:
         if conds and conds[0] in states:
             out.append((h, states[conds[0]]))
     return out
+
+
+def seed_states(raw: dict) -> set[str]:
+    """씨앗 조각(seed = true)만 쓰는 조사 상태 id. 정식 조사 조각이 하나라도 쓰는 상태는 매일 묻는다(여기 들지 않는다)."""
+    seed, formal = set(), set()
+    for h, _ in research_pieces(raw):
+        (seed if h.get("seed") else formal).update(h.get("conditions") or [])
+    return seed - formal
 
 
 def research_states(raw: dict, per_asset: bool | None = None) -> list[dict]:
@@ -150,6 +162,7 @@ def table(cards: dict[str, dict]) -> str:
 def questions(day: dt.date, raw: dict, places: list[dict], cards: dict[str, dict]) -> list[dict]:
     """그날 조사 질문: 조사 상태마다 하나 + 각도마다 열린 질문 하나."""
     pieces = research_pieces(raw)
+    seeds = seed_states(raw)
     out = []
     for st in research_states(raw):
         users = [h["id"] for h, _ in pieces if st["id"] in (h.get("conditions") or [])]
@@ -158,8 +171,10 @@ def questions(day: dt.date, raw: dict, places: list[dict], cards: dict[str, dict
         ask = st.get("ask", st["text"])
         if st.get("per_asset"):
             ask = "[종목마다] " + ask + " (손 계좌가 든 종목과 살 후보 종목마다 따로 답한다)"
+        if st["id"] in seeds:
+            ask = SEED_MARK + ask  # 조사 기록의 asked는 300자 안이어야 한다 — 표시는 짧게
         out.append({"question": f"q:{day.isoformat()}:{st['id']}", "state": st["id"], "angle": st.get("angle", ""),
-                    "asked": ask, "pieces": users,
+                    "asked": ask, "pieces": users, "seed": st["id"] in seeds,
                     "suggest": [p["id"] for p in cand[:SUGGEST]]})
     for ang in ANGLES:
         cand = [p for p in places if p.get("angle") == ang]

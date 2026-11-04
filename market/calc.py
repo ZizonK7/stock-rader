@@ -11,6 +11,14 @@
 - 움직임 기준값에 scale = "vol250"이 있으면(2026-11-03, C_base_vol) 범위는 '최근 250봉 하루 변동성 × √기간'의 배수다.
   합친 범위에 판단 때의 그 값(대 보기 숫자 vol250, %로)을 곱한다. 숫자가 없으면 움직임은 '모름'(지어내지 않는다).
 - 결론 = (방향 쪽, 확신도, 크기 등급). 설명에는 빼면 결론이 바뀌는 조각만 남긴다(기준값은 늘 남긴다).
+- 방향 기본값은 동전이다(2026-11-04, C_base_coin): 오를 확률 기준값은 맞추지 않는 고정값 승산 1.0(효과 칸 fixed = true).
+  곱하기 조각이 켜지면 그 값에서 움직인다. 이전 버전 모음(v1–v4)은 맞춘 절편을 그대로 쓴다.
+- 출발점 조각(2026-11-04, C_started_move, 주장 op = "start"): 판단 때 가격이 있는 대상의 첫 기간(1봉)은, 판단 때 가격이
+  기준 종가에서 이미 움직인 몫으로 오를 확률을 낸다 — p = Φ(ln(판단 때 가격 ÷ 기준 종가) ÷ (vol60 × √(남은 시간 ÷ 1일))), 0.10–0.90으로 자름.
+  미리 정한 식이고 맞추지 않는다. 걸리면 그 칸의 오를 확률은 기준값·곱하기 대신 이 값이다(움직임 범위는 그대로).
+- layer(답한 층): 출발점 / 조각(곱하기가 하나라도 걸림) / 동전(고정 기준값만) / 기준값(맞춘 기준값만, 이전 버전) / 모름.
+- analog(참고 칸, 확률에 쓰지 않는다): 같은 대상 최근 750봉 안에서 시세 상태 7개가 오늘과 모두 같고 목표 봉이 이미 끝난 날들의
+  수·이어진 구간 수·유효 수·오른 비율.
 """
 from __future__ import annotations
 
@@ -21,6 +29,7 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from statistics import NormalDist
 
 from . import config as C
 from . import pieces as P
@@ -28,6 +37,14 @@ from . import prices as PR
 
 MAX_RATIO = 2.0
 SIDE = {1: "오른다 쪽", -1: "내린다 쪽", 0: "반반"}
+# 출발점 조각: 남은 시간의 아래 끝(분). 목표 봉이 거의 끝났을 때 0으로 나누거나 확률이 0·1로 굳는 것을 막는다.
+# 10분은 판단 때 가격(업비트 현재가)을 받고 기록하기까지 걸리는 시간보다 짧은, 미리 정한 값이다(기록에서 고르지 않았다)
+START_MIN_MINUTES = 10.0
+# 출발점 확률의 양 끝(메인 결정 2026-11-04, 시험 전에 정함): 식은 정규분포를 가정하는데 이 분야는 큰 움직임이 정규보다 5–8배 잦다
+# (분석 보고서 E2). 0.998 같은 극단 확률이 한 번 빗나가면 확률 점수가 1에 가깝게 깎이므로 0.10–0.90으로 자른다. 기록에서 고른 값이 아니다
+START_P_MIN = 0.10
+DAY_MINUTES = 1440.0
+ANALOG_WINDOW = 750   # 참고 칸 창: 최근 3년(250봉 × 3). 분석 보고서 E의 '같은 대상 · 3년' 층과 같은 창
 
 
 @dataclass(frozen=True)
@@ -43,6 +60,7 @@ class Effect:
     dir: str | None = None
     reason: str = ""
     scale: str | None = None  # 기준값의 단위: None = %, "vol250" = 최근 250봉 하루 변동성 × √기간의 배수
+    fixed: bool = False       # 맞추지 않는 고정값(2026-11-04, C_base_coin의 오를 확률 기준값 = 승산 1.0)
 
     @property
     def center(self) -> float:
@@ -58,20 +76,26 @@ class Piece:
     text: str
     reason: str
     effects: list[Effect]
+    start: bool = False  # 출발점 조각(주장 op = "start"): 효과 숫자 없이 미리 정한 식으로 첫 기간의 오를 확률을 낸다
+
+
+def is_start(h: dict) -> bool:
+    """출발점 조각인가: 주장에 op = "start"가 있다 (숫자는 맞추지 않고 calc.start_p의 식으로 계산)."""
+    return any(c.get("op") == "start" for c in h.get("claims", []))
 
 
 def pieces_from(raw: dict) -> list[Piece]:
     out = []
     for h in raw.get("hypothesis", []) + raw.get("rule", []):
-        if h.get("status", "hypothesis") == "retired" or not h.get("effect"):
+        if h.get("status", "hypothesis") == "retired" or not (h.get("effect") or is_start(h)):
             continue
         effs = []
-        for e in h["effect"]:
+        for e in h.get("effect", []):
             when = tuple((k, v) for k, v in (e.get("when") or {}).items())
             effs.append(Effect(h["id"], e["on"], e["op"], float(e["range"][0]), float(e["range"][1]),
                                str(e["asset"]), int(e["horizon"]), when, e.get("dir"), e.get("reason", ""),
-                               e.get("scale")))
-        out.append(Piece(h["id"], h.get("text", h.get("method", "")), h.get("reason", ""), effs))
+                               e.get("scale"), bool(e.get("fixed", False))))
+        out.append(Piece(h["id"], h.get("text", h.get("method", "")), h.get("reason", ""), effs, is_start(h)))
     return out
 
 
@@ -100,6 +124,18 @@ def clamp(rng: tuple[float, float], max_ratio: float = MAX_RATIO) -> tuple[float
     return c / half, c * half
 
 
+@dataclass(frozen=True)
+class Start:
+    """출발점 조각이 낸 값 (판단 때 이미 일어난 움직임)."""
+    piece: str
+    p: float          # 오를 확률 = Φ(z)
+    z: float
+    gap: float        # ln(판단 때 가격 ÷ 기준 종가)
+    minutes: float    # 남은 시간(분, 아래 끝 START_MIN_MINUTES)
+    vol60: float      # 60봉 하루 변동성
+    on: str = "up_odds"
+
+
 @dataclass
 class Result:
     asset: str
@@ -110,13 +146,16 @@ class Result:
     base_move: Effect | None = None
     move_muls: list[Effect] = field(default_factory=list)
     unit: float = 1.0  # 움직임 범위에 곱할 값(%). 기준값이 흔들림의 배수면 판단 때의 '250봉 하루 변동성 × √기간 × 100'
+    start: Start | None = None  # 출발점 조각이 걸렸으면 그 값 — 오를 확률은 이 값이 기준값·곱하기 대신이다
 
-    def odds(self, skip: Effect | None = None) -> tuple[float, float] | None:
+    def odds(self, skip=None) -> tuple[float, float] | None:
         if not self.base_odds:
             return None
         return clamp(combine([(e.lo, e.hi) for e in [self.base_odds, *self.odds_muls] if e is not skip]))
 
-    def p_up(self, skip: Effect | None = None) -> float | None:
+    def p_up(self, skip=None) -> float | None:
+        if self.start is not None and skip is not self.start:
+            return self.start.p
         o = self.odds(skip)
         if not o:
             return None
@@ -124,19 +163,23 @@ class Result:
         return c / (1 + c)
 
     def p_range(self) -> list[float] | None:
+        if self.start is not None:
+            return None  # 출발점 값은 식 하나로 낸 점 하나다(맞춘 범위가 없다)
         o = self.odds()
         return [o[0] / (1 + o[0]), o[1] / (1 + o[1])] if o else None
 
-    def move(self, skip: Effect | None = None) -> tuple[float, float] | None:
+    def move(self, skip=None) -> tuple[float, float] | None:
         if not self.base_move:
             return None
         lo, hi = clamp(combine([(e.lo, e.hi) for e in [self.base_move, *self.move_muls] if e is not skip]))
         return lo * self.unit, hi * self.unit
 
-    def used(self) -> list[Effect]:
-        return [e for e in [self.base_odds, *self.odds_muls, self.base_move, *self.move_muls] if e]
+    def used(self) -> list:
+        """쓴 조각. 출발점이 걸리면 오를 확률은 그 값이라 기준값·곱하기의 오를 확률 쪽은 쓰지 않은 것이다."""
+        odds = [self.start] if self.start is not None else [self.base_odds, *self.odds_muls]
+        return [e for e in [*odds, self.base_move, *self.move_muls] if e]
 
-    def conclusion(self, skip: Effect | None = None) -> tuple[str, str, str]:
+    def conclusion(self, skip=None) -> tuple[str, str, str]:
         p = self.p_up(skip)
         if p is None:
             side, conf = "모름", "모름"
@@ -150,18 +193,33 @@ class Result:
             size = "작음" if ratio < 0.85 else "큼" if ratio > 1.18 else "보통"
         return side, conf, size
 
-    def decisive(self) -> list[Effect]:
-        """빼면 결론(방향 쪽·확신도·크기 등급)이 바뀌는 곱하기 조각."""
+    def decisive(self) -> list:
+        """빼면 결론(방향 쪽·확신도·크기 등급)이 바뀌는 조각: 곱하기와 출발점."""
         now = self.conclusion()
-        return [e for e in [*self.odds_muls, *self.move_muls] if self.conclusion(e) != now]
+        return [e for e in [self.start, *self.odds_muls, *self.move_muls] if e and self.conclusion(e) != now]
+
+    def layer(self) -> str:
+        """답한 층(2026-11-04, 예측 줄 layer 칸): 출발점 / 조각(곱하기가 하나라도 걸림) / 동전(고정 기준값만) /
+        기준값(맞춘 기준값만 — 이전 버전 모음) / 모름(오를 확률 기준값이 없음)."""
+        if self.start is not None:
+            return "출발점"
+        if self.p_up() is None:
+            return "모름"
+        if self.odds_muls or self.move_muls:
+            return "조각"
+        return "동전" if self.base_odds.fixed and abs(self.base_odds.center - 1.0) < 1e-12 else "기준값"
 
     def reason(self) -> str:
         p, m = self.p_up(), self.move()
         if p is None:
             head = "오를 확률: 모름(이 대상·기간의 기준값이 없다 — 지어내지 않는다)"
+        elif self.start is not None:
+            s = self.start
+            head = (f"오를 확률 {p:.1%} (출발점 '{s.piece}': 판단 때 가격이 기준 종가보다 {math.expm1(s.gap) * 100:+.2f}%, "
+                    f"목표 봉 끝까지 {s.minutes:.0f}분, 60봉 하루 흔들림 {s.vol60 * 100:.2f}% → z {s.z:+.2f}; 기준값·곱하기 대신)")
         else:
             base_p = self.base_odds.center / (1 + self.base_odds.center)
-            head = f"오를 확률 {p:.0%} (기준 {base_p:.0%}"
+            head = f"오를 확률 {p:.0%} (기준 {base_p:.0%}" + (" 고정" if self.base_odds.fixed else "")
             keep = set(map(id, self.decisive()))
             parts = [f"'{e.piece}' ×{e.center:.2f}" for e in self.odds_muls if id(e) in keep]
             head += (" → " + ", ".join(parts) if parts else "") + ")"
@@ -175,9 +233,35 @@ class Result:
         return f"{head}. 결론: {side}, 확신 {conf}, 크기 {size}"
 
 
+def start_p(asset: str, horizon: int, numbers: dict | None, decision: dict | None, piece: str) -> Start | None:
+    """출발점 조각의 값 (걸리지 않으면 None). decision = {price, time(판단 때 가격의 시각), base_date, base_close}.
+    걸리는 곳: 판단 때 가격이 있는 대상의 첫 기간(1봉). 판단 때 가격이 기준 봉이 끝나기 전 것이면(늦은 실행에서 기준 봉이
+    바뀐 경우) 이미 일어난 움직임이 아니므로 쓰지 않는다. 남은 시간 = 목표 봉이 끝나는 시각 − 판단 때 가격의 시각(아래 끝 10분)."""
+    if not decision or horizon != C.ASSETS[asset].horizons[0]:
+        return None
+    price, base_close = decision.get("price"), decision.get("base_close")
+    vol = (numbers or {}).get("vol60")
+    when, base_date = decision.get("time"), decision.get("base_date")
+    if not (isinstance(price, (int, float)) and price > 0 and isinstance(base_close, (int, float)) and base_close > 0
+            and isinstance(vol, (int, float)) and vol > 0 and when and base_date):
+        return None
+    when = when if isinstance(when, dt.datetime) else dt.datetime.fromisoformat(str(when))
+    base_date = base_date if isinstance(base_date, dt.date) else dt.date.fromisoformat(str(base_date))
+    spec = C.ASSETS[asset]
+    if when < C.final_dt(spec, base_date):
+        return None
+    end = C.final_dt(spec, C.next_bar(asset, base_date))
+    minutes = max((end - when).total_seconds() / 60, START_MIN_MINUTES)
+    gap = math.log(price / base_close)
+    z = gap / (vol * math.sqrt(minutes / DAY_MINUTES))
+    p = min(max(NormalDist().cdf(z), START_P_MIN), 1 - START_P_MIN)
+    return Start(piece, p, z, gap, minutes, vol)
+
+
 def predict(asset: str, horizon: int, values: dict[str, str], pieces: list[Piece],
-            numbers: dict[str, float] | None = None) -> Result:
-    """numbers: 대 보기 숫자(pieces.read). 움직임 기준값이 흔들림의 배수(scale = "vol250")일 때 vol250을 쓴다."""
+            numbers: dict[str, float] | None = None, decision: dict | None = None) -> Result:
+    """numbers: 대 보기 숫자(pieces.read). 움직임 기준값이 흔들림의 배수(scale = "vol250")일 때 vol250을,
+    출발점 조각이 vol60을 쓴다. decision: 판단 때 가격(있는 대상만, start_p)."""
     effs = [e for p in pieces for e in p.effects if e.asset == asset and e.horizon == horizon]
 
     def base(on: str) -> Effect | None:
@@ -196,7 +280,9 @@ def predict(asset: str, horizon: int, values: dict[str, str], pieces: list[Piece
             bm = None  # 흔들림 숫자가 없으면 움직임은 '모름'
     elif bm is not None and bm.scale:
         bm = None  # 모르는 단위
-    return Result(asset, horizon, values, base("up_odds"), muls("up_odds"), bm, muls("move"), unit)
+    starter = next((p.id for p in pieces if p.start), None)
+    start = start_p(asset, horizon, numbers, decision, starter) if starter else None
+    return Result(asset, horizon, values, base("up_odds"), muls("up_odds"), bm, muls("move"), unit, start)
 
 
 def record_fields(r: Result) -> dict:
@@ -210,7 +296,51 @@ def record_fields(r: Result) -> dict:
         "used": [f"{e.piece}:{e.on}" for e in r.used()],
         "decisive": [f"{e.piece}:{e.on}" for e in r.decisive()],
         "reason": r.reason(),
+        "layer": r.layer(),
     }
+
+
+# ---------- 참고 칸: 같은 스위치의 지난 날들 (확률에 쓰지 않는다) ----------
+_READ_MEMO: dict[tuple, dict] = {}
+
+
+def _reading_at(c: list[float], t: int) -> dict[str, str] | None:
+    """시점 t까지의 종가로 읽은 값 = pieces.read_series(c)[t]. 값은 마지막 251개 종가에만 기대므로 그 묶음으로 기억해 둔다
+    (매일 실행·시험이 같은 과거를 여러 번 읽지 않게)."""
+    if t + 1 < P.NEED:
+        return None
+    key = tuple(c[t + 1 - P.NEED: t + 1])
+    got = _READ_MEMO.get(key)
+    if got is None:
+        if len(_READ_MEMO) > 30_000:
+            _READ_MEMO.clear()
+        got = _READ_MEMO[key] = P.read(list(key))[0]
+    return got
+
+
+def analog(closes, horizons, values: dict[str, str], window: int = ANALOG_WINDOW) -> dict[int, dict | None]:
+    """기간마다 참고 칸 {n, runs, eff, up_rate} (후보가 없으면 None). 확률에 쓰지 않는다(분석 보고서 E1: 같은 스위치 층은
+    이 분야의 방향에서 동전·지난 날 전체 비율을 못 넘었다). 쌓아 두는 까닭: R_layer_v0 8 '참고 칸이 판정 두 번 연속 동전보다
+    나으면 검토'를 나중에 보려고.
+    - 후보: 같은 대상, 최근 window봉 안의 기준 봉 t 중 시세 상태 7개가 오늘(values)과 모두 같고 t + 기간 ≤ 오늘 기준 봉(마지막 줄)
+      — 목표 봉이 판단 때 이미 끝난 날만(미래 금지).
+    - runs = 이어진 구간 수(후보 봉 사이가 기간보다 벌어지면 새 구간), eff = n ÷ 기간(겹치는 기간을 거칠게 덜어 낸 유효 수),
+      up_rate = 후보의 기간 수익률이 오른 비율."""
+    c = list(closes)
+    last = len(c) - 1
+    if not values or any(v not in ("예", "아니오") for v in values.values()):
+        return {h: None for h in horizons}
+    lo = max(0, last + 1 - window)
+    out: dict[int, dict | None] = {}
+    for h in horizons:
+        cand = [t for t in range(lo, last - h + 1) if _reading_at(c, t) == values]
+        if not cand:
+            out[h] = None
+            continue
+        runs = 1 + sum(1 for a, b in zip(cand, cand[1:]) if b - a > h)
+        ups = sum(c[t + h] > c[t] for t in cand)
+        out[h] = {"n": len(cand), "runs": runs, "eff": round(len(cand) / h, 2), "up_rate": round(ups / len(cand), 4)}
+    return out
 
 
 def main(argv: list[str]) -> int:
@@ -224,7 +354,9 @@ def main(argv: list[str]) -> int:
         print(f"\n{asset} — 마지막 일봉 {hist.last.date if hist.last else '없음'}")
         print("  대 보기: " + ", ".join(f"{k}={v}" for k, v in values.items()))
         for h in C.ASSETS[asset].horizons:
-            print(f"  {h}봉: {predict(asset, h, values, pieces, numbers).reason()}")
+            r = predict(asset, h, values, pieces, numbers)
+            print(f"  {h}봉 ({r.layer()}): {r.reason()}")
+    print("\n(출발점 조각은 판단 때 가격이 있어야 걸린다 — 매일 실행(daily)만 넘기므로 여기서는 1봉도 조각·동전 층으로 보인다)")
     return 0
 
 

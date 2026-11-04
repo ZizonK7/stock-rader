@@ -3,7 +3,7 @@
 ## 역할
 결과 전에 무엇을 말했는지 남기는 곳이다. 종류마다 `<종류>.jsonl` 파일 하나, 한 줄에 기록 하나(JSON). git 커밋 시각이 "결과 전에 말했다"는 증거다.
 
-- `records/*.jsonl`: 진짜 가상 계좌(1,000만 원) 기록 — **매일 예약 실행만 쓴다**(`python -m market.daily record`). 2026-10-21 현재 아직 없다. 첫 실행 날이 계좌 시작일이다.
+- `records/*.jsonl`: 진짜 가상 계좌(1,000만 원) 기록 — **매일 예약 실행만 쓴다**(`python -m market.daily record`). 첫 예약 실행 날(2026-10-21)이 계좌 시작일이다.
 - `records/replay/`: 2026-07-01~10-19 재생(계산기만, 홀드아웃) 한 번의 원본 출력. `summary.json`(모은 숫자), `report.md`(표). 해설은 [docs/replay-2026-07-10.md](../docs/replay-2026-07-10.md). **다시 돌리지 않고 고치지 않는다**(재생 명령이 폴더가 차 있으면 거절한다).
 
 ## 기록 종류와 칸 (코드 기준: `market/records.py`의 FIELDS·OPTIONAL·DESCRIBE)
@@ -14,8 +14,8 @@
 | `run` | 실행 한 번 | mode(replay / replay-score-only / live / missed = 빠진 날), steps(받기 결과, 판단 때 가격, 판단 시각, 건너뛴 대상, 수, 에이전트 수, 볼 곳 수 등), notes(메모·경고) |
 | `reading` | 시세 대 보기: 대상 하나의 조각 값 | asset, known_through(본 마지막 일봉 날짜), values(상태 id → 예/아니오/모름), numbers(계산에 쓴 숫자) |
 | `research` | 조사: 질문 하나 | question, state(대 볼 상태 id, 열린 질문이면 ''), angle, asked, answer(300자 이내 요약), looked(본 곳마다 place·result 찾음/없음/늦음/막힘·new·url·date·note), agent |
-| `hand_reading` | 손 대 보기(하루 하나) | values(조사 상태 → 예/아니오/일부/모름 또는 값), why(상태 → 이유), places(상태 → 쓴 볼 곳), research(근거 조사 id), (있으면) by_asset(종목 코드 → 종목마다 대 보는 상태 → {value, why, places}, 2026-10-29~; 2026-11-03부터 '예' 종목이 있는 날은 비교군 '아니오' 종목 3개 이상도) |
-| `prediction` | 예측 | predictor(calc / hand / version:<id> / baseline:half / baseline:base_rate), asset, horizon(봉 수), base_date·base_close(판단 때 알려진 마지막 끝난 종가), p_up(오를 확률), p_range, size_lo·size_hi(움직임 크기 범위, \|수익률\| %), readings, used(쓴 조각), decisive(빼면 결론이 바뀌는 조각), reason, knowledge(논리집 지문), (손 예측) confidence |
+| `hand_reading` | 손 대 보기(하루 하나) | values(조사 상태 → 예/아니오/일부/모름 또는 값; 상태에 answers가 있으면 그 안에서, 예: 오름/내림/아니오/모름), why(상태 → 이유), places(상태 → 쓴 볼 곳), research(근거 조사 id), (있으면) by_asset(종목 코드 → 종목마다 대 보는 상태 → {value, why, places}, 2026-10-29~; 2026-11-03부터 '예' 종목이 있는 날은 비교군 '아니오' 종목 3개 이상도). **씨앗 조각의 상태**(2026-11-04~)는 관련 있는 날만 들어 있다 — 값이 없으면 그날은 '안 물음'(성적표가 그렇게 센다) |
+| `prediction` | 예측 | predictor(calc / hand / version:<id> / baseline:half / baseline:base_rate / baseline:all — 2026-11-04~ 알려진 전체 시세에서 오른 비율), asset, horizon(봉 수), base_date·base_close(판단 때 알려진 마지막 끝난 종가), p_up(오를 확률), p_range(출발점 층이 답하면 null), size_lo·size_hi(움직임 크기 범위, \|수익률\| %), readings, used(쓴 조각), decisive(빼면 결론이 바뀌는 조각), reason, knowledge(논리집 지문), (손 예측) confidence. 2026-11-04~ 있으면: **layer**(답한 층 — 계산기 출발점/조각/동전/모름, 이전 버전 조각/기준값, 손 예측은 입력 info 또는 decisive에서 조각/출발점/기타; 기준선 줄에는 없음), **analog**(계산기 줄만, 참고 칸 — 같은 대상 최근 750봉에서 시세 상태 7개가 오늘과 같고 목표 봉이 판단 때 이미 끝난 날들의 {n, runs 이어진 구간 수, eff = n ÷ 기간, up_rate}, 없으면 null. 확률에 쓰지 않는다) |
 | `score` | 채점 | prediction, predictor, asset, horizon, target_date·target_close, ret(수익률), up, direction_hit(확률 0.5면 null), brier(확률 점수), size_hit, (2단계) counted(같은 예측기·대상·기간·기준 날짜 중 처음 말한 것만 true) |
 | `order` | 주문 | account, asset(세 대상 또는 종목 코드), side(buy/sell), qty_units(최소 단위 개수: ETF·종목 1주, 코인 1e-8), ref_price(주문 수량을 잡은 가격), reason, (2단계) decided_at(판단한 실제 시각 — 이 뒤의 첫 공식 가격에 체결) |
 | `fill` | 체결 | account, order, asset, side, fill_date, price, qty_units, value·fee(원, 정수), cash_after, note |
@@ -24,7 +24,7 @@
 | `reading_check` | 손 대 보기 다시 보기(7일 뒤) | target(hand_reading id), state, then, now, hit(true/false/null), late(판단 뒤에야 정보가 나온 볼 곳), reason |
 | `correction` | 정정 | target(고칠 기록 id), note. 지난 줄은 고치지 않는다 |
 
-계좌 id: 재생 `replay:calc`, 진짜 계좌 `live:hand`(손 예측이 비중을 정함), `live:calc`(계산기, R_weights), 기준선 `baseline:equal_hold`(처음 살 수 있는 날 1/3씩 사서 그대로), `baseline:cash`(전부 현금).
+계좌 id: 재생 `replay:calc`(R_weights v1), 진짜 계좌 `live:hand`(손 예측이 비중을 정함), `live:calc`(계산기; 이 변경이 main에 들어간 뒤의 실행(2026-11-05 예정)부터 R_weights_v2, 그 전 주문은 v1), 기준선 `baseline:equal_hold`(처음 살 수 있는 날 1/3씩 사서 그대로), `baseline:cash`(전부 현금).
 
 ## 규칙
 - **지난 줄은 고치지도 지우지도 않는다.** 정정은 `correction` 줄을 덧붙인다(매일 실행 입력의 `corrections`).

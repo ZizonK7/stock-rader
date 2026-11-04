@@ -6,7 +6,9 @@
 - 확률 점수(Brier) = (확률 − 결과)². 0이 완벽, 늘 50%면 0.25.
 - 크기 적중: |수익률|(%)이 말한 범위 [size_lo, size_hi] 안.
 - 기준선 예측: baseline:half(늘 50%), baseline:base_rate(최근 250봉에서 h봉 수익률이 오른 비율, 크기는 같은 창의
-  |수익률| 2배 폭 창). 둘 다 판단 때 알려진 시세만 쓴다.
+  |수익률| 2배 폭 창), baseline:all(2026-11-04: 알려진 전체 시세에서 h봉 수익률이 오른 비율, 크기는 전체의 2배 폭 창 —
+  계산기의 옛 오를 확률 기준값(맞춘 기간 전체의 절편)과 같은 성질이라, 방향 기본값을 동전으로 바꾼 것이 맞았는지 나란히 본다).
+  모두 판단 때 알려진(끝난) 시세만 쓴다.
 """
 from __future__ import annotations
 
@@ -53,6 +55,19 @@ def base_rate(hist: History, h: int) -> tuple[float | None, tuple[float, float] 
     if len(c) < BASE_RATE_WINDOW + h:
         return None, None
     rets = [c[t + h] / c[t] - 1 for t in range(len(c) - BASE_RATE_WINDOW - h, len(c) - h)]
+    w = F.window([abs(r) * 100 for r in rets])
+    return sum(r > 0 for r in rets) / len(rets), w
+
+
+ALL_RATE_MIN = 30  # baseline:all: 끝난 h봉 수익률이 이만큼은 있어야 낸다(맞추기의 '표본 30개 미만'과 같은 문턱)
+
+
+def all_rate(hist: History, h: int) -> tuple[float | None, tuple[float, float] | None]:
+    """알려진 전체 시세(판단 때 끝난 봉만)에서 h봉 수익률이 오른 비율과 |수익률|(%)의 2배 폭 창."""
+    c = hist.closes
+    if len(c) < ALL_RATE_MIN + h:
+        return None, None
+    rets = [c[t + h] / c[t] - 1 for t in range(len(c) - h)]
     w = F.window([abs(r) * 100 for r in rets])
     return sum(r > 0 for r in rets) / len(rets), w
 
