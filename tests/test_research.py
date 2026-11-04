@@ -207,7 +207,8 @@ class Seeds(unittest.TestCase):
         raw = tomllib.loads(TEXT)
         # 2026-11-04 (E5): 씨앗 셋 모두 숫자 상태 — 질문 앞 표시는 [숫자 …](숫자가 있는 날이 곧 관련 있는 날)
         seeds = {"S_q_overnight_gap", "S_q_surprise", "S_q_foreign_net"}
-        self.assertEqual(RS.seed_states(raw), seeds)
+        # 2026-11-05 매일 실행이 숫자 아닌 씨앗 상태 S_q_midterm_after를 더함(Q_midterm_after)
+        self.assertEqual(RS.seed_states(raw), seeds | {"S_q_midterm_after"})
         qs = {q["state"]: q for q in RS.questions(dt.date(2026, 11, 5), raw, RS.load_places(), {}) if q["state"]}
         for st in seeds:
             self.assertTrue(qs[st]["seed"])

@@ -321,7 +321,7 @@ id = "P_google_news_rss"
 name = "구글 뉴스 RSS 검색 (한국어 기사 제목·발행 시각)"
 url = "https://news.google.com/rss/search?q=%ED%99%98%EC%9C%A8%20when%3A3d&hl=ko&gl=KR&ceid=KR:ko"
 angle = "공시·뉴스"
-covers = ["S_q_rate_up", "S_q_home_currency_weak"]
+covers = ["S_q_rate_up", "S_q_home_currency_weak", "S_q_midterm_after"]
 official = false
 added = 2026-10-24
 note = "2026-10-24 새로 시도: 검색어를 바꿔 여러 언론의 금통위·환율 마감 기사 제목과 발행 시각을 한 번에 본다. 제목만 보므로 숫자는 다른 곳에서 대조"
@@ -697,7 +697,7 @@ angle = "수급"
 covers = ["S_q_foreign_net", "kr_foreign_net_krw100m", "kr_foreign_sd20_krw100m", "kr_inst_net_krw100m", "kr_indiv_net_krw100m"]
 official = false
 added = 2026-11-04
-note = "확인 전(2026-11-04 이 세션은 웹 읽기가 막혀 열어 보지 못함). 20거래일 일별 순매수로 표준편차를 낼 곳으로 넣었다. 하루 값만이면 P_naver_index_integration(열림 확인), 공식 숫자는 P_krx"
+note = "2026-11-05 확인: HTTP 410(더 이상 제공 안 함) — 대신 P_naver_index_trend_api. (옛 메모) 20거래일 일별 순매수로 표준편차를 낼 곳으로 넣었다. 하루 값만이면 P_naver_index_integration(열림 확인), 공식 숫자는 P_krx"
 
 [[place]]
 id = "P_yahoo_futures"
@@ -727,4 +727,34 @@ angle = "일정·예상치"
 covers = ["S_q_surprise", "surprise_z"]
 official = false
 added = 2026-11-04
-note = "확인 전. 전망 범위(최저~최고)를 주는 무료 일정표로 알려진 곳이라 놀람의 잣대(범위 반폭)를 얻으려고 넣었다. 범위가 없으면 P_tradingeconomics의 전망치만으로는 surprise_z를 못 낸다(그날은 빼고 answer에 적는다)"
+note = "2026-11-05 확인: 빈 응답(막힘). 전망 범위(최저~최고)를 주는 무료 일정표로 알려진 곳이라 놀람의 잣대(범위 반폭)를 얻으려고 넣었다. 범위가 없으면 P_tradingeconomics의 전망치만으로는 surprise_z를 못 낸다(그날은 빼고 answer에 적는다)"
+
+[[place]]
+id = "P_naver_index_trend_api"
+name = "네이버 증권 모바일 지수 투자자별 순매수 API (날짜별 개인·외국인·기관, 억 원)"
+url = "https://m.stock.naver.com/api/index/KOSPI/trend?bizdate=20261104"
+angle = "수급"
+covers = ["S_q_foreign_net", "kr_foreign_net_krw100m", "kr_foreign_sd20_krw100m", "kr_inst_net_krw100m", "kr_indiv_net_krw100m"]
+official = false
+added = 2026-11-05
+note = "2026-11-05 수급 조사가 새로 찾음. 키 없음, bizdate를 바꿔 20거래일 값을 받아 표준편차를 낸다. 메인 대조 같음"
+
+[[place]]
+id = "P_naver_fut_api"
+name = "네이버 증권 모바일 코스피200 선물 API (주간 종가·투자자별 선물 매매)"
+url = "https://m.stock.naver.com/api/index/FUT/basic"
+angle = "수급"
+covers = ["k200_fut_ret_pct", "k200_fut_foreign_net_n"]
+official = false
+added = 2026-11-05
+note = "2026-11-05 2차 조사가 새로 찾음. 주간 선물 값만, 야간 선물은 없다(야간 값은 아직 못 찾은 곳)"
+
+[[place]]
+id = "P_okx_rubik_api"
+name = "OKX 공개 API 코인 미결제약정·거래량 (일별)"
+url = "https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-volume?ccy=BTC&period=1D"
+angle = "수급"
+covers = ["okx_btc_oi_1104_usdm"]
+official = false
+added = 2026-11-05
+note = "2026-11-05 2차 조사가 새로 찾음. 키 없음"
