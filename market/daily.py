@@ -170,6 +170,7 @@ class Day:
     calc_orders: list[dict] = field(default_factory=list)
     due_reviews: dict[str, dict] = field(default_factory=dict)
     due_checks: dict[tuple, dict] = field(default_factory=dict)
+    open_next: dict[str, str] = field(default_factory=dict)  # 열린 '다음엔'(hand.open_next, 2026-11-07)
     questions: list[dict] = field(default_factory=list)
     places: list[dict] = field(default_factory=list)
     stale: set = field(default_factory=set)
@@ -309,6 +310,7 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
             "size": [p["size_lo"], p["size_hi"]], "used": p["used"], "decisive": p["decisive"], "reason": p["reason"],
             "target_date": s["target_date"]}
     D.due_checks = {(c["target"], c["state"]): c for c in RS.due_checks(root.records, day)}
+    D.open_next = H.open_next(recs["review"], recs["run"], day)
     D.places = RS.load_places(root.places)
     D.stale = RS.stale_places(root.records, day, D.places)
     D.questions = RS.questions(day, raw, D.places, RS.place_cards(root.records, D.places))
@@ -441,6 +443,10 @@ def briefing(D: Day, fetched: dict, tick: dict, late: str = "") -> str:
     for pid, i in D.due_reviews.items():
         L_.append(f"- {pid}: {i['verdict']} (수익률 {i['ret_pct']:+.2f}%, 평소 {i['typical_pct']}%{', 잡음 가능' if i['noise'] else ''})"
                   f" / 그때 p_up {i['p_up']}, 크기 {i['size']}, 결론 조각 {i['decisive']}")
+    L_ += ["", f"## 열린 '다음엔' ({len(D.open_next)}건, 지난 {H.NEXT_DAYS}일) — 오늘 해 볼 상황이 왔으면 해 보고,"
+                 " 관련 돌아보기 reason(없으면 notes)에 `지난 다음엔 <id> → 해 봄|안 해 봄 — …`"]
+    for rid, t in D.open_next.items():
+        L_.append(f"- {rid}: {t}")
     L_ += ["", f"## 다시 볼 손 대 보기 ({len(D.due_checks)}건) — 입력 reading_checks에"]
     for (t, st), c in D.due_checks.items():
         L_.append(f"- {t} {st} = {c['then']} (그때 이유: {c['why_then'][:80]})")
@@ -566,6 +572,7 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
            "stocks": D.stock_ok, "held": D.held, "buyable": {str(s["code"]) for s in D.pool if s.get("buy", True)},
            "hand_units": D.accounts["live:hand"].expected(D.prices)[0],
            "calc_values": D.calc_values, "due_reviews": D.due_reviews, "due_checks": D.due_checks,
+           "open_next": D.open_next,
            "node_ids": {n.get("id") for k in ("goal", "state", "fact", "hypothesis", "rule") for n in D.raw.get(k, [])},
            "record_ids": {x["id"] for items in D.recs.values() for x in items}}
     ctx["at"] = at.isoformat(timespec="seconds")  # 조사 as_of가 판단 시각보다 늦으면 거절(2026-11-04, E4)

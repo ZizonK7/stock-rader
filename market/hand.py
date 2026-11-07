@@ -27,12 +27,17 @@
   종목(비교군)도 config.STOCK_CONTROL_MIN개 이상 (2026-11-03).
 - 돌아보기: 기한이 된 손 예측(한 번만 세는 것)마다. 까닭 낱말, 틀렸는데 '맞음' 금지, '잡음'은 코드가 잡음이라 본 것만,
   조건 흐림·이유 틀림·바깥 상황·대 보기 틀림이면 틀린 조각·상태 id.
+- 돌아보기의 '다음엔'(2026-11-07 사용자: 피드백은 '이런 문제가 있었다 → 다음에는 이렇게 해 보겠다'의 연속): NEXT_SINCE
+  판단부터 reason은 '다음엔: <행동 문장>'으로 끝나야 한다(맞았고 문제가 없으면 '다음엔: 그대로 — 까닭'). reason·notes의
+  '지난 다음엔 <돌아보기 id> → 해 봄|안 해 봄'은 열린 '다음엔'(open_next: 지난 NEXT_DAYS일, 아직 확인 안 함) 안의 id여야 한다.
 - 대 보기 다시 보기: 다시 볼 차례인 것만.
 빠진 돌아보기·다시 보기, 새 곳 시도 몫 부족은 경고(기록의 run notes에 남는다).
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
+import re
 import tomllib
 from pathlib import Path
 
@@ -43,6 +48,55 @@ from . import research as RS
 CONF = ("낮음", "보통", "높음")
 INFO = ("조각", "출발점", "기타")   # 손 예측의 결론을 정한 것 (2026-11-04)
 MAX_RATIO = 2.0
+
+# 돌아보기의 '다음엔' (2026-11-07 사용자: 피드백은 "이런 문제가 있었다. 그러니 다음에는 이렇게 해 보겠다"의 연속)
+NEXT_SINCE = "2026-11-08"   # 이 판단 날짜부터 돌아보기 reason이 '다음엔:'으로 끝나야 한다
+NEXT_DAYS = 14              # 열린 '다음엔'을 briefing에 보여 주는 기간(돌아본 날 기준)
+NEXT_MARK = "다음엔:"
+NEXT_KEEP = "그대로"         # '다음엔: 그대로 — 까닭'은 바꿀 행동이 없다는 뜻 — 열린 목록에 넣지 않는다
+NEXT_VAGUE = ("지켜본다", "지켜보겠다", "지켜 본다")
+PAST_ANY = re.compile(r"지난 다음엔 (\S+)")
+PAST_OK = re.compile(r"지난 다음엔 (review:\S+) → (해 봄|안 해 봄)")
+
+
+def next_of(reason: str) -> str | None:
+    """reason의 마지막 '다음엔:' 뒤 글. 없으면 None."""
+    reason = str(reason or "")
+    return reason.rsplit(NEXT_MARK, 1)[1].strip() if NEXT_MARK in reason else None
+
+
+def open_next(reviews: list[dict], runs: list[dict], day: dt.date) -> dict[str, str]:
+    """열린 '다음엔': 지난 NEXT_DAYS일 돌아보기 가운데 '다음엔'이 있고(그대로 제외) 아직 '지난 다음엔 <id> → …'로
+    확인하지 않은 것. 확인은 돌아보기 reason이나 실행 notes에 적힌다. id → '다음엔' 글."""
+    texts = [str(r.get("reason", "")) for r in reviews] + [str(n) for r in runs for n in r.get("notes", [])]
+    closed = {m.group(1) for t in texts for m in PAST_OK.finditer(t)}
+    lim = (day - dt.timedelta(days=NEXT_DAYS)).isoformat()
+    out = {}
+    for r in reviews:
+        t = next_of(r.get("reason", ""))
+        if t and not t.startswith(NEXT_KEEP) and str(r.get("run", "")) >= lim and r["id"] not in closed:
+            out[r["id"]] = t
+    return out
+
+
+def _next_errors(where: str, reason: str) -> list[str]:
+    t = next_of(reason)
+    if t is None:
+        return [f"{where}: reason을 '{NEXT_MARK} <행동 문장>'으로 끝낸다(맞았고 문제가 없으면 '{NEXT_MARK} {NEXT_KEEP} — 까닭')"]
+    if len(t) < 4 or any(t.startswith(v) for v in NEXT_VAGUE):
+        return [f"{where}: '{NEXT_MARK}' 뒤는 다음 같은 상황에서 할 행동 문장이어야 한다('{t[:20]}')"]
+    return []
+
+
+def _past_errors(where: str, text: str, opened: dict[str, str]) -> list[str]:
+    errs = []
+    ok = {m.start(): m.group(1) for m in PAST_OK.finditer(text)}
+    for m in PAST_ANY.finditer(text):
+        if m.start() not in ok:
+            errs.append(f"{where}: '지난 다음엔 …'은 '지난 다음엔 <돌아보기 id> → 해 봄|안 해 봄 — …' 형식으로 쓴다")
+        elif ok[m.start()] not in opened:
+            errs.append(f"{where}: '{ok[m.start()]}'는 열린 '다음엔'(briefing 목록)에 없는 돌아보기 id")
+    return errs
 
 
 def load_input(path: Path) -> dict:
@@ -393,6 +447,13 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
                     errs.append(f"{w}: wrong의 '{x}'는 논리집에 없는 id")
         if not str(rv.get("reason", "")).strip():
             errs.append(f"{w}: 이유(reason)가 없음 — 맞았어도 이유를 적는다")
+        elif str(day) >= NEXT_SINCE:
+            errs += _next_errors(w, rv.get("reason", ""))
+        if "open_next" in ctx:
+            errs += _past_errors(w, str(rv.get("reason", "")), ctx["open_next"])
+    if "open_next" in ctx:
+        for i, n in enumerate(inp.get("notes", []) or []):
+            errs += _past_errors(f"notes[{i}]", str(n), ctx["open_next"])
     missing = sorted(set(ctx["due_reviews"]) - got)
     if missing:
         warns.append(f"돌아보지 않은 손 예측 {len(missing)}건: {', '.join(missing[:6])}{' …' if len(missing) > 6 else ''}")
