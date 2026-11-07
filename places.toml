@@ -778,3 +778,13 @@ covers = ["s005380_foreign_net_n"]
 official = false
 added = 2026-11-07
 note = "2026-11-06·11-07 수급 조사가 씀. 키 없음. 종목별 외국인·기관·개인 순매수(주), KRX 거래분만인 듯"
+
+[[place]]
+id = "P_yahoo_vix"
+name = "미국 공포 지수 1년 일봉 (야후 차트 API)"
+url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=1y&interval=1d"
+angle = "간밤 반응"
+covers = ["S_q_fear_above_year", "S_q_fear_spike"]
+official = false
+added = 2026-11-08
+note = "키 없이 열림. 1년 일봉으로 평균(fear_us_1y_avg_pt)과 마지막 값(fear_us_pt)을 계산할 수 있다(2026-11-08 조사가 씀)"

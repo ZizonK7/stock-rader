@@ -273,6 +273,18 @@ number = { from = "kr_foreign_net_krw100m", per = "kr_foreign_sd20_krw100m", rul
 ask = "전일(판단 직전 국내 거래일) 유가증권시장 외국인 순매수(억 원, 팔면 −) → kr_foreign_net_krw100m. 전일을 포함한 최근 20거래일 외국인 일별 순매수의 표준편차(억 원) → kr_foreign_sd20_krw100m(20일 값의 출처를 적는다). 기관·개인 순매수도 kr_inst_net_krw100m·kr_indiv_net_krw100m으로"
 note = "2026-11-04 세움(결정 E5 (c), Q_foreign_flow의 조건). 값은 코드가 kr_foreign_net_krw100m ÷ kr_foreign_sd20_krw100m의 절댓값 > 1로 정한다. 20거래일·1배는 미리 정한 모양이다(기록에서 고르지 않았다)"
 
+[[state]]
+id = "S_q_fear_spike"
+text = "판단 직전 미국 주식 공포 지수(VIX)의 마지막 값이 최근 1년(약 250거래일) 평균의 1.3배보다 높다"
+known_before = true
+serves = "G_timing"
+read_by = "조사"
+angle = "간밤 반응"
+answers = ["예", "아니오", "모름"]
+number = { from = "fear_us_pt", per = "fear_us_1y_avg_pt", rule = "> 1.3", unit = "최근 1년 평균의 배수" }
+ask = "미국 주식 공포 지수(VIX)의 판단 직전 마지막 값 → fear_us_pt, 최근 1년(약 250거래일) 일별 종가 평균 → fear_us_1y_avg_pt(계산 방법을 적는다)"
+note = "2026-11-08 세움(매일 실행 2차 조사, 씨앗 Q_fear_spike_rebound의 조건). S_q_fear_above_year(평균보다 위인가)는 10월 말부터 거의 매일 '예'라 가르는 힘이 없어, '아주 높다'를 따로 둔다. 1.3배는 근거 문헌이 말하는 '매우 높은 수준'을 미리 정한 모양으로 옮긴 것이다 — 오늘 값(25.64 ÷ 18.10 = 1.42)을 본 뒤 정했으므로 오늘이 '예'가 되는 문턱인 것은 안다. 숫자가 있는 날 = 관련 있는 날"
+
 [[fact]]
 id = "F_lit_tsmom"
 text = "시계열 모멘텀: 58개 선물(주가지수·통화·원자재·채권)에서 지난 1~12개월 수익률이 다음 수익률을 같은 방향으로 예측했다(긴 기간에서는 일부 되돌림)"
@@ -490,6 +502,16 @@ source = "이 저장소의 시세로 센 것 — data/prices/의 두 묶음 일�
 kind = "이 저장소의 기록"
 strength = "보통"
 note = "재생·실측 기간은 보지 않았다. 판단 때 이미 일어난 간밤 움직임은 시가에 먼저 들어간다. 2026-11-05부터 예측 기준이 체결가(판단 뒤 첫 시가, 결정 E2)라 간밤 격차 조각(Q_overnight_lead_v2)은 '시가 뒤에도 같은 쪽'을 주장하게 되는데, 이 숫자는 그것을 받쳐 주지 않는다(반대 근거). 여기서 격차는 묶음 자신의 시가 격차다 — 조각의 숫자(야간 선물)와 같지는 않다"
+
+[[fact]]
+id = "F_lit_vix_level"
+text = "미국 공포 지수(VIX·VXN)가 아주 높은 수준이면 통계적으로 주가지수의 곧 이은 상승을 알리는 신호로 볼 수 있고, 그 직후 짧은 기간 평균 수익이 양(+)이었다(Giot 2005). 공포 지수가 오르는 동안의 같은 때 수익은 음(−)이다"
+checked = 2026-11-08
+source = "연구 — Pierre Giot (2005), Relationships Between Implied Volatility Indexes and Stock Index Returns, Journal of Portfolio Management 31(3) 92–100; 앞선 판 CORE Discussion Paper 2002/50"
+url = "https://econpapers.repec.org/RePEc:cor:louvco:2002050"
+kind = "연구"
+strength = "낮음"
+note = "2026-11-08 매일 실행이 RePEc 서지(IDEAS)와 앞선 판 초록(EconPapers)을 열어 확인. 1994–2003 미국 지수 기준이고 기간은 '곧 이은 짧은 기간'(초록), 1주에 맞춘 것은 이 저장소의 선택이다. 반대 근거: 시계열 모멘텀(F_lit_tsmom) — 하락이 이어지는 쪽"
 
 [[fact]]
 id = "F_lit_funding_liquidity"
@@ -804,6 +826,21 @@ seen_until = "2026-11-07"
 seed = true
 note = "2026-11-07 세움(매일 실행 2차 조사, 씨앗). 11-06 당국 합동 점검회의가 신용융자 담보비율 140% 유지 의무를 11-09부터 3개월 면제(시사저널 보도를 메인이 열어 확인). 2차 조사가 오를 까닭으로 찾았다. 근거는 이론 모형이라 강도 낮음. 반대 까닭(외국인 한 달 순매도 30조 원 넘음, 해외 자금 흐름은 이어진다)이 같은 날 있었다. 급락 때만 켜지는 상태라 양쪽 5구간이 차려면 오래 걸린다. 2026-11-07 뒤 판단으로만 시험"
 claims = [{ on = "up_odds", dir = "up", when = "예", scope = "home", span = ["1주"], reason = "강제 매도가 줄어 하락 고리가 약해진다" }]
+
+[[hypothesis]]
+id = "Q_fear_spike_rebound"
+text = "앞으로의 흔들림 예상(공포 지수)이 1년 평균보다 아주 높으면(1.3배 넘게), 주식은 다음 1주에 오를 확률이 높다"
+source = "연구 — 공포 지수 수준과 뒤이은 지수 수익 (F_lit_vix_level)"
+reason = "공포가 극단이면 위험을 지는 대가가 커져 있고, 겁먹고 판 물량이 다 나온 뒤에는 되오르기 쉽다"
+read_by = "조사"
+conditions = ["S_q_fear_spike"]
+evidence = ["F_lit_vix_level"]
+strength = "낮음"
+check = ["research_direction"]
+seen_until = "2026-11-08"
+seed = true
+note = "2026-11-08 세움(매일 실행 2차 조사, 씨앗). 2차 조사가 미국 묶음의 오를 까닭으로 찾았다(VIX 11-06 25.64, 1년 평균 18.10의 1.42배; 주식 풋/콜 1.05). 반대 까닭(12월 인상 확률 76.5%로 1주 +6%p, 4주 연속 하락 — 시계열 모멘텀 F_lit_tsmom)이 같은 날 있었다. 근거 연구는 미국 지수라 국내 주식에도 걸리는지는 이 시험이 본다(scope equity). 2026-11-08 뒤 판단으로만 시험"
+claims = [{ on = "up_odds", dir = "up", when = "예", scope = "equity", span = ["1주"], reason = "극단의 공포 뒤에는 되오르기 쉽다" }]
 
 [[hypothesis]]
 id = "H_hand_vs_calc"
