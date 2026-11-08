@@ -788,3 +788,33 @@ covers = ["S_q_fear_above_year", "S_q_fear_spike"]
 official = false
 added = 2026-11-08
 note = "키 없이 열림. 1년 일봉으로 평균(fear_us_1y_avg_pt)과 마지막 값(fear_us_pt)을 계산할 수 있다(2026-11-08 조사가 씀)"
+
+[[place]]
+id = "P_forexfactory_json"
+name = "이번 주 경제 일정 JSON (Forex Factory 피드)"
+url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+angle = "일정·예상치"
+covers = ["S_q_event_soon", "S_q_surprise", "events_n"]
+official = false
+added = 2026-11-09
+note = "2026-11-09 일정 조사가 새로 찾음. 키 없이 이번 주 일정·전망·이전치가 나온다(시각은 미국 동부). 전망 최저~최고 범위는 없다 — 놀람의 잣대는 따로 찾아야 한다"
+
+[[place]]
+id = "P_tftc_etf_flows"
+name = "미국 현물 비트코인 ETF 날짜별 순유입 (TFTC)"
+url = "https://www.tftc.io/bitcoin-etf-flows/november-2026"
+angle = "수급"
+covers = ["coin_fund_flow_usdm"]
+official = false
+added = 2026-11-09
+note = "11-08·11-09 수급 조사가 씀. Farside가 막힐 때 날짜별 합계를 줬다. 주소의 달 이름을 바꿔 본다"
+
+[[place]]
+id = "P_gateio_api"
+name = "코인 무기한 선물 자금조달률 (Gate.io 공개 API)"
+url = "https://api.gateio.ws/api/v4/futures/usdt/contracts/BTC_USDT"
+angle = "수급"
+covers = ["coin_funding_pct"]
+official = false
+added = 2026-11-09
+note = "2026-11-09 수급 조사가 새로 찾음. 키 없이 열림. 바이낸스·바이비트가 지역 차단일 때 OKX와 견줄 두 번째 값"

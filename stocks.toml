@@ -118,3 +118,17 @@ name = "삼성SDI"
 market = "KOSPI"
 added = "2026-10-29"
 why = "코스피 대형주, 2차전지 업종 대표 — 첫 목록"
+
+[[stock]]
+code = "051910"
+name = "LG화학"
+market = "KOSPI"
+added = "2026-11-09"
+why = "2026-11-09: 11-05 3분기 영업익 5,612억이 시장 전망 4,549억보다 +23.4%(일회성 포함) — 실적 예상 상회 조각(Q_earnings_beat)"
+
+[[stock]]
+code = "352820"
+name = "하이브"
+market = "KOSPI"
+added = "2026-11-09"
+why = "2026-11-09: 11-03 3분기 영업익 1,885억이 에프앤가이드 전망보다 +14.6% — 실적 예상 상회 조각(Q_earnings_beat)"
