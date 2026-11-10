@@ -137,13 +137,23 @@ def order_amount(o: dict) -> float:
     return o["qty_units"] * o["ref_price"] / C.ASSETS[o["asset"]].unit
 
 
+def queued_size(o: dict) -> str:
+    """걸어 둔 주문의 크기를 일지 말로: '약 30만 원어치'. 수량을 잡은 가격을 모르는 주문(ref_price 0 — 전날 마감 가격을 아직
+    못 받은 때의 팔기)은 금액을 지어내지 않고 수량으로('15주')."""
+    amt = order_amount(o)
+    if amt > 0:
+        return f"{won_about(amt)}어치"
+    n = o["qty_units"] / C.ASSETS[o["asset"]].unit
+    return f"{n:,.0f}주" if C.on_exchange(o["asset"]) else f"{n:.8f}개"
+
+
 # 거절 이유(증권사의 글)를 일지에 쓸 쉬운 말로. 앞에서부터 처음 맞는 것
 REJECT_WORDS = (("거래 정지 여부를 모름", "거래할 수 있는 상태인지 알 수 없어서"), ("돈이 모자람", "그때 계좌에 쓸 수 있는 돈이 모자라서"), ("옮길 수 있는 돈", "아직 꺼낼 수 없는 돈이라서"),
                 ("가진 것보다", "가진 수량보다 많아서"), ("받지 못함", "그 순간의 가격을 받지 못해서"),
                 ("묵었음", "받은 가격이 너무 오래된 것이라서"), ("시계가", "받은 가격의 시각이 맞지 않아서"),
                 ("최소 주문", "금액이 너무 작아서"), ("닫혀", "장이 닫혀 있어서"), ("장중", "주문을 낼 수 없는 시간이라서"),
-                ("15:20", "주문을 낼 수 없는 시간이라서"), ("가격 제한", "하루에 움직일 수 있는 값의 범위를 벗어나서"),
-                ("전 거래일 종가", "전날 마감 가격을 받지 못해서"), ("지난 시각", "지난 시각으로는 주문할 수 없어서"),
+                ("15:20", "주문을 낼 수 없는 시간이라서"), ("전 거래일 종가를 몰라", "전날 마감 가격을 아직 받지 못해서"),
+                ("가격 제한", "하루에 움직일 수 있는 값의 범위를 벗어나서"), ("전 거래일 종가", "전날 마감 가격을 받지 못해서"), ("지난 시각", "지난 시각으로는 주문할 수 없어서"),
                 ("거래 정지", "그 종목의 거래가 멈춰 있어서"), ("정규장", "정규 거래 시간의 가격이 아니라서"),
                 ("지연 시세", "늦게 오는 가격이라서"))
 
@@ -174,7 +184,7 @@ def broker_first(b: Book, me: dict, pa: dict | None, run: str) -> tuple[str, lis
         parts[-1] += "(그 순간의 실제 가격)"
     queued = []
     for side, verb in (("buy", "사는"), ("sell", "파는")):
-        got = [f"{asset_label(o['asset'])} {won_about(order_amount(o))}어치" for o in orders
+        got = [f"{asset_label(o['asset'])} {queued_size(o)}" for o in orders
                if o["side"] == side and o["id"] not in fills]
         if got:
             queued.append(", ".join(got) + f"를 {verb} 주문")

@@ -790,6 +790,16 @@ class Report(unittest.TestCase):
         self.assertEqual(RP.reject_reason("돈이 모자람: 필요 1,000원 > 주문 가능 금액 0원 (upbit)"), "그때 계좌에 쓸 수 있는 돈이 모자라서")
         self.assertEqual(RP.reject_reason("지금 호가를 받지 못함"), "그 순간의 가격을 받지 못해서")
         self.assertEqual(RP.reject_reason("처음 보는 이유"), "증권사 규칙에 맞지 않아서")
+        # 2026-11-10 통째 예행연습(15:45 판단): 전날 마감 가격을 아직 모를 때의 거절이 '값의 범위 밖'으로 잘못 옮겨졌다
+        self.assertEqual(RP.reject_reason("전 거래일 종가를 몰라 가격 제한 폭을 알 수 없음"), "전날 마감 가격을 아직 받지 못해서")
+        self.assertEqual(RP.reject_reason("가격 105이 가격 제한 폭 70–130(전 거래일 종가 100 ± 30%) 밖"),
+                         "하루에 움직일 수 있는 값의 범위를 벗어나서")
+
+    def test_queued_order_without_a_reference_price_is_told_by_quantity_not_zero_won(self):
+        # 같은 예행연습: 수량을 잡은 가격을 모르는 팔기 주문(ref_price 0)이 일지에 '약 0원어치'로 나왔다
+        o = {"asset": "360750", "side": "sell", "qty_units": 15, "ref_price": 0.0}
+        self.assertEqual(RP.queued_size(o), "15주")
+        self.assertEqual(RP.queued_size({**o, "ref_price": 25000.0}), "약 38만 원어치")
         with tempfile.TemporaryDirectory() as tmp, use(NoLive):
             root = make_root(tmp)
             self.assertEqual(day_run(root, d(9, 3), {E: 0.3, BTC: 0.3})[0], 0)
