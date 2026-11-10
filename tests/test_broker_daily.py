@@ -379,6 +379,144 @@ class Plan(unittest.TestCase):
         self.assertLess(abs((C.now_kst() - a).total_seconds()), 5)                     # 진짜 폴더에서는 실제 시각
 
 
+class Replan(unittest.TestCase):
+    """주문 계획 2회차(2026-11-10, docs/worklog/2026-11-10-broker-whatif.md 덧붙임): ① 걸어 둔 주문은 목표가 문턱 밖으로 바뀌면
+    취소하고 다시 낸다(문턱 안이면 그대로, 취소 못 하는 장중 걸린 사기는 든 것으로) ② 돈이 모자란 날은 목표와 차이가 큰 것부터
+    산다(입력 dict의 차례와 상관없이), 돈 옮기기도 같은 차례. 고치기 전 코드에서 r1·r4·r5·r6이 실패하는 것을 보고 고쳤다."""
+
+    def setUp(self):
+        from tests.test_broker import bars, replace_bar
+        self.bars, self.replace_bar = bars, replace_bar
+        self.rows = bars()
+        self.q = Q.BarQuotes(self.rows)
+
+    def at(self, day, h, m):
+        return dt.datetime.combine(day, dt.time(h, m), C.KST)
+
+    def px(self, before, rows=None):
+        rows = rows or self.rows
+        out = {a: [x for x in rows[a] if x.date < before][-1].close for a in (E, U, "005930")}
+        out[BTC] = next(x for x in rows[BTC] if x.date == before - dt.timedelta(days=1)).open
+        return out
+
+    def broker(self, when, q=None, **start):
+        b = B.Broker("t", q or self.q)
+        self.assertTrue(b.start(when, **start).ok)
+        return b
+
+    def test_r1_pending_buy_is_cancelled_and_reissued_when_the_target_drops(self):
+        wed, thu = dt.date(2026, 11, 4), dt.date(2026, 11, 5)
+        b = self.broker(self.at(wed, 7, 0), bank=10_000_000)
+        first = RB.rebalance(b, {E: 0.5}, self.px(thu), RB.Clock(self.at(wed, 16, 0)))   # 장 마감 뒤 → 다음 장 시작 사기
+        (o,) = first.of("order")
+        self.assertEqual((o["order_kind"], o["session"]), ("open", "2026-11-05"))
+        plan = RB.rebalance(b, {E: 0.25}, self.px(thu), RB.Clock(self.at(thu, 8, 30)))   # 09:00 전: 아직 취소할 수 있다
+        self.assertEqual([x["data"]["order"] for x in plan.of("broker", "cancel")], [o["id"]])
+        (n,) = plan.of("order")
+        self.assertEqual((n["side"], n["order_kind"], n["session"]), ("buy", "open", "2026-11-05"))
+        self.assertAlmostEqual(n["qty_units"], o["qty_units"] / 2, delta=1)
+        self.assertEqual([p.id for p in b.pending()], [n["id"]])
+        self.assertEqual(plan.of("broker", "reject"), [])
+        zero = RB.rebalance(b, {E: 0.0}, self.px(thu), RB.Clock(self.at(thu, 8, 40)))     # 목표 0: 취소만
+        self.assertEqual([x["data"]["order"] for x in zero.of("broker", "cancel")], [n["id"]])
+        self.assertEqual((zero.of("order"), b.pending()), ([], []))
+        self.assertTrue(any("취소" in s for s in RB.describe(zero)))
+        self.assertEqual(B.check(b.lines(), self.rows)[0], [])
+
+    def test_r2_target_inside_the_band_leaves_the_pending_order_alone(self):
+        wed, thu = dt.date(2026, 11, 4), dt.date(2026, 11, 5)
+        b = self.broker(self.at(wed, 7, 0), bank=10_000_000)
+        (o,) = RB.rebalance(b, {E: 0.5}, self.px(thu), RB.Clock(self.at(wed, 16, 0))).of("order")
+        for k, w in enumerate((0.5, 0.51, 0.49)):                                       # 날마다 다시 내지 않는다
+            plan = RB.rebalance(b, {E: w}, self.px(thu), RB.Clock(self.at(thu, 8, 30 + k)))
+            self.assertEqual((plan.of("broker", "cancel"), plan.of("order")), ([], []), w)
+        self.assertEqual([p.id for p in b.pending()], [o["id"]])
+
+    def test_r3_an_order_left_on_the_book_during_the_session_counts_as_held(self):
+        """장 시작에 시가 ≥ 한도라 그날 장중에 걸린 사기는 취소할 수 없다(체결 시각 09:00이 지남) — 그대로 두고 든 것으로 친다."""
+        wed, thu = dt.date(2026, 11, 4), dt.date(2026, 11, 5)
+        prev = [x for x in self.rows[E] if x.date == wed][0].close
+        rows = self.replace_bar(self.rows, E, thu, open=prev * 1.2, high=prev * 1.25, low=prev * 1.15, close=prev * 1.2)
+        b = self.broker(self.at(wed, 7, 0), q=Q.BarQuotes(rows), bank=10_000_000)
+        (o,) = RB.rebalance(b, {E: 0.5}, self.px(thu, rows), RB.Clock(self.at(wed, 16, 0))).of("order")
+        now = dict(self.px(thu, rows), **{E: prev * 1.2})
+        for w in (0.5, 0.2, 0.0):
+            plan = RB.rebalance(b, {E: w}, now, RB.Clock(self.at(thu, 9, 5 + int(w * 10))), phase="open")
+            self.assertEqual(plan.of("broker", "cancel"), [], w)
+            self.assertEqual(plan.of("broker", "reject"), [], w)
+            self.assertEqual([x for x in plan.of("order") if x["asset"] == E], [], w)   # 든 것으로 쳐서 더 사지도, 못 팔지도
+            self.assertEqual([p.id for p in b.pending()], [o["id"]], w)
+
+    def plan_short(self, targets, start, when=None):
+        thu = dt.date(2026, 11, 5)
+        b = self.broker(self.at(thu, 7, 0), **start)
+        plan = RB.rebalance(b, targets, self.px(thu), RB.Clock(when or self.at(thu, 8, 30)))
+        got = [(x["asset"], x["side"], x["order_kind"], x["qty_units"], x.get("amount")) for x in plan.of("order")]
+        return b, plan, got
+
+    def test_r4_order_of_the_target_dict_does_not_matter_when_money_is_short(self):
+        """돈이 모자란 날(장 시작 사기는 한도 1.05배만큼 돈을 잡는다): 목표와 차이가 큰 것부터 산다 — 입력의 차례와 상관없다."""
+        start = {"bank": 3_000_000}
+        _, p1, a = self.plan_short({E: 0.7, U: 0.3}, start)
+        _, p2, b_ = self.plan_short({U: 0.3, E: 0.7}, start)
+        self.assertEqual(sorted(a), sorted(b_))
+        self.assertEqual(p1.short, p2.short)
+        self.assertEqual(p1.short, [U])                                                 # 차이가 작은 쪽이 덜 산다
+        qe = next(x[3] for x in a if x[0] == E)
+        self.assertEqual(qe, int(0.7 * 3_000_000 // (self.px(dt.date(2026, 11, 5))[E] * (1 + 0.00015))))
+
+    def test_r5_the_bigger_gap_gets_the_money_first_across_pockets(self):
+        """증권 계좌에만 돈이 있는데 비트코인(업비트) 사기와 증권 계좌 사기가 다툴 때, 목표와 차이가 큰 비트코인이 먼저 돈을 받는다
+        (고치기 전: 증권 계좌가 자기 살 몫을 먼저 남겨 비트코인이 덜 샀다 — 2026-11-05~10 대입의 (가)가 그랬다)."""
+        b, plan, got = self.plan_short({BTC: 0.7, E: 0.5}, {"sec": 2_000_000})
+        coin = next(f for f in plan.of("fill") if f["asset"] == BTC)
+        self.assertGreater(coin["value"], 0.69 * 2_000_000)
+        self.assertIn(E, plan.short)
+        self.assertNotIn(BTC, plan.short)
+        moves = [(x["data"]["src"], x["data"]["dst"]) for x in plan.of("broker", "transfer")]
+        self.assertEqual(moves[:2], [("sec", "bank"), ("bank", "upbit")])
+        # 차례가 뒤집히면(증권 계좌 쪽 차이가 더 크면) 증권 계좌가 먼저
+        b, plan, got = self.plan_short({BTC: 0.5, E: 0.7}, {"sec": 2_000_000})
+        self.assertIn(BTC, plan.short)
+        self.assertNotIn(E, plan.short)
+        self.assertEqual(B.check(b.lines(), self.rows)[0], [])
+
+    def test_r6_weekend_order_shrinks_before_monday(self):
+        """대입 보고서의 11-01·11-02 경우를 작게: 토요일에 낸 월요일 장 시작 사기 18주를 일요일에 9주로 줄이려 하면 — 고치기 전에는
+        걸린 사기를 팔 수 없어 18주가 그대로 사졌다. 이제 취소하고 9주로 다시 내고, 월요일 09:00에 9주만 사진다."""
+        sat, sun, mon = dt.date(2026, 11, 7), dt.date(2026, 11, 8), dt.date(2026, 11, 9)
+        b = self.broker(self.at(sat, 7, 0), bank=10_000_000)
+        p = self.px(mon)
+        w18 = 18 * p[E] * (1 + 0.00015) / 10_000_000 + 0.0001
+        (o,) = RB.rebalance(b, {E: w18}, p, RB.Clock(self.at(sat, 8, 30))).of("order")
+        self.assertEqual((o["qty_units"], o["session"]), (18, "2026-11-09"))
+        plan = RB.rebalance(b, {E: 9 * p[E] / 10_000_000 + 0.0001}, p, RB.Clock(self.at(sun, 8, 30)))
+        self.assertEqual([x["data"]["order"] for x in plan.of("broker", "cancel")], [o["id"]])
+        self.assertEqual([(x["qty_units"], x["session"]) for x in plan.of("order")], [(9, "2026-11-09")])
+        b.sync(self.at(mon, 9, 5))
+        self.assertEqual(b.holdings().get(E), 9)
+        self.assertEqual(B.check(b.lines(), self.rows)[0], [])
+
+
+    def test_r7_daily_run_cancels_and_the_report_says_so(self):
+        """매일 실행에서: 토요일에 낸 월요일 장 시작 사기를 일요일 목표가 줄면 취소하고 다시 낸다 — 거절 없음, 검산 통과, 일지에 한 줄."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_root(tmp)
+            self.assertEqual(day_run(root, d(9, 6), {E: 0.9})[0], 0)                  # 토
+            self.assertEqual(day_run(root, d(9, 7), {E: 0.4})[0], 0)                  # 일
+            r = recs(root)
+            sat = of(r["order"], run="2025-09-06", asset=E)
+            self.assertEqual([x["data"]["order"] for x in of(r["broker"], type="cancel")], [o["id"] for o in sat])
+            (new,) = of(r["order"], run="2025-09-07", asset=E)
+            self.assertLess(new["qty_units"], sat[0]["qty_units"])
+            self.assertEqual(of(r["account"], run="2025-09-07")[0]["pending"], [new["id"]])
+            self.assertEqual(of(r["broker"], type="reject"), [])
+            every = [x for x in r["broker"] if x["type"] == "cancel"]                  # 계좌 넷(계산기 계좌도 목표가 바뀐다)
+            self.assertEqual(R.read(root.records, "run")[-1]["steps"]["broker"]["cancels"], len(every))
+            self.assertIn("걸어 둔 주문을 취소했다", RP.daily(root.records, d(9, 7)))
+            self.assertEqual(R.check(root.path, [root.records]), [])
+
+
 class Switch(unittest.TestCase):
     """갈아타는 날(17절)."""
 
@@ -549,7 +687,8 @@ class Report(unittest.TestCase):
             self.assertIn("KODEX 200 약 500만 원어치를 사는 주문을 넣었다(오늘 장이 열리는 09:00 가격에 치른다)", first)
             self.assertIn("아직 치러지지 않은 주문", first)
             self.assertIn("현금은 은행", first)
-            self.assertIn("오늘 옮긴 돈: 은행 → 업비트", first)
+            # 옮긴 돈은 사는 차례(목표와 차이가 큰 것부터 — 2026-11-10 2회차)대로: KODEX 200(차이 0.5)이 비트코인(0.3)보다 먼저
+            self.assertIn("오늘 옮긴 돈: 은행 → 증권 계좌 약 525만 원, 은행 → 업비트 약 300만 원", first)
             self.assertIn("팔 때 떼는 세금(미국 묶음을 팔아 남긴 이익의 15.4%)", first)
             self.assertNotIn("계산하지 않았다", first)
             self.assertIn("비트코인(업비트) 9월 2일 08:30", first)

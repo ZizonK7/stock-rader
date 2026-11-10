@@ -70,10 +70,19 @@ def total_value(b: B.Broker, prices: dict[str, float]) -> float:
     return sum(b.pockets().values()) + sum(n * prices[a] / C.ASSETS[a].unit for a, n in b.holdings().items() if a in prices)
 
 
+def cancellable(p: B.Pending, at: dt.datetime) -> bool:
+    """걸린 주문을 지금 취소할 수 있나 — 증권사의 cancel이 받는 조건과 같다(체결 시각 전). 장 시작에 시가 ≥ 한도라 그날 장중에
+    걸린 사기는 체결 시각(09:00)이 지나 취소할 수 없다(일봉만으로는 언제 체결될지 몰라서 — docs/broker-sandbox.md 18절)."""
+    first = B.first_fill_time(p)
+    return first is None or at < first
+
+
 def rebalance(b: B.Broker, targets: dict[str, float | None], prices: dict[str, float], clock: Clock,
               band: float = BAND, reasons: dict[str, str] | None = None, phase: str = "decide") -> Plan:
     """목표 비중(대상 → 0~1, None은 그대로 둠)으로 요청을 낸다. prices = 수량을 잡을 가격(판단 때 가격).
-    phase: "decide"(판단 때 — 끝에 plan 줄을 남긴다) / "open"(장 시작 뒤 — 한국 거래소는 장중일 때 지금 주문만, plan 줄 없음)."""
+    phase: "decide"(판단 때 — 끝에 plan 줄을 남긴다) / "open"(장 시작 뒤 — 한국 거래소는 장중일 때 지금 주문만, plan 줄 없음).
+    차례는 입력 dict의 차례와 상관없다(2026-11-10 2회차): 걸린 주문 다시 짜기·팔기는 대상 id 순, 사기와 돈 옮기기는 목표와의
+    차이(원)가 큰 것부터(같으면 id 순)."""
     plan = Plan()
     reasons = reasons or {}
 
@@ -87,21 +96,38 @@ def rebalance(b: B.Broker, targets: dict[str, float | None], prices: dict[str, f
     market = b.market(at)
     krx_kind = "now" if market == "now" else ("open" if market == "open" and phase == "decide" else "")
     total = total_value(b, prices)
+    live = sorted(a for a, w in targets.items() if w is not None and a in prices and prices[a] > 0)
+
+    def gap(a: str, have: dict[str, int]) -> float:
+        return targets[a] * total - have.get(a, 0) * prices[a] / C.ASSETS[a].unit
+
+    # 0. 걸린 주문 다시 짜기: 걸린 주문까지 친 보유가 목표와 문턱 밖이면 그 대상의 취소할 수 있는 걸린 주문을 취소한다(다시 낼 수 있을
+    #    때만 — 한국 거래소 주문을 지금 못 내는 시간이면 건드리지 않는다). 문턱 안이면 그대로 둔다(날마다 취소하고 다시 내지 않게).
+    #    취소 못 하는 걸린 주문(그날 장중에 걸린 사기)은 그대로 두고 든 것으로 친다. 취소가 거절되면 그 주문도 든 것으로 친다.
     have = b.expected_units()
-    sells, buys = [], []
-    for a, w in targets.items():
-        if w is None or a not in prices or prices[a] <= 0:
+    for a in live:
+        if abs(gap(a, have)) < band * total or (C.on_exchange(a) and not krx_kind):
             continue
-        diff = w * total - have.get(a, 0) * prices[a] / C.ASSETS[a].unit
+        for p in sorted(b.pending(), key=lambda p: p.id):
+            if p.asset == a:
+                t = clock.now()
+                if cancellable(p, t):
+                    ask(b.cancel(t, p.id, f"목표 비중이 바뀌어 다시 낸다(목표 {targets[a]:.4f})"))
+    have = b.expected_units()
+
+    sells, buys = [], []
+    for a in live:
+        diff = gap(a, have)
         if abs(diff) < band * total:
             continue
         (buys if diff > 0 else sells).append((a, diff))
+    buys.sort(key=lambda x: (-x[1], x[0]))      # 차이가 큰 것부터 — 돈이 모자란 날 누가 먼저 사는지를 코드가 정한다
     if not krx_kind and any(C.on_exchange(a) for a, _ in sells + buys):
         plan.notes.append("한국 거래소 주문은 내지 않았다 — " + ("장 시작 뒤 단계인데 장중이 아니다" if phase == "open" else
                                                           "지금은 장 시작 주문도 지금 주문도 받지 않는 시간이다(09:00 정각·15:20–15:30)"))
     mn = RU.value("upbit_min_order")
 
-    # 1–2. 팔기 (비트코인은 지금, 한국 거래소는 장 시작 시장가나 지금)
+    # 1–2. 팔기 (비트코인은 지금, 한국 거래소는 장 시작 시장가나 지금) — 대상 id 순(다 내므로 차례는 결과를 바꾸지 않는다)
     for a, diff in sells:
         spec = C.ASSETS[a]
         n = -diff / prices[a] * spec.unit
@@ -116,12 +142,61 @@ def rebalance(b: B.Broker, targets: dict[str, float | None], prices: dict[str, f
         elif krx_kind:
             ask(b.order(clock.now(), a, "sell", krx_kind, qty=q, reason=reasons.get(a, "")))
 
-    # 사려는 것: 대상마다 목표 수량과 한 단위에 잡을 돈
-    want = []   # (대상, 목표 수량 또는 금액, 한도, 단위 값)
+    def cost(a: str, q: int, unit: float) -> int:
+        v = math.ceil(q * unit)
+        return v + RU.fee(a, v)
+
+    # 3. 돈 옮기기: 그 대상의 주머니에 모자란 만큼, 은행 먼저 → 다른 주머니의 뺄 수 있는 돈(은행을 거쳐). 사는 차례대로 한 대상씩
+    #    부른다 — 앞 대상이 먼저 돈을 받는다(고치기 전에는 증권 계좌가 자기 살 몫을 먼저 남겨 두어 비트코인이 덜 샀다).
+    def top_up(pocket: str, need: int, least: int) -> None:
+        """need = 그 대상을 다 사는 데 드는 돈, least = 한 단위라도 사는 데 드는 돈(한 주, 업비트 최소 주문). 모아도 least에 못 미치면
+        옮기지 않는다 — 못 살 대상에 돈을 옮겨 두었다가 다음 대상이 도로 빼 가는 헛걸음을 막는다."""
+        t = clock.now()
+        lack = need - b.orderable(pocket, t)
+        if lack <= 0:
+            return
+        other = "upbit" if pocket == "sec" else "sec"
+        fee = RU.value("upbit_krw_withdraw_fee") if other == "upbit" else 0
+        spare = b.withdrawable(other, t) - fee
+        floor_ = MOVE_MIN_FROM_UPBIT if other == "upbit" else 1
+        reach = b.orderable(pocket, t) + b.withdrawable("bank", t) + (spare if min(lack, spare) >= floor_ else 0)
+        if reach < least:
+            return
+        from_bank = min(lack, b.withdrawable("bank", t))
+        if from_bank > 0:
+            ask(b.transfer(t, "bank", pocket, from_bank, f"{pocket}에서 살 돈"))
+            lack -= from_bank
+        if lack <= 0:
+            return
+        spare = b.withdrawable(other, t) - fee
+        amount = min(lack, spare)
+        if amount < floor_:
+            if spare > 0 and other == "upbit":
+                plan.notes.append(f"업비트의 남는 돈 {max(amount, 0):,}원은 옮기지 않았다 — {MOVE_MIN_FROM_UPBIT:,}원보다 작으면 "
+                                  f"출금 수수료({fee:,}원)가 아깝다")
+            return
+        if ask(b.transfer(t, other, "bank", amount, f"{pocket}에서 살 돈")).ok:
+            ask(b.transfer(t, "bank", pocket, amount, f"{pocket}에서 살 돈"))
+
+    # 4–5. 사기: 차이가 큰 것부터, 그 대상의 주머니에 돈을 대어 준 뒤 그 주머니의 주문 가능 금액 안에서만
     for a, diff in buys:
         spec = C.ASSETS[a]
         if spec.kind == "coin":
-            want.append((a, math.floor(diff), None, None))
+            q = math.floor(diff)
+            if q >= mn:
+                top_up("upbit", q + RU.fee(a, q), mn + RU.fee(a, mn))
+            t = clock.now()
+            avail = b.orderable("upbit", t)
+            amt = min(q, int(avail / (1 + spec.fee)))
+            while amt > 0 and amt + RU.fee(a, amt) > avail:
+                amt -= 1
+            if amt < q:
+                plan.short.append(a)
+            if amt < mn:
+                if q >= mn:
+                    plan.notes.append(f"{a} 사기는 내지 않았다 — 업비트에 쓸 수 있는 돈이 {avail:,}원뿐이다")
+                continue
+            ask(b.order(t, a, "buy", "now", amount=amt, reason=reasons.get(a, "")))
             continue
         if not krx_kind:
             continue
@@ -137,61 +212,11 @@ def rebalance(b: B.Broker, targets: dict[str, float | None], prices: dict[str, f
         else:
             limit, up = None, RU.step(a, prices[a], 1)
             unit = up * (1 + NOW_CUSHION) if up else None
-        if q > 0 and unit:
-            want.append((a, q, limit, unit))
-
-    def cost(a: str, q: int, unit: float) -> int:
-        v = math.ceil(q * unit)
-        return v + RU.fee(a, v)
-
-    need = {"upbit": sum(amt + RU.fee(a, amt) for a, amt, _, unit in want if unit is None and amt >= mn),
-            "sec": sum(cost(a, q, unit) for a, q, _, unit in want if unit is not None)}
-
-    # 3. 돈 옮기기: 은행 먼저, 그다음 다른 주머니의 뺄 수 있는 돈(은행을 거쳐)
-    def top_up(pocket: str) -> None:
-        t = clock.now()
-        lack = need[pocket] - b.orderable(pocket, t)
-        if lack <= 0:
-            return
-        from_bank = min(lack, b.withdrawable("bank", t))
-        if from_bank > 0:
-            ask(b.transfer(t, "bank", pocket, from_bank, f"{pocket}에서 살 돈"))
-            lack -= from_bank
-        if lack <= 0:
-            return
-        other = "upbit" if pocket == "sec" else "sec"
-        fee = RU.value("upbit_krw_withdraw_fee") if other == "upbit" else 0
-        spare = b.withdrawable(other, t) - need[other] - fee
-        amount = min(lack, spare)
-        if amount < (MOVE_MIN_FROM_UPBIT if other == "upbit" else 1):
-            if spare > 0 and other == "upbit":
-                plan.notes.append(f"업비트의 남는 돈 {max(amount, 0):,}원은 옮기지 않았다 — {MOVE_MIN_FROM_UPBIT:,}원보다 작으면 "
-                                  f"출금 수수료({fee:,}원)가 아깝다")
-            return
-        if ask(b.transfer(t, other, "bank", amount, f"{pocket}에서 살 돈")).ok:
-            ask(b.transfer(t, "bank", pocket, amount, f"{pocket}에서 살 돈"))
-
-    for pocket in ("upbit", "sec"):
-        if need[pocket]:
-            top_up(pocket)
-
-    # 4–5. 사기: 그 주머니의 주문 가능 금액 안에서만
-    for a, q, limit, unit in want:
-        spec = C.ASSETS[a]
-        t = clock.now()
-        avail = b.orderable(B.pocket_of(a), t)
-        if unit is None:   # 비트코인: 금액
-            amt = min(q, int(avail / (1 + spec.fee)))
-            while amt > 0 and amt + RU.fee(a, amt) > avail:
-                amt -= 1
-            if amt < q:
-                plan.short.append(a)
-            if amt < mn:
-                if q >= mn:
-                    plan.notes.append(f"{a} 사기는 내지 않았다 — 업비트에 쓸 수 있는 돈이 {avail:,}원뿐이다")
-                continue
-            ask(b.order(t, a, "buy", "now", amount=amt, reason=reasons.get(a, "")))
+        if q <= 0 or not unit:
             continue
+        top_up("sec", cost(a, q, unit), cost(a, 1, unit))
+        t = clock.now()
+        avail = b.orderable("sec", t)
         n = min(q, int(avail // (unit * (1 + spec.fee))))
         while n > 0 and cost(a, n, unit) > avail:
             n -= 1
@@ -240,6 +265,8 @@ def describe(plan: Plan, name=lambda a: a) -> list[str]:
         out.append(f"거절됨: {what} — {r['note']}")
     for e in plan.of("broker", "expire"):
         out.append(f"체결 못 하고 끝난 주문: {e['data'].get('order')} — {e['note']}")
+    for c in plan.of("broker", "cancel"):
+        out.append(f"걸어 둔 주문 취소: {c['data'].get('order')} — {c['note']}")
     out += [f"내지 않음: {n}" for n in plan.notes]
     out += [f"경고: {w}" for w in plan.warnings]
     return out

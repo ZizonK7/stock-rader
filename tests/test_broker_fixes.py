@@ -304,8 +304,9 @@ class F3Adjust(unittest.TestCase):
             self.assertEqual(code, 0, said)
             adj = of(recs(root)["broker"], type="adjust")
             self.assertTrue(adj)
-            self.assertTrue(all(x["data"]["cash"] == 0 for x in adj))
-            self.assertEqual(said.count("바로잡지 않고 적어 둠"), len(adj))
+            every = [x for x in recs(root)["broker"] if x["type"] == "adjust"]   # 계좌 넷 모두(경고 글은 계좌마다 한 줄)
+            self.assertTrue(all(x["data"]["cash"] == 0 for x in every))
+            self.assertEqual(said.count("바로잡지 않고 적어 둠"), len(every))
             self.assertEqual(R.check(root.path, [root.records]), [])
 
     def test_f3_exceptions_inside_the_broker_stop_prepare_record_and_open(self):

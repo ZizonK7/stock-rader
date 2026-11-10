@@ -150,10 +150,10 @@ def old_targets(aid: str, day: str, accounts: list[dict], orders: list[dict], ru
 
 
 def target_order(aid: str, day: str, orders: list[dict], names: set[str]) -> list[str]:
-    """목표를 넘기는 차례: 세 대상 → 그날 옛 주문에 나온 종목(줄 차례) → 나머지 종목(코드 순).
-    돈이 모자란 날은 rebalance가 목표의 차례대로 사므로 차례가 결과를 바꾼다. 그날 메인이 적은 입력(weights)의 차례는 저장소에
-    없지만, 옛 장부(ledger.plan)는 목표의 차례대로 주문을 냈으므로 그날 옛 주문 줄의 차례가 곧 입력의 차례다. 집합(set)의
-    차례에 맡기면 실행마다 결과가 달라진다(처음 구현이 그랬다 — 시험 test_same_result_in_another_process)."""
+    """목표를 넘기는 차례: 세 대상 → 그날 옛 주문에 나온 종목(줄 차례) → 나머지 종목(코드 순) — 그날 입력(weights)의 차례를 되살린 것.
+    2026-11-10 2회차부터 rebalance가 사는 차례를 '목표와 차이가 큰 것부터'로 스스로 정해 **이 차례는 결과를 바꾸지 않는다**
+    (시험 test_target_order_does_not_matter). 1회차에는 돈이 모자란 날 입력의 차례대로 사서 결과가 바뀌었고, 집합(set)의 차례에
+    맡긴 처음 구현은 실행마다 결과가 달랐다(test_same_result_in_another_process)."""
     seen = [o["asset"] for o in orders if o["account"] == aid and o["run"] == day]
     seq = [*C.ASSET_IDS, *seen, *sorted(names)]
     return [a for a in dict.fromkeys(seq) if a in names or a in C.ASSET_IDS]
@@ -197,7 +197,6 @@ def simulate(case: str, runs: list[dict], recs: dict, rows: dict, coin: dict | N
         mine = set(C.ASSET_IDS) | {a for b in brokers.values() for a in b.expected_units()}
         vp = D.value_prices(hists, quotes, at, {}, brokers["live:hand"].market(at) == "now", mine)
         prices = {a: v for a, (v, _) in vp.items()}
-        K.marks.append((day, at, dict(vp)))
         jobs = []
         for aid in ("live:hand", "live:calc"):
             w, info = old_targets(aid, day, recs["account"], recs["order"], r)
@@ -221,6 +220,8 @@ def simulate(case: str, runs: list[dict], recs: dict, rows: dict, coin: dict | N
             if not res.ok:
                 raise RuntimeError(f"{day} {aid} 계좌 줄: {res.reason}")
             K.values[(day, aid)] = b.new["account"][-1]
+        # 평가 시점 = 계좌 줄을 만든 시각(판단 때 바로 체결된 비트코인까지 든 상태 — 계좌 줄과 같은 시점), 가격 = 판단 때 평가 가격
+        K.marks.append((day, clock.last, dict(vp)))
         if case == "open" and day != last:
             at2 = dt.datetime.combine(dday, AFTER_OPEN, C.KST)
             hists2 = {a: PR.view(a, rs, at2) for a, rs in rows.items()}
@@ -285,8 +286,7 @@ def attribute(flows: list[dict], moves: list[tuple[dt.datetime, int]], marks: li
         while j < len(fl) and fl[j]["at"] <= T[k]:
             f = fl[j]
             a = f["asset"]
-            if k == 0:
-                raise ValueError("첫 평가 시점 전에 체결이 있다")
+            # 첫 평가 시점(첫날 계좌 줄) 안의 체결(첫날 바로 산 비트코인)은 시작 값(1,000만 원 현금)에서 그 시점까지의 '치른 값' 몫이다
             paid_by[a] = paid_by.get(a, 0.0) + f["q"] * P[k][a] / C.ASSETS[a].unit - f["value"]
             fee_by[a] = fee_by.get(a, 0) + f["fee"]
             tax_by[a] = tax_by.get(a, 0) + f["tax"]
@@ -318,6 +318,34 @@ def revalue(line: dict, vp: dict) -> tuple[float, list[str]]:
             v += n * float(line["prices"][a][1]) / C.ASSETS[a].unit
             miss.append(a)
     return v, miss
+
+
+def old_exec_value(aid: str, day: str, accounts: list[dict], orders: list[dict], rows: dict, at: dt.datetime,
+                   vp: dict) -> tuple[float | None, list[str]]:
+    """옛 장부의 그날 잔고에 '판단 시각 at 전에 이미 체결됐지만 옛 장부가 아직 장부에 안 넣은' 주문(옛 장부는 이틀 늦게 넣었다)을
+    옛 규칙 그대로(그 봉의 시가·종가, 옛 장부의 체결 계산) 넣고, 같은 평가 가격 vp로 친 값 — '체결 시각 기준으로 견준 옛 값'.
+    (값, 넣은 주문 id). 그날 계좌 줄이 없으면 None."""
+    accs = [a for a in accounts if a["account"] == aid and a["run"] <= day]
+    if not accs or accs[-1]["run"] != day:
+        return None, []
+    acc = L.rebuild(aid, accs, [o for o in orders if o["account"] == aid and o["run"] <= day])
+    acc.pending = [o for o in acc.pending if o.run.isoformat() < day or (o.decided_at and o.decided_at < at)]
+    ready = []
+    for o in acc.pending:
+        if o.asset not in rows:
+            continue
+        row = L.fill_row(o, PR.view(o.asset, rows[o.asset], at))
+        if row is None:
+            continue
+        when = C.fill_dt(C.ASSETS[o.asset], row.date, o.rule()[1])
+        if when <= at:
+            ready.append((when, 0 if o.side == "sell" else 1, o, row))
+    done = []
+    for _, _, o, row in sorted(ready, key=lambda x: (x[0], x[1], x[2].id)):
+        acc._fill(o, row, dt.date.fromisoformat(day))   # 옛 장부의 체결 계산 그대로(기록을 쓰지 않는다 — 계산만)
+        done.append(o.id)
+    value = float(acc.cash) + sum(n * vp[a][0] / C.ASSETS[a].unit for a, n in acc.units.items() if n and a in vp)
+    return value, done
 
 
 # ---------- 옛 장부의 '실제로는 못 하는 거래' ----------
@@ -402,6 +430,9 @@ def run(records: Path, prices: Path, coin: dict | None, out: Path | None, root: 
         result["daily"][aid] = rows_
         end = rows_[-1]
         result["accounts"][aid] = {k: end[k] for k in ("recorded", "revalued", *CASES)}
+        ev, booked = old_exec_value(aid, days[-1], recs["account"], recs["order"], rows, marks[-1][1], marks[-1][2])
+        result["accounts"][aid]["old_exec"] = round(ev, 2) if ev is not None else None
+        result["accounts"][aid]["old_exec_added"] = booked
         old = attribute(flows_old(recs["fill"], aid), [], marks)
         parts = {"old": _short(old)}
         for c in CASES:
@@ -503,6 +534,11 @@ def describe(res: dict) -> list[str]:
     for aid, a in res["accounts"].items():
         cell = lambda v: f"{v:,.0f} ({(v / C.START_CASH - 1) * 100:+.2f}%)" if v is not None else "–"
         out.append(f"| {aid} | {cell(a['recorded'])} | {cell(a['revalued'])} | {cell(a['once'])} | {cell(a['open'])} |")
+    out.append("")
+    for aid, a in res["accounts"].items():
+        if a.get("old_exec") is not None:
+            out.append(f"- {aid} 옛 값을 체결 시각 기준으로(이미 체결됐지만 옛 장부가 아직 안 넣은 주문 {len(a['old_exec_added'])}건을 "
+                       f"옛 규칙대로 넣어) 같은 가격으로 치면: {a['old_exec']:,.0f}원")
     for aid in ("live:hand",):
         p = res["accounts"][aid]["parts"]
         out += ["", f"## {aid} 차이 가르기 (대입 − 다시 친 옛 값, 원)"]

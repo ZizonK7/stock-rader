@@ -142,9 +142,10 @@ def md(text: str) -> str:
 
 def broker_first(b: Book, me: dict, pa: dict | None, run: str) -> tuple[str, list[str]]:
     """가상 증권사로 도는 날의 첫 문장과 참고 사실: 오늘 바로 치러진 것(실제 값) / 장이 열리면 치를 주문 / 받아들여지지 않은 주문."""
-    orders = [o for o in b.window("order", "live:hand", me, pa) if o["run"] == run]
-    fills = {f["order"]: f for f in b.window("fill", "live:hand", me, pa)}
     events = [e for e in b.window("broker", "live:hand", me, pa) if e["run"] == run]
+    gone = {e["data"].get("order") for e in events if e["type"] == "cancel"}   # 같은 날 취소한 주문은 '넣었다'에서 뺀다
+    orders = [o for o in b.window("order", "live:hand", me, pa) if o["run"] == run and o["id"] not in gone]
+    fills = {f["order"]: f for f in b.window("fill", "live:hand", me, pa)}
     parts, ref = [], []
     for side, did in (("buy", "샀다"), ("sell", "팔았다")):
         got = [f"{asset_label(o['asset'])} {won_about(fills[o['id']]['value'])}어치" for o in orders
@@ -190,6 +191,11 @@ def broker_notes(b: Book, me: dict, pa: dict | None, run: str) -> list[str]:
         out.append("값이 맞지 않아 치러지지 못하고 끝난 주문: " + ", ".join(
             f"{asset_label(orders[e['data']['order']]['asset'])} {'사기' if orders[e['data']['order']]['side'] == 'buy' else '팔기'}"
             for e in ended if e["data"].get("order") in orders) + ".")
+    dropped = [e for e in events if e["type"] == "cancel" and e["data"].get("order") in orders]
+    if dropped:   # 주문 계획이 목표가 바뀐 걸린 주문을 취소하고 다시 낸다(2026-11-10 2회차)
+        out.append("목표가 바뀌어 걸어 둔 주문을 취소했다(필요한 만큼은 위 주문으로 다시 냈다): " + ", ".join(
+            f"{asset_label(orders[e['data']['order']]['asset'])} {won_about(order_amount(orders[e['data']['order']]))}어치 "
+            f"{'사기' if orders[e['data']['order']]['side'] == 'buy' else '팔기'}" for e in dropped) + ".")
     waiting = [orders[i] for i in me["pending"] if i in orders]
     if waiting:
         out.append("아직 치러지지 않은 주문(장이 열리는 09:00 가격에 치러지고, 다음 일지의 표에 들어간다): " + ", ".join(

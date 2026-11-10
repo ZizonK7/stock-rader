@@ -904,6 +904,7 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
                   "fills": len(lines["fill"]), "scores": len(D.scores),
                   "broker": {"mode": D.mode, "switched": D.switched, "rejects": len(rejects),
                              "transfers": sum(x["type"] == "transfer" for x in lines["broker"]),
+                             "cancels": sum(x["type"] == "cancel" for x in lines["broker"]),
                              "expired": sum(x["type"] == "expire" for x in lines["broker"])},
                   "counted_scores": sum(s["counted"] for s in D.scores),
                   "predictions": len(lines["prediction"]), "orders": len(lines["order"]),

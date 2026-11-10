@@ -132,6 +132,20 @@ class WhatIf(unittest.TestCase):
             self.assertEqual(got[0], got[1])
             self.assertEqual(got[0], got[2])
 
+    def test_target_order_does_not_matter(self):
+        """목표를 넘기는 차례를 뒤집어도 같은 결과(2026-11-10 2회차 — rebalance가 사는 차례를 목표와의 차이로 정한다).
+        이 가짜 기록은 첫날 손 계좌 목표의 합이 80%라 돈이 모자란 날이 없으니, 손 계좌 목표를 부풀린(합 > 100%) 기록으로도 본다."""
+        from unittest import mock
+        for hand in (HAND, {DAYS[0]: {"069500": 0.5, "360750": 0.45, BTC: 0.3}, DAYS[2]: {"069500": 0.6, "360750": 0.5, BTC: 0.1}}):
+            with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(HAND, hand, clear=True):
+                rec, prices, coin, _ = build(Path(tmp))
+                a = W.run(rec, prices, coin, None, root=Path(tmp))
+                orig = W.target_order
+                with mock.patch.object(W, "target_order", lambda *x: list(reversed(orig(*x)))):
+                    b = W.run(rec, prices, coin, None, root=Path(tmp))
+            self.assertEqual(json.dumps(strip(a), sort_keys=True, default=str),
+                             json.dumps(strip(b), sort_keys=True, default=str))
+
     def test_no_value_after_the_decision(self):
         """그날 판단 시각 뒤의 값을 쓰지 않는다: 셋째 날 뒤의 봉(시가·종가 모두)을 바꿔도 셋째 날까지의 계좌 값·목표가 같다.
         셋째 날 09:05 단계는 셋째 날 시가를 쓰므로(그 시각에 알 수 있는 값) 셋째 날 봉은 그대로 둔다."""
