@@ -59,8 +59,9 @@ OPTIONAL: dict[str, dict[str, tuple]] = {
     # 가상 증권사(2026-11-10, broker.py가 만든 줄 — pocket이 있으면 증권사 주문): pocket(주머니), order_kind(open 장 시작 /
     # close 장 마감 / now 지금 — 기록 종류 칸 kind와 겹치지 않게 이름을 바꿈, fill_rule에도 같은 값), limit(한도 가격),
     # amount(업비트 금액 주문), reserved(잡아 둔 돈), session(체결될 장의 날짜), seq(계좌 안 순서)
+    # replay_of(2026-11-10 3회): 갈아타는 날 옛 주문을 그대로 다시 넣은 증권사 주문 줄의 옛 주문 id(검산이 하나씩 맞춘다)
     "order": {"decided_at": (str,), "fill_rule": (str,), "pocket": (str,), "order_kind": (str,), "limit": NUM,
-              "amount": (int,), "reserved": (int,), "session": (str,), "seq": (int,)},
+              "amount": (int,), "reserved": (int,), "session": (str,), "seq": (int,), "replay_of": (str,)},
     # price_kind: 시가(open)·종가(close)·지금(now)·장중 한도(limit). 증권사 체결은 at(체결 시각)·pocket·tax(세금)·
     # source(가격을 받은 곳과 그 시각, 진행 중인 봉이었나)·settle(결제일, 업비트는 null)·gain(판 이익, 팔기만)·seq
     "fill": {"price_kind": (str,), "at": (str,), "pocket": (str,), "tax": (int,), "source": (dict,),

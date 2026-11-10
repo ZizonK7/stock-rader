@@ -19,9 +19,11 @@
   한국 거래소는 팔기를 장 시작 시장가로·사기를 지금 주문 가능 금액 안에서 장 시작 지정가로(판단이 09:00 뒤면 지금 주문).
   어제 09:00 체결은 오늘 실행의 맞추기(sync)에서 장부에 들어온다. 가격은 진짜 기록 폴더에서는 실제 주소(quotes.NetQuotes),
   흉내 내기 폴더(--root)에서는 그 폴더의 시세 파일(quotes.BarQuotes)에서 받는다.
-- **갈아타는 날**(17절): broker 기록에 start가 없으면 그 실행에서 갈아탄다 — 옛 대기 주문을 옛 규칙 가격으로 모두 끝내고(옛 모양
-  체결 줄), 보유는 그대로·현금은 은행에 둔 start 줄을 계좌 넷에 만든다. 끝낼 수 없는 옛 주문이 하나라도 남으면 계좌 넷 모두
-  그날은 옛 장부(market/ledger.py)로 돌고 다음 실행에서 다시 시도한다. 기록이 없는 폴더는 첫 실행에서 바로 start.
+- **갈아타는 날**(17절, 2026-11-10 3회 사용자 결정): broker 기록에 start가 없으면 그 실행에서 갈아탄다 — 옛 장부의 계좌는 비교용으로
+  남기고, 첫 옛 실행 시각의 은행 1,000만 원(start)에서 옛 주문 줄을 그대로(무엇을·몇 주·언제) 그때의 공식 값으로 가상 증권사에
+  넣어 다시 계산한 잔고에서 이어 간다(whatif.carry — 그 순간 돈이나 주식이 없어 안 되는 주문은 거절된 채로). 그 줄들의 run은
+  오늘, 시각 칸은 그때. 아직 낼 수 없는 옛 주문(그 09:00 비트코인 값을 못 받음 등)이 있으면 계좌 넷 모두 그날은 옛 장부
+  (market/ledger.py)로 돌고 다음 실행에서 다시 시도한다. 기록이 없는 폴더는 첫 실행에서 바로 start.
 - 증권사 기록이 어긋나 있거나(Broker.problems) 증권사 안에서 예외가 나면(broker.BrokerError 등) prepare·record·open은 아무것도
   쓰지 않고 멈춘다(까닭 글, 종료 코드 1 — 예외로 죽지 않는다).
 - 판단 시각 = record를 돌린 실제 시각. 판단 시각까지 끝났어야 할 일봉이 시세 파일에 없으면 그 대상은 그날 예측·주문하지 않는다.
@@ -225,6 +227,7 @@ class Day:
     calc_w: dict[str, float | None] = field(default_factory=dict)
     calc_reasons: dict[str, str] = field(default_factory=dict)
     equal_first: dict[str, float] = field(default_factory=dict)
+    carry: object = None                                 # 갈아타는 날 옛 주문을 그대로 넣은 계산(whatif.Carry)
 
 
 def old_lines(recs: dict, kind: str) -> list[dict]:
@@ -232,67 +235,15 @@ def old_lines(recs: dict, kind: str) -> list[dict]:
     return [x for x in recs[kind] if "seq" not in x]
 
 
-def old_fill_row(o: L.Order, hists: dict, quotes: Q.Quotes, at: dt.datetime) -> tuple[PR.Row | None, str]:
-    """옛 대기 주문이 옛 규칙으로 체결될 봉. 끝난 봉(시세 파일)에 없으면 진행 중인 봉을 공급자에게 묻는다(비트코인: 09:00에 시작한
-    봉의 시가는 이미 정해져 있다). (봉, 못 찾은 까닭)."""
-    row = L.fill_row(o, hists[o.asset]) if o.asset in hists else None
-    if row is not None:
-        return row, ""
-    if o.decided_at is None:
-        return None, "판단 시각이 없는 옛 주문의 체결 봉이 시세 파일에 없음"
-    spec = C.ASSETS[o.asset]
-    kind, when = o.rule()
-    d = max(o.run, o.decided_at.astimezone(C.KST).date())
-    while (C.on_exchange(o.asset) and d.weekday() >= 5) or C.fill_dt(spec, d, when) <= o.decided_at:
-        d += dt.timedelta(days=1)
-    if C.fill_dt(spec, d, when) > at:
-        return None, f"체결 시각({d} {when:%H:%M})이 아직 오지 않음"
-    got = quotes.day(o.asset, d, at)
-    if got is None:
-        return None, f"{d} 봉의 값을 받지 못함"
-    price = got.open if kind == "open" else (got.close if got.final else None)
-    if not price or price <= 0:
-        return None, f"{d} 봉의 {kind} 값이 아직 없음"
-    return PR.Row(d, price, price, price, price, 0.0, got.source, at.isoformat(timespec="seconds")), ""
-
-
-def finish_old(accounts: dict[str, L.Account], hists: dict, quotes: Q.Quotes, at: dt.datetime,
-               day: dt.date) -> tuple[dict[str, L.Account] | None, list[dict], str]:
-    """갈아타기: 옛 대기 주문을 옛 규칙 가격으로 모두 끝낸다. 하나라도 못 끝내면 아무 계좌도 바꾸지 않는다(섞이지 않게).
-    (끝낸 계좌들 또는 None, 옛 모양 체결 줄, 못 끝낸 까닭)."""
-    import copy
-    out, fills = {}, []
-    for aid, acc in accounts.items():
-        acc = copy.deepcopy(acc)
-        ready = []
-        for o in acc.pending:
-            row, why = old_fill_row(o, hists, quotes, at)
-            if row is None:
-                return None, [], f"{o.id}: {why}"
-            ready.append((C.fill_dt(C.ASSETS[o.asset], row.date, o.rule()[1]), 0 if o.side == "sell" else 1, o, row))
-        for _, _, o, row in sorted(ready, key=lambda x: (x[0], x[1])):
-            fills.append(acc._fill(o, row, day))
-            acc.pending.remove(o)
-        out[aid] = acc
-    return out, fills, ""
-
-
-def cost_basis(fills: list[dict], aid: str) -> dict[str, float]:
-    """옛 체결 기록의 이동 평균으로 구한 '산 값의 합'(대상 → 원, 수수료 뺌) — 갈아타는 날 start 줄에 넣는다(해외 지수 ETF 이익 세금)."""
-    units: dict[str, int] = {}
-    cost: dict[str, float] = {}
-    for f in fills:
-        if f["account"] != aid or not f["qty_units"]:
-            continue
-        a, q = f["asset"], f["qty_units"]
-        held = units.get(a, 0)
-        if f["side"] == "buy":
-            cost[a] = cost.get(a, 0.0) + f["value"]
-            units[a] = held + q
-        else:
-            cost[a] = cost.get(a, 0.0) * (1 - q / held) if held > q else 0.0
-            units[a] = max(held - q, 0)
-    return {a: round(v, 2) for a, v in cost.items() if units.get(a)}
+def carry_over(recs: dict, rows: dict, quotes: Q.Quotes, at: dt.datetime, day: dt.date):
+    """갈아타는 날(2026-11-10 3회, 사용자 결정 '판단은 기록에 남아 있으니 그때 가격으로 그대로'): 첫 옛 실행 시각의 은행 1,000만 원에서
+    옛 주문 줄을 그대로 가상 증권사에 넣어 다시 계산한다(market/whatif.carry). 갈아타는 시각 = 이 실행의 판단 시각 at, 줄의 run =
+    오늘. (계산 결과 또는 None, 못 끝낸 까닭). 아직 낼 수 없는 옛 주문(그 09:00 값을 못 받음 등)이 있으면 None — 그날은 옛 장부."""
+    from . import whatif as W   # whatif가 daily를 부르므로 여기서 부른다
+    got = W.carry(recs, rows, at, quotes, day)
+    if got.waiting:
+        return None, "; ".join(f"{w['id']}: {w['why']}" for w in got.waiting)
+    return got, ""
 
 
 def value_prices(hists: dict, quotes: Q.Quotes, at: dt.datetime, ticker: dict, market_open: bool,
@@ -365,7 +316,7 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     sync_warnings: list[str] = []
     accounts: dict[str, L.Account] = {}
     fills: list[dict] = []
-    switched, switch_note = False, ""
+    switched, switch_note, carried = False, "", None
     if all(started.values()):
         for aid in C.LIVE_ACCOUNTS:
             try:
@@ -382,22 +333,18 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     elif any(started.values()):
         problems.append(f"계좌 일부만 갈아탔다({[a for a, v in started.items() if v]}) — 섞인 채로 돌지 않는다")
     else:
-        # 갈아타는 날(17절): 옛 장부를 되살려 정산하고, 남은 옛 주문을 옛 규칙 가격으로 모두 끝낸 뒤 start
+        # 갈아타는 날(17절, 2026-11-10 3회): 옛 장부의 계좌는 비교용으로 남기고, 옛 주문을 그대로 넣어 다시 계산한 잔고에서 이어 간다
         accounts = {aid: L.rebuild(aid, old_lines(recs, "account"), old_lines(recs, "order")) for aid in C.LIVE_ACCOUNTS}
-        fills = [f for acc in accounts.values() for f in acc.settle(hists, day)]
-        done, forced, switch_note = finish_old(accounts, hists, quotes, at, day)
-        if done is not None:
-            accounts, fills, switched = done, fills + forced, True
-            for aid, acc in accounts.items():
-                try:
-                    b = brokers[aid] = B.Broker(aid, quotes, {}, bar_days)
-                    units = {a: n for a, n in acc.units.items() if n}
-                    res = b.start(at, bank=acc.cash, units=units, cost=cost_basis(recs["fill"] + fills, aid),
-                                  note="갈아타기: 옛 장부의 보유는 그대로(ETF·종목 → 증권 계좌, 비트코인 → 업비트), 현금은 은행에")
-                    if not res.ok:
-                        problems.append(f"{aid}: 시작 잔고를 만들지 못함 — {res.reason}")
-                except Exception as exc:
-                    problems.append(crash(aid, exc))
+        try:
+            carried, switch_note = carry_over(recs, rows, quotes, at, day)
+        except Exception as exc:   # 2회차(메인 결정 B): 다시 계산 안의 예외는 멈춤이 아니라 '갈아타지 못한 날' — 그날은 옛 장부.
+            # 갈아타기 전에는 옛 장부가 멀쩡하고 다시 계산은 읽기만 한다. 그 버그 하나로 그날 예측·채점 기록까지 비면 손해가 더 크다
+            carried = None
+            switch_note = "다시 계산 안에서 예외 — " + crash("갈아타기(옛 주문 그대로 넣기)", exc)
+        if carried is not None:
+            brokers, switched = carried.brokers, True
+        elif not problems:   # 갈아타지 못한 날: 옛 장부로 정산(그날 옛 규칙)
+            fills = [f for acc in accounts.values() for f in acc.settle(hists, day)]
     mode = "broker" if brokers and not problems else "ledger"
     if mode == "broker":
         hb = brokers["live:hand"]
@@ -417,6 +364,7 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     D = Day(day, at, hists, raw, digest, recs, already, missing, predictable, skipped, accounts, fills, scores, [])
     D.mode, D.brokers, D.quotes, D.problems = mode, brokers, quotes, problems
     D.switched, D.switch_note, D.sync_lines, D.sync_warnings = switched, switch_note, sync_lines, sync_warnings
+    D.carry = carried
     D.pool, D.stock_skipped = pool, stock_skipped
     D.held = [a for a in held if a not in stock_skipped]
     D.stock_ok = [a for a in sorted(seen_stocks) if a not in stock_skipped and (a in buyable or a in held)]
@@ -528,7 +476,9 @@ def equal_targets(orders: list[dict], eb: B.Broker | None, prices: dict[str, flo
     market/whatif.py가 같은 규칙을 부른다)."""
     bought = {o["asset"] for o in orders if o["account"] == "baseline:equal_hold"}
     if eb is not None:
-        plans = eb.events("plan")
+        # 덜 산 대상: 마지막 plan 줄의 short. plan 줄이 아직 없으면(갈아타는 날) 옛 주문을 다시 넣은 끝 줄(phase carry)의 short —
+        # 기준선은 다시 넣을 때 돈이 모자란 사기를 살 수 있는 만큼만 샀다(2026-11-10 3회 2회차)
+        plans = eb.events("plan") or [x for x in eb.events("phase") if (x.get("data") or {}).get("name") == B.CARRY]
         if plans and sum(eb.pockets().values()) >= RB.BAND * RB.total_value(eb, prices):
             bought -= set(plans[-1]["data"].get("short", []))
     return {a: 1 / 3 for a in predictable if a not in bought}
@@ -606,6 +556,33 @@ def crash(where: str, exc: BaseException) -> str:
     return f"{where}: 증권사 안에서 예외 {type(exc).__name__}: {' / '.join(first[:4])[:600]}"
 
 
+def carry_text(D: Day, account_lines: list[dict] | None = None) -> list[str]:
+    """갈아타는 날 briefing·record 출력(2026-11-10 3회): 오늘부터 실제 규칙으로 다시 계산한 잔고에서 이어 간다 — 계좌마다 옛 장부 값 →
+    다시 계산한 값, 받아지지 않은 옛 주문 수와 큰 것 몇 개(쉬운 말). account_lines = 오늘 계좌 줄(없으면 미리 보기)."""
+    from .report import reject_reason   # report가 일지에 쓰는 것과 같은 쉬운 말
+    cr = D.carry
+    lines = account_lines if account_lines is not None else D.account_lines
+    out = ["**갈아타는 날: 오늘부터 계좌를 실제 규칙으로 다시 계산한 잔고에서 이어 간다.** 옛 장부의 계좌는 실제로는 못 하는 거래"
+           "(같은 시각에 판 돈으로 사기 등)로 만들어져 비교용으로만 남긴다. 지난 옛 주문을 그때의 공식 값(ETF·종목은 그 장의 시가·종가, "
+           "비트코인은 그 09:00 시가)으로 그대로 가상 증권사에 넣었고, 그 순간 돈이나 주식이 없어 안 되는 주문은 거절된 채로 둔다"
+           "(체결된 줄 알았는데 안 된 것). **든 것으로 알던 보유와 실제 보유가 다를 수 있다 — 틀의 지금 비중(weights의 target)이 기준이다.**"]
+    for aid in C.LIVE_ACCOUNTS:
+        olds = [a for a in D.recs["account"] if a["account"] == aid and "seq" not in a]
+        new = next((a for a in lines if a["account"] == aid), None)
+        steps = [x for x in cr.steps if x["account"] == aid]
+        bad = [x for x in steps if x["result"] in ("거절", "끝남")]
+        if not olds or new is None:
+            continue
+        out.append(f"- {aid}: 옛 장부 {olds[-1]['value']:,.0f}원({olds[-1]['run']}) → 다시 계산 {new['value']:,.0f}원 / 옛 주문 "
+                   f"{len(steps)}건 중 받아지지 않음 {len(bad)}건")
+        for x in sorted(bad, key=lambda x: -x["qty"] * x["ref"] / C.ASSETS[x["asset"]].unit)[:3]:
+            what = "사기" if x["side"] == "buy" else "팔기"
+            why = reject_reason(x.get("why", "")) if x["result"] == "거절" else "값이 한도를 넘어 치러지지 못해서"
+            out.append(f"  - {x['run']} {C.ASSETS[x['asset']].name} {what} 약 {x['qty'] * x['ref'] / C.ASSETS[x['asset']].unit:,.0f}원어치"
+                       f" — {why}")
+    return out
+
+
 def late_note(at: dt.datetime, by: dt.time, what: str, broker: bool = True) -> str:
     """판단 마감 경고: 장 시작 주문은 09:00 시가에 체결되고 예측 기준도 그 시가라, 늦으면 그날 시가를 놓친다. 늦지 않았으면 ''.
     broker = 가상 증권사로 도는 날(늦어도 한국 거래소 주문이 장중이면 지금 가격으로 나간다), 아니면 옛 장부(다음 시가에 체결)."""
@@ -628,8 +605,7 @@ def briefing(D: Day, fetched: dict, tick: dict, late: str = "") -> str:
                   f"그대로, 사기는 지금 계좌에 있는 돈만큼만 — 같은 09:00에 팔리는 돈은 아직 못 쓴다). 예측 기준은 판단 뒤 첫 "
                   f"시가다 — **record를 {C.RECORD_BY:%H:%M} 전에** 돌린다(늦으면 ETF·종목 주문이 지금 가격으로 나간다).")
         if D.switched and D.recs["account"]:
-            L_.append("**갈아타는 날: 옛 대기 주문을 옛 규칙 가격으로 모두 끝내고, 계좌 넷이 오늘부터 가상 증권사로 돈다"
-                      "(보유는 그대로, 현금은 은행에서 시작).**")
+            L_ += carry_text(D)
     else:
         L_.append(f"체결은 판단 뒤 첫 시가(ETF·종목 09:00 시가, 코인 09:00 일봉 시가)이고, 예측 기준도 그 체결가다 — "
                   f"**record를 {C.RECORD_BY:%H:%M} 전에** 돌린다.")
@@ -934,8 +910,8 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
             R.write(root.records, kind, lines[kind])
     print(f"{run} 기록: " + ", ".join(f"{k} {len(v)}" for k, v in lines.items() if v))
     if D.switched and D.recs["account"]:
-        print("  갈아탐: 옛 대기 주문을 옛 규칙 가격으로 모두 끝내고 계좌 넷이 가상 증권사로 시작했다(start 줄 — 보유는 그대로, "
-              "현금은 은행에). 오늘 일지 '왜'나 조사 메모에 한 줄 적는다.")
+        for x in carry_text(D, [a for a in lines["account"]]):
+            print("  " + x.replace("**", ""))
     for k, d in D.sync_lines:
         if k == "fill":
             print(f"  [{d['account']}] 지난 주문 체결: {C.ASSETS[d['asset']].name} {'사기' if d['side'] == 'buy' else '팔기'} "

@@ -66,6 +66,21 @@ class Book:
                 continue
             self.acc[a["account"]][a["run"]] = a
         self.preds = {p["id"]: p for p in self.recs["prediction"]}
+        # 갈아타는 날(2026-11-10 3회) 옛 주문을 그대로 다시 넣은 줄: 그 주문·체결과 갈아타는 시각(phase 'carry' 줄의 시각) 전의 사건은
+        # 그날 '오늘 한 일'이 아니다(지난 일을 장부에 다시 넣은 것) — 일지의 오늘 문장·표에서 뺀다
+        self.replayed = {o["id"] for o in self.recs["order"] if o.get("replay_of")}
+        self.carry_at = {x["account"]: x["at"] for x in self.recs.get("broker", [])
+                         if x.get("type") == "phase" and (x.get("data") or {}).get("name") == "carry"}
+        self.switch_run = started
+
+    def replay(self, x: dict, kind: str) -> bool:
+        """그대로 다시 넣은 줄인가(주문·체결·증권사 사건)."""
+        if kind == "order":
+            return x["id"] in self.replayed
+        if kind == "fill":
+            return x.get("order") in self.replayed
+        until = self.carry_at.get(x.get("account"))
+        return bool((x.get("data") or {}).get("replay_of")) or (until is not None and x.get("at", "") < until)
 
     def value(self, account: str, run: str) -> float | None:
         a = self.acc[account].get(run)
@@ -86,6 +101,8 @@ class Book:
         for f in self.recs["fill"]:
             if f["account"] != account or f["asset"] != asset:
                 continue
+            if "seq" not in f and hi is not None:
+                continue   # 가상 증권사 계좌 줄(seq)의 역사는 증권사 줄뿐이다 — 갈아탄 뒤 옛 장부 체결은 견주지 않는다(비교용)
             if "seq" in f:
                 if (f["seq"] > hi if hi is not None else f["run"] > until) or (lo is not None and f["seq"] <= lo):
                     continue
@@ -142,9 +159,10 @@ def md(text: str) -> str:
 
 def broker_first(b: Book, me: dict, pa: dict | None, run: str) -> tuple[str, list[str]]:
     """가상 증권사로 도는 날의 첫 문장과 참고 사실: 오늘 바로 치러진 것(실제 값) / 장이 열리면 치를 주문 / 받아들여지지 않은 주문."""
-    events = [e for e in b.window("broker", "live:hand", me, pa) if e["run"] == run]
+    events = [e for e in b.window("broker", "live:hand", me, pa) if e["run"] == run and not b.replay(e, "broker")]
     gone = {e["data"].get("order") for e in events if e["type"] == "cancel"}   # 같은 날 취소한 주문은 '넣었다'에서 뺀다
-    orders = [o for o in b.window("order", "live:hand", me, pa) if o["run"] == run and o["id"] not in gone]
+    orders = [o for o in b.window("order", "live:hand", me, pa) if o["run"] == run and o["id"] not in gone
+              and not b.replay(o, "order")]
     fills = {f["order"]: f for f in b.window("fill", "live:hand", me, pa)}
     parts, ref = [], []
     for side, did in (("buy", "샀다"), ("sell", "팔았다")):
@@ -180,12 +198,10 @@ def broker_notes(b: Book, me: dict, pa: dict | None, run: str) -> list[str]:
     out = []
     orders = {o["id"]: o for o in b.recs["order"] if o["account"] == "live:hand"}
     todays = {o["id"] for o in b.window("order", "live:hand", me, pa) if o["run"] == run}
-    earlier = [f for f in b.window("fill", "live:hand", me, pa) if f["order"] not in todays]
-    if "seq" not in (pa or {"seq": 0}):   # 갈아타는 날: 오늘 실행이 끝낸 옛 주문(옛 모양 체결 줄)
-        earlier = [f for f in b.recs["fill"] if f["account"] == "live:hand" and "seq" not in f and f["run"] == run] + earlier
+    earlier = [f for f in b.window("fill", "live:hand", me, pa) if f["order"] not in todays and not b.replay(f, "fill")]
     if earlier:
         out.append(paid_text(earlier))
-    events = b.window("broker", "live:hand", me, pa)
+    events = [e for e in b.window("broker", "live:hand", me, pa) if not b.replay(e, "broker")]
     ended = [e for e in events if e["type"] == "expire"]
     if ended:
         out.append("값이 맞지 않아 치러지지 못하고 끝난 주문: " + ", ".join(
@@ -214,6 +230,37 @@ def broker_notes(b: Book, me: dict, pa: dict | None, run: str) -> list[str]:
         where += ". 증권 계좌에서 판 돈은 이틀 뒤(영업일 기준)부터 다른 곳으로 옮길 수 있다"
     out.append(where + ".")
     return out
+
+
+def carry_sentence(b: Book, me: dict, pa: dict, run: str) -> str:
+    """갈아타는 날의 둘째 문장: 오늘부터 실제 규칙으로 다시 계산한 잔고에서 이어 간다 — 옛 장부 값 → 다시 계산한 값, 받아지지 않은
+    옛 주문 수와 큰 것 몇 개(쉬운 말)."""
+    v = me["value"]
+    replayed = [o for o in b.recs["order"] if o["account"] == "live:hand" and o.get("replay_of")]
+    rejects = [e for e in b.recs.get("broker", []) if e.get("account") == "live:hand" and e.get("type") == "reject"
+               and (e.get("data") or {}).get("replay_of")]
+    expired = [e for e in b.recs.get("broker", []) if e.get("account") == "live:hand" and e.get("type") == "expire"
+               and (e.get("data") or {}).get("order") in b.replayed]
+    old = {o["id"]: o for o in b.recs["order"] if "seq" not in o}
+    n = len(replayed) + len(rejects)
+    text = (f"오늘부터 계좌를 실제 규칙으로 다시 계산한 잔고에서 이어 간다. 그동안의 장부는 실제로는 못 하는 거래(같은 시각에 판 돈으로 "
+            f"사기 등)를 해 준 것이라, 지난 주문 {n}건을 그때 값 그대로 다시 넣어 계산했더니 어제 옛 장부의 {won(pa['value'], False)}이 "
+            f"{won(v, False)}(시작 이후 {pct(v / C.START_CASH - 1)})이 됐다.")
+    bad = []
+    for e in rejects:
+        o = old.get(e["data"]["replay_of"]) or {}
+        bad.append((o.get("qty_units", 0) * o.get("ref_price", 0) / C.ASSETS[o["asset"]].unit if o else 0,
+                    f"{md(o.get('run', run))} {asset_label(e['data']['asset'])} {'사기' if e['data'].get('side') == 'buy' else '팔기'}"
+                    f"({reject_reason(e['note'])})"))
+    for e in expired:
+        o = next((x for x in replayed if x["id"] == e["data"]["order"]), None)
+        if o:
+            bad.append((order_amount(o), f"{md(old.get(o['replay_of'], {}).get('run', run))} {asset_label(o['asset'])} 사기(값이 한도를 넘어 치러지지 못함)"))
+    if bad:
+        top = [t for _, t in sorted(bad, key=lambda x: -x[0])[:3]]
+        text += (f" 그 가운데 {len(bad)}건은 그 순간 돈이나 주식이 없어 받아지지 않았다(체결된 줄 알았는데 안 된 것) — 큰 것: "
+                 + ", ".join(top) + ".")
+    return text
 
 
 def paid_text(fills: list[dict]) -> str:
@@ -272,13 +319,18 @@ def daily(folder: Path, day: dt.date) -> str:
     else:
         first = "오늘은 거래하지 않았다."
     v = me["value"]
-    if pa is None:
+    # 갈아타는 날(2026-11-10 3회): 어제까지는 옛 장부의 계좌 줄, 오늘부터 가상 증권사 계좌 줄 — 두 값의 차이는 하루 손익이 아니라
+    # '실제 규칙으로 다시 계산한 몫'이다. 표의 '오늘' 칸도 그 차이를 손익으로 보이지 않는다
+    switch = brk and pa is not None and "seq" not in pa
+    if switch:
+        second = carry_sentence(b, me, pa, run)
+    elif pa is None:
         second = "오늘 가상 1,000만 원으로 계좌를 시작했다."
     else:
         d = v - pa["value"]
         second = (f"계좌는 {won(d)}({pct(d / pa['value'])}) {'늘어' if d >= 0 else '줄어'} {won(v, False)}"
                   f"(시작 이후 {pct(v / start - 1)})이 됐다.")
-    if eq and pa is not None:  # 첫날은 견줄 것이 없다
+    if eq and pa is not None and not switch:  # 첫날은 견줄 것이 없다
         gap = (v / start - 1) - (eq["value"] / start - 1)
         second += (f" 셋을 나눠 사 두기만 했을 때({pct(eq['value'] / start - 1)})보다 {abs(gap) * 100:.2f}%p "
                    f"{'앞섰다' if gap >= 0 else '뒤졌다'}.")
@@ -311,35 +363,40 @@ def daily(folder: Path, day: dt.date) -> str:
 
     # 계좌 표
     lines += ["| 대상 | 보유 | 평가액 | 오늘 | 누적 |", "|---|--:|--:|--:|--:|"]
+    redo = "다시 계산"   # 갈아타는 날의 '오늘' 칸
     for a in C.ASSET_IDS:
         val = asset_value(me, a)
         today = 0.0
-        if brk:   # 오늘 = 오늘 평가액 − 어제 평가액 − 그 사이 체결 순투자(그날 바로 치른 것까지 맞게)
+        if switch:
+            today = None
+        elif brk:   # 오늘 = 오늘 평가액 − 어제 평가액 − 그 사이 체결 순투자(그날 바로 치른 것까지 맞게)
             today = val - (asset_value(pa, a) if pa else 0.0) - b.invested("live:hand", a, run, prev or "", me, pa)
         elif pa and pa["prices"].get(a) and me["prices"].get(a):
             today = pa["positions"].get(a, 0) * (me["prices"][a][1] - pa["prices"][a][1]) / C.ASSETS[a].unit
         cum = val - b.invested("live:hand", a, run, upto=me)
         lines.append(f"| {C.ASSETS[a].name} | {units_text(a, me['positions'].get(a, 0))} | {won(val, False)} | "
-                     f"{won(today)} | {won(cum)} |")
+                     f"{redo if today is None else won(today)} | {won(cum)} |")
     # 종목 (2026-10-29): 오늘 들고 있거나, 어제 들었거나, 오늘 체결된 것. 오늘 = 오늘 평가액 − 어제 평가액 − 오늘 체결 순투자
     shown = sorted({a for a in [*me["positions"], *(pa["positions"] if pa else {})] if C.is_stock(a)}
                    | {f["asset"] for f in b.recs["fill"] if f["account"] == "live:hand" and f["run"] == run and C.is_stock(f["asset"])
-                      and f.get("seq", 0) <= me.get("seq", 0)})
+                      and f.get("seq", 0) <= me.get("seq", 0) and not b.replay(f, "fill")})
     for a in shown:
         val = asset_value(me, a)
         v0 = asset_value(pa, a) if pa else 0.0
         today = val - v0 - b.invested("live:hand", a, run, prev or "", me, pa)
         cum = val - b.invested("live:hand", a, run, upto=me)
         lines.append(f"| {asset_label(a)} | {units_text(a, me['positions'].get(a, 0))} | {won(val, False)} | "
-                     f"{won(today)} | {won(cum)} |")
+                     f"{redo if switch else won(today)} | {won(cum)} |")
     lines.append(f"| 현금 | | {won(me['cash'], False)} | | |")
     d_me = v - pa["value"] if pa else 0.0
-    lines.append(f"| **계좌 합계** | | **{won(v, False)}** | {won(d_me)} ({pct(d_me / pa['value']) if pa else '+0.00%'}) | "
-                 f"{won(v - start)} ({pct(v / start - 1)}) |")
+    lines.append(f"| **계좌 합계** | | **{won(v, False)}** | "
+                 + (f"{redo}(옛 장부 {won(pa['value'], False)}에서)" if switch else
+                    f"{won(d_me)} ({pct(d_me / pa['value']) if pa else '+0.00%'})")
+                 + f" | {won(v - start)} ({pct(v / start - 1)}) |")
     if eq:
         pe = b.acc["baseline:equal_hold"].get(prev) if prev else None
         de = eq["value"] - pe["value"] if pe else 0.0
-        lines.append(f"| 기준선: 셋을 나눠 사 두기만 | | {won(eq['value'], False)} | {won(de)} | "
+        lines.append(f"| 기준선: 셋을 나눠 사 두기만 | | {won(eq['value'], False)} | {redo if switch else won(de)} | "
                      f"{won(eq['value'] - start)} ({pct(eq['value'] / start - 1)}) |")
     filled = {f["order"] for f in b.recs["fill"]}
     waiting = [o for o in b.recs["order"] if o["account"] == "live:hand" and o["run"] <= run and o["id"] not in filled]
@@ -403,6 +460,10 @@ def weekly(folder: Path, day: dt.date, places_path: Path | None = None) -> str:
         v = b.acc[aid][run]["value"]
         lines.append(f"| {label} | {won(s0, False)} | {won(v, False)} | {won(v - s0)} ({pct(v / s0 - 1)}) | "
                      f"{won(v - start)} ({pct(v / start - 1)}) |")
+    sw = b.switch_run.get("live:hand")
+    if sw and mon <= sw <= run:   # 갈아탄 주(2026-11-10 3회): '이번 주'에 다시 계산한 몫이 들어 있다
+        lines += ["", f"{md(sw)}부터 계좌를 실제 규칙으로 다시 계산한 잔고에서 이어 갔다 — 위 '이번 주' 칸에는 옛 장부 값에서 다시 계산한 "
+                      f"값으로 바뀐 몫이 같이 들어 있다(그날 일지 참고)."]
     lines += ["", "## 2. 대상별 (이 계좌)", "| 대상 | 이번 주 손익 | 지금 평가액 |", "|---|--:|--:|"]
     me = b.acc["live:hand"].get(run)
     runs = sorted(r for r in b.acc["live:hand"] if r < mon)

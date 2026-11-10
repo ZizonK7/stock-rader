@@ -148,35 +148,9 @@ def rebalance(b: B.Broker, targets: dict[str, float | None], prices: dict[str, f
 
     # 3. 돈 옮기기: 그 대상의 주머니에 모자란 만큼, 은행 먼저 → 다른 주머니의 뺄 수 있는 돈(은행을 거쳐). 사는 차례대로 한 대상씩
     #    부른다 — 앞 대상이 먼저 돈을 받는다(고치기 전에는 증권 계좌가 자기 살 몫을 먼저 남겨 두어 비트코인이 덜 샀다).
-    def top_up(pocket: str, need: int, least: int) -> None:
-        """need = 그 대상을 다 사는 데 드는 돈, least = 한 단위라도 사는 데 드는 돈(한 주, 업비트 최소 주문). 모아도 least에 못 미치면
-        옮기지 않는다 — 못 살 대상에 돈을 옮겨 두었다가 다음 대상이 도로 빼 가는 헛걸음을 막는다."""
-        t = clock.now()
-        lack = need - b.orderable(pocket, t)
-        if lack <= 0:
-            return
-        other = "upbit" if pocket == "sec" else "sec"
-        fee = RU.value("upbit_krw_withdraw_fee") if other == "upbit" else 0
-        spare = b.withdrawable(other, t) - fee
-        floor_ = MOVE_MIN_FROM_UPBIT if other == "upbit" else 1
-        reach = b.orderable(pocket, t) + b.withdrawable("bank", t) + (spare if min(lack, spare) >= floor_ else 0)
-        if reach < least:
-            return
-        from_bank = min(lack, b.withdrawable("bank", t))
-        if from_bank > 0:
-            ask(b.transfer(t, "bank", pocket, from_bank, f"{pocket}에서 살 돈"))
-            lack -= from_bank
-        if lack <= 0:
-            return
-        spare = b.withdrawable(other, t) - fee
-        amount = min(lack, spare)
-        if amount < floor_:
-            if spare > 0 and other == "upbit":
-                plan.notes.append(f"업비트의 남는 돈 {max(amount, 0):,}원은 옮기지 않았다 — {MOVE_MIN_FROM_UPBIT:,}원보다 작으면 "
-                                  f"출금 수수료({fee:,}원)가 아깝다")
-            return
-        if ask(b.transfer(t, other, "bank", amount, f"{pocket}에서 살 돈")).ok:
-            ask(b.transfer(t, "bank", pocket, amount, f"{pocket}에서 살 돈"))
+    #    갈아타는 날 옛 주문을 그대로 넣을 때(whatif.carry)도 같은 함수(top_up)를 쓴다.
+    def fund(pocket: str, need: int, least: int) -> None:
+        top_up(b, clock.now(), pocket, need, least, ask, plan.notes)
 
     # 4–5. 사기: 차이가 큰 것부터, 그 대상의 주머니에 돈을 대어 준 뒤 그 주머니의 주문 가능 금액 안에서만
     for a, diff in buys:
@@ -184,7 +158,7 @@ def rebalance(b: B.Broker, targets: dict[str, float | None], prices: dict[str, f
         if spec.kind == "coin":
             q = math.floor(diff)
             if q >= mn:
-                top_up("upbit", q + RU.fee(a, q), mn + RU.fee(a, mn))
+                fund("upbit", q + RU.fee(a, q), mn + RU.fee(a, mn))
             t = clock.now()
             avail = b.orderable("upbit", t)
             amt = min(q, int(avail / (1 + spec.fee)))
@@ -214,7 +188,7 @@ def rebalance(b: B.Broker, targets: dict[str, float | None], prices: dict[str, f
             unit = up * (1 + NOW_CUSHION) if up else None
         if q <= 0 or not unit:
             continue
-        top_up("sec", cost(a, q, unit), cost(a, 1, unit))
+        fund("sec", cost(a, q, unit), cost(a, 1, unit))
         t = clock.now()
         avail = b.orderable("sec", t)
         n = min(q, int(avail // (unit * (1 + spec.fee))))
@@ -235,6 +209,47 @@ def rebalance(b: B.Broker, targets: dict[str, float | None], prices: dict[str, f
                 "reasons": {a: reasons[a] for a in targets if reasons.get(a)}}
         ask(b.mark(clock.now(), "plan", data))
     return plan
+
+
+def reach(b: B.Broker, t: dt.datetime, pocket: str, lack: int) -> int:
+    """그 주머니에서 지금 쓸 수 있게 모을 수 있는 돈(top_up과 같은 셈): 그 주머니의 주문 가능 금액 + 은행의 뺄 수 있는 돈 + 다른
+    주머니의 뺄 수 있는 돈(출금 수수료를 뺀 값 — 업비트에서는 모자란 돈 lack과 그 돈 중 작은 쪽이 MOVE_MIN_FROM_UPBIT 이상일 때만)."""
+    other = "upbit" if pocket == "sec" else "sec"
+    fee = RU.value("upbit_krw_withdraw_fee") if other == "upbit" else 0
+    spare = b.withdrawable(other, t) - fee
+    floor_ = MOVE_MIN_FROM_UPBIT if other == "upbit" else 1
+    return b.orderable(pocket, t) + b.withdrawable("bank", t) + (spare if min(lack, spare) >= floor_ else 0)
+
+
+def top_up(b: B.Broker, t: dt.datetime, pocket: str, need: int, least: int, ask, notes: list[str]) -> None:
+    """pocket(sec·upbit)의 주문 가능 금액을 need까지 채운다 — 은행 먼저, 그다음 다른 주머니의 뺄 수 있는 돈을 은행을 거쳐.
+    need = 그 대상을 다 사는 데 드는 돈, least = 한 단위라도 사는 데 드는 돈(한 주, 업비트 최소 주문). 모아도 least에 못 미치면
+    옮기지 않는다 — 못 살 대상에 돈을 옮겨 두었다가 다음 대상이 도로 빼 가는 헛걸음을 막는다. ask = 증권사 결과를 받는 함수,
+    notes = 옮기지 않은 까닭을 적을 목록. 증권사의 공개 요청(transfer)과 조회만 쓴다."""
+    lack = need - b.orderable(pocket, t)
+    if lack <= 0:
+        return
+    other = "upbit" if pocket == "sec" else "sec"
+    fee = RU.value("upbit_krw_withdraw_fee") if other == "upbit" else 0
+    spare = b.withdrawable(other, t) - fee
+    floor_ = MOVE_MIN_FROM_UPBIT if other == "upbit" else 1
+    if reach(b, t, pocket, lack) < least:
+        return
+    from_bank = min(lack, b.withdrawable("bank", t))
+    if from_bank > 0:
+        ask(b.transfer(t, "bank", pocket, from_bank, f"{pocket}에서 살 돈"))
+        lack -= from_bank
+    if lack <= 0:
+        return
+    spare = b.withdrawable(other, t) - fee
+    amount = min(lack, spare)
+    if amount < floor_:
+        if spare > 0 and other == "upbit":
+            notes.append(f"업비트의 남는 돈 {max(amount, 0):,}원은 옮기지 않았다 — {MOVE_MIN_FROM_UPBIT:,}원보다 작으면 "
+                         f"출금 수수료({fee:,}원)가 아깝다")
+        return
+    if ask(b.transfer(t, other, "bank", amount, f"{pocket}에서 살 돈")).ok:
+        ask(b.transfer(t, "bank", pocket, amount, f"{pocket}에서 살 돈"))
 
 
 def describe(plan: Plan, name=lambda a: a) -> list[str]:

@@ -172,48 +172,60 @@ class F2Check(unittest.TestCase):
             book = RP.Book(folder)
             self.assertEqual(book.acc["t"]["2026-11-06"]["cash"], real["cash"])
 
-    def test_f2c_old_shape_lines_before_start_and_old_fills_on_the_switch_day_are_fine(self):
-        old_acc = {"id": "live:hand:2026-11-04", "run": "2026-11-04", "account": "live:hand", "cash": 1_000_000,
-                   "positions": {E: 0, U: 0, BTC: 0}, "prices": {}, "value": 1_000_000.0, "pending": ["live:hand:2026-11-04:069500"]}
-        old_order = {"id": "live:hand:2026-11-04:069500", "run": "2026-11-04", "account": "live:hand", "asset": E,
+    def test_f2c_old_shape_lines_before_start_are_fine_but_not_on_or_after_the_switch_day(self):
+        """seq 없는 옛 줄은 start 실행 날짜 '전'만 정당하다(2026-11-10 3회: 갈아타는 날 옛 장부가 옛 주문을 끝내는 일이 없어져, 옛 모양
+        체결 줄도 그날부터는 증권사가 만든 줄이 아니다 — 3회 전에는 '그날까지'였다). 진짜 계좌가 아닌 계좌로 칸 규칙만 본다."""
+        acc = "t"
+        old_acc = {"id": "t:2026-11-04", "run": "2026-11-04", "account": acc, "cash": 1_000_000,
+                   "positions": {E: 0, U: 0, BTC: 0}, "prices": {}, "value": 1_000_000.0, "pending": ["t:2026-11-04:069500"]}
+        old_order = {"id": "t:2026-11-04:069500", "run": "2026-11-04", "account": acc, "asset": E,
                      "side": "buy", "qty_units": 10, "ref_price": 80_000.0, "reason": "", "decided_at":
                      "2026-11-04T08:30:00+09:00", "fill_rule": "open"}
         o = bar(self.rows, E, DAY(2026, 11, 4)).open
         value = 10 * o
         fee = RU.fee(E, value)
-        old_fill = {"id": "fill:live:hand:2026-11-04:069500", "run": "2026-11-06", "account": "live:hand",
+        old_fill = {"id": "fill:t:2026-11-04:069500", "run": "2026-11-05", "account": acc,
                     "order": old_order["id"], "asset": E, "side": "buy", "fill_date": "2026-11-04", "price": float(o),
                     "price_kind": "open", "qty_units": 10, "value": value, "fee": fee, "cash_after": 1_000_000 - value - fee,
                     "note": ""}
-        b = B.Broker("live:hand", Q.BarQuotes(self.rows))
+        b = B.Broker(acc, Q.BarQuotes(self.rows))
         b.start(T(11, 6, 8, 0), bank=1_000_000 - value - fee, units={E: 10}, cost={E: value})
         lines = b.lines()
         lines["account"].insert(0, old_acc)
         lines["order"].insert(0, old_order)
         lines["fill"].insert(0, old_fill)
         self.assertEqual(B.check(lines, self.rows)[0], [])
-        later = copy.deepcopy(lines)                       # 옛 모양 체결 줄이 갈아탄 날 뒤에 붙으면 오류
-        later["fill"].append(dict(old_fill, id="fill:x", run="2026-11-07"))
-        self.assertTrue(any("seq" in e for e in B.check(later, self.rows)[0]))
+        for run in ("2026-11-06", "2026-11-07"):   # 옛 모양 체결 줄이 갈아탄 날이나 그 뒤에 붙으면 오류
+            later = copy.deepcopy(lines)
+            later["fill"].append(dict(old_fill, id="fill:x", run=run))
+            self.assertTrue(any("seq" in e for e in B.check(later, self.rows)[0]), run)
 
-    def test_f2d_start_must_match_the_old_ledger(self):
-        old_acc = {"id": "live:calc:2026-11-04", "run": "2026-11-04", "account": "live:calc", "cash": 1_200_000,
-                   "positions": {E: 3, U: 0, BTC: 0}, "prices": {}, "value": 1_440_000.0, "pending": []}
-
-        def lines_with(bank, units):
-            b = B.Broker("live:calc", Q.BarQuotes(self.rows))
-            b.start(T(11, 6, 8, 0), bank=bank, units=units, cost={a: 80_000.0 * n for a, n in units.items()})
-            ls = b.lines()
-            ls["account"].insert(0, old_acc)
-            return ls
-        self.assertEqual(B.check(lines_with(1_200_000, {E: 3}), self.rows)[0], [])
-        for bank, units in ((2_200_000, {E: 3}), (1_200_000, {E: 4}), (1_200_000, {})):
-            errs = B.check(lines_with(bank, units), self.rows)[0]
-            self.assertTrue(any("옛 장부" in e for e in errs), (bank, units, errs))
+    def test_f2d_start_must_be_the_start_cash_at_the_first_old_run_and_replay_the_old_orders(self):
+        """진짜 계좌의 start = 첫 옛 실행 시각의 은행 1,000만 원(2026-11-10 3회 — 3회 전에는 '옛 장부의 마지막 상태'였다), 그 뒤
+        옛 주문을 그대로 넣은 줄이 옛 주문과 하나씩 맞는다. 자세한 위조 시험은 tests/test_carryover.py StartCheck."""
+        from market import whatif as W
+        old_order = {"id": "live:calc:2026-11-04:069500", "run": "2026-11-04", "account": "live:calc", "asset": E,
+                     "side": "buy", "qty_units": 3, "ref_price": 80_000.0, "reason": "", "decided_at":
+                     "2026-11-04T07:40:00+09:00", "fill_rule": "open"}
+        run = {"id": "live:2026-11-04", "run": "2026-11-04", "mode": "live", "notes": [],
+               "steps": {"decided_at": "2026-11-04T07:40:00+09:00"}}
+        K = W.carry({"order": [old_order], "run": [run]}, self.rows, T(11, 6, 8, 0), None, DAY(2026, 11, 6))
+        lines = {k: [d for b in K.brokers.values() for d in b.new[k]] for k in B.KINDS}
+        lines["order"].insert(0, old_order)
+        lines["run"] = [run]
+        self.assertEqual(B.check(lines, self.rows)[0], [])
+        st = next(d for d in lines["broker"] if d["account"] == "live:calc" and d["type"] == "start")
+        self.assertEqual((st["at"], st["data"]["pockets"]), ("2026-11-04T07:40:00+09:00", {"bank": C.START_CASH, "sec": 0, "upbit": 0}))
+        for edit in (lambda d: d["data"]["pockets"].update(bank=C.START_CASH + 1),          # 부풀린 시작 잔고
+                     lambda d: d["data"].update(units={E: 3}, cost={E: 240_000.0}),          # 3회 전 방식: 옛 보유를 들고 시작
+                     lambda d: d.update(at="2026-11-04T07:41:00+09:00")):                    # 첫 옛 실행 시각이 아님
+            forged = copy.deepcopy(lines)
+            edit(next(d for d in forged["broker"] if d["account"] == "live:calc" and d["type"] == "start"))
+            self.assertTrue(any("시작" in e for e in B.check(forged, self.rows)[0]))
         # 옛 기록이 없는 진짜 계좌는 은행 = 시작 금액
         b = B.Broker("live:hand", Q.BarQuotes(self.rows))
         b.start(START, bank=C.START_CASH + 1_000_000)
-        self.assertTrue(any("옛 장부" in e for e in B.check(b.lines(), self.rows)[0]))
+        self.assertTrue(any("시작 잔고" in e for e in B.check(b.lines(), self.rows)[0]))
         b = B.Broker("live:hand", Q.BarQuotes(self.rows))
         b.start(START, bank=C.START_CASH)
         self.assertEqual(B.check(b.lines(), self.rows)[0], [])

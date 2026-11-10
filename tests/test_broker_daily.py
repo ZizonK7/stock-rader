@@ -518,25 +518,41 @@ class Replan(unittest.TestCase):
 
 
 class Switch(unittest.TestCase):
-    """갈아타는 날(17절)."""
+    """갈아타는 날(17절, 2026-11-10 3회 사용자 결정: 옛 장부의 계좌는 비교용으로 남기고, 옛 주문을 그대로 넣어 다시 계산한 잔고에서
+    이어 간다). 3회 전의 뜻(옛 대기 주문을 옛 규칙으로 끝내고 옛 장부의 보유·현금으로 start)에서 바꾼 것은 보고서
+    docs/worklog/2026-11-10-broker-carryover.md '시험을 바꾼 것' 표."""
 
-    def old_day(self, root, day):
+    def old_day(self, root, day, weights=None):
         """갈아타지 못하게 막아 옛 장부로 하루를 돌린다(옛 모양 기록을 만든다)."""
-        with mock.patch.object(D, "finish_old", lambda *a, **k: (None, [], "시험: 막아 둠")):
-            return day_run(root, day)
+        with mock.patch.object(D, "carry_over", lambda *a, **k: (None, "시험: 막아 둠")):
+            return day_run(root, day, weights)
+
+    @staticmethod
+    def expected(root, day, when):
+        """갈아타기 전 기록·시세로 따로 계산한 그대로 대입(갈아타는 실행이 쓴 것과 같은지 견준다)."""
+        from market import whatif as W
+        before = {k: R.read(root.records, k) for k in ("run", "order")}
+        rows = {p.stem: PR.load(p.stem, root.prices) for p in sorted(root.prices.glob("*.csv"))}
+        return W.carry(before, rows, when, D.quotes_for(root), day)
+
+    @staticmethod
+    def state(lines, aid):
+        b = B.Broker(aid, Q.BarQuotes({}), lines)
+        return b.pockets(), b.holdings(), sorted(p.id for p in b.pending())
 
     def test_e6_synthetic_switch_and_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_root(tmp)
-            code, said = self.old_day(root, d(9, 2))
+            code, said = self.old_day(root, d(9, 2), {E: 0.5, BTC: 0.4})
             self.assertEqual(code, 0)
             self.assertIn("옛 장부로 돌았다", said)
             r = recs(root)
             self.assertEqual((r["broker"], [o for o in r["order"] if "pocket" in o]), ([], []))
             self.assertTrue(all(o["fill_rule"] == "open" for o in r["order"]))
-            # 다음 날 진행 중인 코인 봉(어제 09:00 시가)을 못 받으면: 계좌 넷 모두 그날도 옛 장부로 돈다
+            # 다음 날 어제 09:00 비트코인 봉(진행 중)을 못 받으면 그대로 넣기를 끝낼 수 없다: 계좌 넷 모두 그날도 옛 장부로 돈다.
+            # 이날은 한국 묶음을 팔아 그 돈으로 미국 묶음을 같은 09:00에 사는 옛 주문을 낸다(옛 장부는 치러 주고 증권사는 거절 — F137)
             with use(NoRunningCoin):
-                code, said = day_run(root, d(9, 3))
+                code, said = day_run(root, d(9, 3), {E: 0.05, U: 0.5, BTC: 0.4})
             self.assertEqual(code, 0)
             self.assertIn("받지 못함", said)
             r = recs(root)
@@ -545,31 +561,43 @@ class Switch(unittest.TestCase):
             self.assertEqual(R.read(root.records, "run")[-1]["steps"]["broker"]["mode"], "ledger")
             brief = (root.day_dir(d(9, 3)) / "briefing.md").read_text(encoding="utf-8")
             self.assertIn("옛 장부로 돈다", brief)
-            # 그다음 날: 옛 대기 주문을 옛 규칙 가격(그 봉의 시가)으로 모두 끝내고 갈아탄다
+            # 그다음 날: 옛 주문을 그대로 넣어 다시 계산한 잔고에서 이어 간다
             before = recs(root)
-            old = {a: L.rebuild(a, before["account"], before["order"]) for a in C.LIVE_ACCOUNTS}
-            pending = [o for acc in old.values() for o in acc.pending]
-            self.assertTrue(any(o.asset == BTC for o in pending) and any(o.asset == E for o in pending))
+            old = [o for o in before["order"] if "pocket" not in o]
+            want = self.expected(root, d(9, 4), at(d(9, 4), 8, 30))
             code, said = day_run(root, d(9, 4))
-            self.assertEqual(code, 0)
-            self.assertIn("갈아탐", said)
+            self.assertEqual(code, 0, said)
+            self.assertIn("다시 계산한 잔고에서 이어 간다", said)
             r = recs(root)
-            self.assertEqual({x["account"] for x in r["broker"] if x["type"] == "start"}, set(C.LIVE_ACCOUNTS))
-            rows = {a: {x.date.isoformat(): x for x in PR.load(a, root.prices)} for a in C.ASSET_IDS}
-            for o in pending:
-                f = next(x for x in r["fill"] if x["order"] == o.id)
-                self.assertNotIn("seq", f)                                        # 옛 모양 체결 줄(옛 장부가 만든 것)
-                self.assertEqual((f["fill_date"], f["price"]), (o.run.isoformat(), rows[o.asset][o.run.isoformat()].open))
-            for aid in C.LIVE_ACCOUNTS:   # 보유는 그대로, 현금은 은행에
-                start = next(x for x in r["broker"] if x["type"] == "start" and x["account"] == aid)["data"]
-                fills = [f for f in r["fill"] if f["account"] == aid and "seq" not in f]
-                units = {}
-                for f in fills:
-                    units[f["asset"]] = units.get(f["asset"], 0) + (f["qty_units"] if f["side"] == "buy" else -f["qty_units"])
-                self.assertEqual(start["units"], {a: n for a, n in units.items() if n})
-                self.assertEqual(start["pockets"], {"bank": fills[-1]["cash_after"] if fills else C.START_CASH, "sec": 0, "upbit": 0})
-                if aid != "baseline:cash":   # 평균 산 값 = 옛 체결 기록의 이동 평균(여기서는 사기만 있었다)
-                    self.assertEqual(start["cost"], {a: float(sum(f["value"] for f in fills if f["asset"] == a)) for a in units})
+            starts = [x for x in r["broker"] if x["type"] == "start"]
+            self.assertEqual([(x["account"], x["at"], x["run"], x["data"]) for x in starts],
+                             [(a, at(d(9, 2), 8, 30).isoformat(), "2025-09-04",
+                               {"pockets": {"bank": C.START_CASH, "sec": 0, "upbit": 0}, "units": {}, "cost": {}})
+                              for a in C.LIVE_ACCOUNTS])
+            # 옛 주문마다 다시 넣은 줄(주문 또는 거절) 하나, run은 갈아타는 날·시각은 그때, id는 옛 주문과 겹치지 않는다
+            again = [o for o in r["order"] if o.get("replay_of")] + [x for x in r["broker"] if x["type"] == "reject"
+                                                                     and x["data"].get("replay_of")]
+            refs = sorted(x.get("replay_of") or x["data"]["replay_of"] for x in again)
+            self.assertEqual(refs, sorted(o["id"] for o in old))
+            self.assertTrue(all(x["run"] == "2025-09-04" for x in again))
+            self.assertFalse({o["id"] for o in old} & {o["id"] for o in r["order"] if "pocket" in o})
+            rejects = [x for x in again if x.get("type") == "reject"]
+            self.assertTrue(rejects, "같은 09:00에 판 돈으로 사는 옛 주문이 거절되어야 한다(F137)")
+            # 증권사 기록 = 따로 계산한 그대로 대입(그날 판단 전까지)과 같다
+            lines = {k: r[k] for k in B.KINDS}
+            for aid in C.LIVE_ACCOUNTS:
+                cut = next(x["seq"] for x in r["broker"] if x["account"] == aid and x["type"] == "phase")
+                upto = {k: [x for x in v if x.get("seq", 10**9) <= cut and x.get("account") == aid] for k, v in lines.items()}
+                b = want.brokers[aid]
+                self.assertEqual(self.state(upto, aid), (b.pockets(), b.holdings(), sorted(p.id for p in b.pending())), aid)
+            # 옛 장부 값과 다시 계산한 값이 다르다(받아지지 않은 옛 주문 때문에)
+            old_v = [x for x in r["account"] if x["account"] == "live:hand" and "seq" not in x][-1]["value"]
+            new_v = of(r["account"], run="2025-09-04")[0]["value"]
+            self.assertNotAlmostEqual(old_v, new_v, places=0)
+            # 옛 계좌·주문·체결 줄은 그대로 남고(비교용), 갈아타는 날의 계좌 줄은 증권사의 것 하나, 옛 모양 체결 줄을 더 쓰지 않는다
+            self.assertEqual([x for x in r["account"] if "seq" not in x], [x for x in before["account"]])
+            self.assertEqual([x for x in r["fill"] if "seq" not in x], before["fill"])
+            self.assertEqual([x["account"] for x in r["account"] if x["run"] == "2025-09-04"], list(C.LIVE_ACCOUNTS))
             self.assertFalse([o for o in r["order"] if "pocket" not in o and o["run"] == "2025-09-04"])   # 새 주문은 증권사로만
             self.assertEqual(R.check(root.path, [root.records]), [])
             # 이어서 장 시작 뒤 단계와 다음 날
@@ -579,9 +607,46 @@ class Switch(unittest.TestCase):
             # 갈아탄 뒤 옛 장부는 증권사 주문을 읽지 않는다
             r = recs(root)
             self.assertTrue(all("seq" not in x for k in ("order", "account") for x in D.old_lines(r, k)))
-            # 일지: 옛 날짜는 옛 문장, 갈아탄 날부터 새 문장
+            # 일지: 옛 날짜는 옛 문장, 갈아탄 날은 '다시 계산' 문장과 표 칸(옛 값과 새 값의 차이를 하루 손익으로 보이지 않는다)
             self.assertIn("값은 주문 뒤 처음 정해지는 시가로 치른다", RP.daily(root.records, d(9, 2)))
-            self.assertIn("넣었다", RP.daily(root.records, d(9, 4)))
+            text = RP.daily(root.records, d(9, 4))
+            self.assertIn("오늘부터 계좌를 실제 규칙으로 다시 계산한 잔고에서 이어 간다", text)
+            self.assertIn("받아지지 않았다", text)
+            self.assertIn("| **계좌 합계** | | **", text)
+            self.assertIn("다시 계산(옛 장부", text)
+            self.assertNotRegex(re.sub(r"\[\[채울 것.*?\]\]|<!--.*?-->", "", text, flags=re.S), r"None|nan|\[\[")
+            self.assertNotIn("지난 주문이 치러진 값", text)   # 다시 넣은 옛 주문의 체결은 '오늘 치러진 것'이 아니다
+            nxt = RP.daily(root.records, d(9, 5))
+            self.assertNotIn("다시 계산", nxt.split("| 대상 |")[1])
+            self.assertIn("계좌는", nxt)
+
+    def test_e6b_a_crash_inside_the_recompute_means_the_old_ledger_that_day(self):
+        """2회차(메인 결정 B): 다시 계산(whatif.carry) 안에서 예외가 나면 멈추지 않고 그날은 계좌 넷 모두 옛 장부로 돈다 — 예측·채점
+        기록(실험의 본체)이 비지 않게. briefing과 run notes에 '갈아타지 못함'과 까닭. 다음 날 정상이면 갈아탄다."""
+        from market import whatif as W
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_root(tmp)
+            self.assertEqual(self.old_day(root, d(9, 2), {E: 0.5, BTC: 0.4})[0], 0)
+
+            def boom(*a, **k):
+                raise ZeroDivisionError("시험: 다시 계산 안의 버그")
+            with mock.patch.object(W, "carry", boom):
+                code, said = day_run(root, d(9, 3), {E: 0.3, BTC: 0.3})
+            self.assertEqual(code, 0, said)
+            r = recs(root)
+            self.assertEqual(r["broker"], [])
+            self.assertTrue(of(r["order"], run="2025-09-03"))                 # 옛 장부 주문(그날 판단은 남았다)
+            run = R.read(root.records, "run")[-1]
+            self.assertEqual(run["steps"]["broker"]["mode"], "ledger")
+            self.assertTrue(any("갈아타지 못함" in n and "ZeroDivisionError" in n for n in run["notes"]), run["notes"])
+            self.assertTrue(R.read(root.records, "prediction"))
+            brief = (root.day_dir(d(9, 3)) / "briefing.md").read_text(encoding="utf-8")
+            self.assertIn("갈아타지 못함", brief.split("## 시세")[0])
+            self.assertIn("ZeroDivisionError", brief.split("## 시세")[0])
+            code, said = day_run(root, d(9, 4))
+            self.assertEqual(code, 0, said)
+            self.assertIn("다시 계산한 잔고에서 이어 간다", said)
+            self.assertEqual(R.check(root.path, [root.records]), [])
 
     def test_e6_real_records_copy_switches_cleanly(self):
         """지금 저장소의 기록·시세를 임시 폴더에 복사해(진짜 폴더는 읽기만) 다음 판단을 흉내 낸다. 그다음 거래일들의 가짜 봉은
@@ -607,14 +672,12 @@ class Switch(unittest.TestCase):
                         c = o + t
                     day += dt.timedelta(days=1)
                 PR.append(a, new, root.prices)
-            # 옛 대기 주문의 체결 시각이 모두 지난 첫 아침을 고른다(주말 주문은 월요일 09:00을 기다린다)
+            # 옛 주문을 모두 낼 수 있는 첫 아침을 고른다(그 09:00 비트코인 값을 받을 수 있어야 한다)
             day = next(x for x in (last_run + dt.timedelta(days=i) for i in range(1, 6))
                        if D.compute(root, x, at(x, 7, 37), {}, {}).switched)
-            before = D.compute(root, day, at(day, 8, 30), {}, {})
-            old_orders = [o for acc in (L.rebuild(a, R.read(root.records, "account"), R.read(root.records, "order"))
-                                        for a in C.LIVE_ACCOUNTS) for o in acc.pending]
-            ledger_value = {a: acc.value({k: h.last.close for k, h in before.hists.items() if h.last})
-                            for a, acc in before.accounts.items()}
+            before = recs(root)
+            old = [o for o in before["order"] if "pocket" not in o]
+            want = self.expected(root, day, at(day, 8, 30))
 
             def real(inp):   # 진짜 날짜의 검사(조사 as_of, 돌아보기 '다음엔', 든 종목)에 맞춘 가짜 입력
                 for r in inp["research"]:
@@ -630,28 +693,36 @@ class Switch(unittest.TestCase):
 
             code, said = day_run(root, day, edit=real)
             self.assertEqual(code, 0, said)
-            self.assertIn("갈아탐", said)
+            self.assertIn("다시 계산한 잔고에서 이어 간다", said)
             r = recs(root)
+            first = min((x for x in R.read(root.records, "run") if x.get("mode") == "live"),
+                        key=lambda x: x["run"])["steps"]["decided_at"]
+            for x in (x for x in r["broker"] if x["type"] == "start"):     # 계좌 넷: 첫 옛 실행 시각의 은행 1,000만 원
+                self.assertEqual((x["at"], x["data"]["pockets"], x["data"]["units"]),
+                                 (first, {"bank": C.START_CASH, "sec": 0, "upbit": 0}, {}))
             self.assertEqual({x["account"] for x in r["broker"] if x["type"] == "start"}, set(C.LIVE_ACCOUNTS))
-            done = {f["order"] for f in r["fill"]}
-            self.assertEqual([o.id for o in old_orders if o.id not in done], [])      # 옛 대기 주문이 모두 끝남
-            for o in old_orders:   # 옛 규칙 가격: 판단 뒤 첫 시가(시세 파일의 그 봉)
-                f = next(x for x in r["fill"] if x["order"] == o.id)
-                bar = next(x for x in PR.load(o.asset, root.prices) if x.date.isoformat() == f["fill_date"])
-                self.assertEqual((f["price"], f.get("price_kind"), "seq" in f), (bar.open, "open", False))
-                self.assertGreater(C.fill_dt(C.ASSETS[o.asset], bar.date), o.decided_at)
-            # 갈아타기 전후 평가액: 같은 가격으로 치면 같다. 비트코인 평가 가격이 바뀐 몫(이틀 전 종가 → 지금 가격)만 다르다
-            for aid in ("baseline:cash", "baseline:equal_hold"):   # 그날 거래가 없는 계좌로 견준다
-                line = of(r["account"], aid, run=day.isoformat())[0]
-                self.assertEqual(of(r["order"], aid, run=day.isoformat()), [])
-                shift = line["positions"][BTC] * (line["prices"][BTC][1] - before.hists[BTC].last.close) / 1e8
-                self.assertAlmostEqual(line["value"], ledger_value[aid] + shift, 1)
-            start = next(x for x in r["broker"] if x["type"] == "start" and x["account"] == "live:hand")["data"]
-            self.assertEqual(start["pockets"], {"bank": before.accounts["live:hand"].cash, "sec": 0, "upbit": 0})
-            self.assertEqual(start["units"], {a: n for a, n in before.accounts["live:hand"].units.items() if n})
-            self.assertTrue(all(start["cost"].get(a, 0) > 0 for a in start["units"]))
+            refs = sorted([o["replay_of"] for o in r["order"] if o.get("replay_of")]
+                          + [x["data"]["replay_of"] for x in r["broker"] if x["type"] == "reject" and x["data"].get("replay_of")])
+            self.assertEqual(refs, sorted(o["id"] for o in old))            # 옛 주문 하나에 다시 넣은 줄 하나
+            for aid in C.LIVE_ACCOUNTS:   # 증권사 기록 = 따로 계산한 그대로 대입
+                cut = next(x["seq"] for x in r["broker"] if x["account"] == aid and x["type"] == "phase")
+                upto = {k: [x for x in r[k] if x.get("seq", 10**9) <= cut and x.get("account") == aid] for k in B.KINDS}
+                b = want.brokers[aid]
+                self.assertEqual(self.state(upto, aid), (b.pockets(), b.holdings(), sorted(p.id for p in b.pending())), aid)
+            # 옛 주문 줄의 체결 값: 장 시작 = 그 봉의 시가, 장 마감 = 그 봉의 종가(옛 체결 줄이 있는 것은 그 체결 날짜의 봉)
+            fills = {f["order"]: f for f in r["fill"] if "seq" in f}
+            olds = {f["order"]: f for f in before["fill"]}
+            for o in (o for o in r["order"] if o.get("replay_of") and o["order_kind"] in ("open", "close")):
+                f = fills.get(o["id"])
+                if f is None or f["price_kind"] == "limit":
+                    continue
+                bar = next(x for x in PR.load(o["asset"], root.prices) if x.date.isoformat() == f["fill_date"])
+                self.assertEqual(f["price"], bar.open if o["order_kind"] == "open" else bar.close, o["id"])
+                was = olds.get(o["replay_of"])
+                if was and was["qty_units"]:
+                    self.assertEqual((f["fill_date"], f["price"]), (was["fill_date"], was["price"]), o["id"])
             self.assertEqual(R.check_folder(root.records), [])
-            self.assertEqual(B.check_folder(root.records, root.prices)[0], [])       # 증권사 검산
+            self.assertEqual(B.check_folder(root.records, root.prices)[0], [])       # 증권사 검산(옛 주문과 하나씩)
             # 이어서 장 시작 뒤 단계(영업일이면)와 다음 날
             if day.weekday() < 5:
                 (code, said), _ = quiet(D.open_phase, root, day, at(day, 9, 2)), None
@@ -662,16 +733,17 @@ class Switch(unittest.TestCase):
             self.assertEqual(code, 0, said)
             self.assertEqual(B.check_folder(root.records, root.prices)[0], [])
             self.assertEqual(R.check_folder(root.records), [])
-            # 일지: 갈아탄 날은 새 문장으로 숫자가 다 차고, 옛 날짜 일지의 표는 저장소에 있는 것과 같다
+            # 일지: 갈아탄 날은 '다시 계산' 문장으로 숫자가 다 차고, 옛 날짜 일지의 표는 저장소에 있는 것과 같다
             text = RP.daily(root.records, day)
             self.assertIn("현금은 은행", text)
+            self.assertIn("오늘부터 계좌를 실제 규칙으로 다시 계산한 잔고에서 이어 간다", text)
             self.assertNotRegex(re.sub(r"\[\[채울 것.*?\]\]", "", text), r"None|nan|\[\[")
-            for old in sorted(C.REPORTS.glob("2026-??-??.md"))[-3:]:
-                when = dt.date.fromisoformat(old.stem)
+            for old_r in sorted(C.REPORTS.glob("2026-??-??.md"))[-3:]:
+                when = dt.date.fromisoformat(old_r.stem)
                 if when > last_run:
                     continue
                 table = lambda s: [x for x in s.splitlines() if x.startswith("|")]
-                self.assertEqual(table(RP.daily(root.records, when)), table(old.read_text(encoding="utf-8")), old.name)
+                self.assertEqual(table(RP.daily(root.records, when)), table(old_r.read_text(encoding="utf-8")), old_r.name)
 
 
 class Report(unittest.TestCase):

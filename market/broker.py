@@ -454,6 +454,10 @@ class Broker:
         self._verified: set[str] = set()
         self._account_ids: set[str] = set()
         self._broker_lines: list[dict] = []
+        # 갈아타는 날(2026-11-10 3회): 옛 주문을 그대로 넣어 다시 계산한 줄은 일이 일어난 시각(at·decided_at)은 그때로, 장부에 넣은 날
+        # (run)은 갈아타는 날로 적는다 — '늦게 장부에 넣은 체결'과 같은 관례. None이면 run = 그 줄의 시각의 날짜(평소)
+        self.book_day: dt.date | None = None
+        self._replay_of: str | None = None
         for kind, d in mine(lines or {}, account):
             self.problems += self.state.apply(kind, d)
             if kind == "account":
@@ -483,6 +487,10 @@ class Broker:
     def lines(self) -> dict[str, list[dict]]:
         return {k: list(v) for k, v in self.new.items()}
 
+    def _run(self, t: dt.datetime) -> str:
+        """줄의 run 칸: 장부에 넣은 날(book_day가 있으면 그날, 없으면 t의 날짜)."""
+        return (self.book_day or t.date()).isoformat()
+
     def _emit(self, res: Result, kind: str, line: dict) -> dict:
         line["seq"] = self.state.seq + 1
         errs = self.state.apply(kind, line)
@@ -499,7 +507,7 @@ class Broker:
         """run = 줄을 만든 호출의 시각(기본 at) — 늦게 넣는 만료 줄은 사건 시각(at)이 앞 날이어도 run은 오늘이다."""
         seq = self.state.seq + 1
         return self._emit(res, "broker", {"id": f"{self.account}:{at:%Y-%m-%d}:{typ}:{seq}",
-                                          "run": (run or at).date().isoformat(),
+                                          "run": self._run(run or at),
                                           "account": self.account, "at": _iso(at), "type": typ, "data": data,
                                           "note": note})
 
@@ -670,7 +678,7 @@ class Broker:
         """한국 거래소 체결 줄. when = 체결 시각, run = 줄을 만든 호출의 시각(늦게 넣으면 when보다 뒤)."""
         a, q = p.asset, p.qty
         settle = RU.settle_date(day, self._days(when))
-        line = {"id": f"fill:{p.id}", "run": (run or when).date().isoformat(),
+        line = {"id": f"fill:{p.id}", "run": self._run(run or when),
                 "account": self.account, "order": p.id, "asset": a, "side": p.side, "fill_date": day.isoformat(),
                 "price": float(price), "price_kind": kind, "qty_units": q, "at": _iso(when), "pocket": "sec",
                 "settle": settle.isoformat(), "source": src or {}, "note": note}
@@ -718,13 +726,22 @@ class Broker:
 
     # ----- 요청 -----
     def order(self, at: dt.datetime, asset: str, side: str, kind: str, qty: int | None = None,
-              limit: float | None = None, amount: int | None = None, reason: str = "") -> Result:
-        """주문 하나. kind: open(장 시작) / close(장 마감) / now(지금). 안 되면 거절(reject 줄) — 수량·값을 바꿔 주지 않는다."""
+              limit: float | None = None, amount: int | None = None, reason: str = "",
+              replay_of: str | None = None) -> Result:
+        """주문 하나. kind: open(장 시작) / close(장 마감) / now(지금). 안 되면 거절(reject 줄) — 수량·값을 바꿔 주지 않는다.
+        replay_of = 갈아타는 날 그대로 다시 넣는 옛 주문의 id(주문 줄과 거절 줄에 남는다 — 검산이 옛 주문과 하나씩 맞춘다)."""
+        self._replay_of = replay_of
+        try:
+            return self._place(at, asset, side, kind, qty, limit, amount, reason, replay_of)
+        finally:
+            self._replay_of = None
+
+    def _place(self, at, asset, side, kind, qty, limit, amount, reason, replay_of) -> Result:
         at = _at(at)
         res = self.sync(at)
         res.ok, res.reason = True, ""
         req = {"type": "order", "asset": asset, "side": side, "kind": kind, "qty": qty, "limit": limit, "amount": amount,
-               "reason": reason}
+               "reason": reason, "replay_of": replay_of}
         why = self._past(at) or ("" if self.state.started else "시작 잔고(start) 전")
         if why:
             return self._reject(res, at, req, why)
@@ -737,6 +754,10 @@ class Broker:
         if spec.kind == "coin":
             return self._order_upbit(res, at, req, asset, side, kind, qty, amount, reason)
         return self._order_krx(res, at, req, asset, side, kind, qty, limit, amount, reason)
+
+    def prev_close(self, asset: str, session: dt.date, at: dt.datetime) -> float | None:
+        """session 전 거래일의 공식 종가(시각 at에 알 수 있는 끝난 봉만) — 장 시작·장 마감 사기의 한도를 정할 때 증권사가 보는 값."""
+        return self._prev_close(asset, session, _at(at))
 
     def _prev_close(self, asset: str, session: dt.date, at: dt.datetime) -> float | None:
         """session 전 거래일의 공식 종가(시각 at에 끝난 봉만). 모르면 None."""
@@ -760,7 +781,7 @@ class Broker:
 
     def _order_line(self, at, asset, side, kind, qty, ref, reason, reserved, limit=None, amount=None, session=None) -> dict:
         seq = self.state.seq + 1
-        line = {"id": f"{self.account}:{at:%Y-%m-%d}:{asset}:{kind}:{side}:{seq}", "run": at.date().isoformat(),
+        line = {"id": f"{self.account}:{at:%Y-%m-%d}:{asset}:{kind}:{side}:{seq}", "run": self._run(at),
                 "account": self.account, "asset": asset, "side": side, "qty_units": int(qty), "ref_price": float(ref),
                 "reason": reason, "decided_at": _iso(at), "fill_rule": kind, "pocket": pocket_of(asset),
                 "order_kind": kind, "reserved": int(reserved)}
@@ -770,6 +791,8 @@ class Broker:
             line["amount"] = int(amount)
         if session is not None:
             line["session"] = session.isoformat()
+        if self._replay_of:
+            line["replay_of"] = self._replay_of
         return line
 
     def _quote_error(self, t: dt.datetime, at: dt.datetime) -> str:
@@ -921,7 +944,7 @@ class Broker:
             fee = RU.fee(asset, value)
             delta = value - fee
         res.order = o["id"]
-        line = {"id": f"fill:{o['id']}", "run": at.date().isoformat(), "account": self.account, "order": o["id"],
+        line = {"id": f"fill:{o['id']}", "run": self._run(at), "account": self.account, "order": o["id"],
                 "asset": asset, "side": side, "fill_date": Q.coin_bar_date(at).isoformat(),
                 "price": value / (q / unit), "price_kind": "now", "qty_units": q, "value": value, "fee": fee, "tax": 0,
                 "cash_after": self.state.upbit + delta, "at": _iso(at), "pocket": "upbit", "settle": None,
@@ -1141,51 +1164,126 @@ def _expire_errors(e: dict, order: dict | None, rows: dict[str, list]) -> list[s
     return []
 
 
-def _old_ledger(lines: dict[str, list[dict]], acc: str, start_run: str) -> tuple[int, dict[str, int]]:
-    """갈아타기 전 옛 장부의 마지막 상태(현금, 보유): 그 계좌의 마지막 옛 계좌 줄(start 실행 날짜 전) + 그 뒤의 옛 체결 줄
-    (start 실행 날짜까지 — 갈아타는 날 옛 장부가 끝낸 주문). 옛 기록이 없으면 시작 금액과 빈 보유(첫 실행)."""
-    olds = [x for x in lines.get("account", []) if x.get("account") == acc and "seq" not in x and x.get("run", "") < start_run]
-    cash, units, since = C.START_CASH, {}, ""
-    if olds:
-        last = olds[-1]
-        cash, since = int(last.get("cash", 0)), last.get("run", "")
-        units = {a: int(n) for a, n in (last.get("positions") or {}).items() if n}
-    for f in lines.get("fill", []):
-        if f.get("account") != acc or "seq" in f or not since < f.get("run", "") <= start_run:
-            continue
-        q, a = int(f.get("qty_units", 0)), f.get("asset")
-        if f.get("side") == "buy":
-            cash -= int(f.get("value", 0)) + int(f.get("fee", 0))
-            units[a] = units.get(a, 0) + q
-        else:
-            cash += int(f.get("value", 0)) - int(f.get("fee", 0)) - int(f.get("tax", 0) or 0)
-            units[a] = units.get(a, 0) - q
-    return cash, {a: n for a, n in units.items() if n}
+CARRY = "carry"
+SHRINK_ACCOUNTS = ("baseline:equal_hold",)   # 다시 넣을 때 사기를 살 수 있는 만큼 줄여도 되는 계좌(판단이 아니라 규칙인 기준선)   # 갈아타는 날 옛 주문을 그대로 다시 넣은 끝을 적는 phase 줄의 이름(data.name) — 그 줄의 시각이 '갈아타는 시각'
 
 
-def _start_errors(lines: dict[str, list[dict]], acc: str, start: dict) -> list[str]:
-    """(검토 발견 2c·2d) start 줄 뒤의 seq 없는 줄과, start의 시작 잔고가 옛 장부와 같은지.
-    - seq 없는 줄이 정당한 경우: 옛 계좌·주문 줄은 start 실행 날짜 **전**, 옛 체결 줄은 start 실행 날짜**까지**이면서 옛(seq 없는)
-      주문에 딸린 것(갈아타는 날 옛 장부가 끝낸 주문). 그 밖의 seq 없는 order·fill·account 줄은 오류 — 증권사가 만들지 않은 줄이다.
-    - 시작 잔고: 진짜 계좌(config.LIVE_ACCOUNTS)만 견준다 — 주머니 합 = 옛 장부 현금, 보유 = 옛 장부 보유(시험 계좌는 옛 기록이 없다)."""
+def _old_orders(lines: dict[str, list[dict]], acc: str) -> list[dict]:
+    """그 계좌의 옛 장부 주문 줄(증권사가 만들지 않은 줄 — seq·pocket이 없다), 기록 차례대로."""
+    return [o for o in lines.get("order", []) if o.get("account") == acc and "seq" not in o and "pocket" not in o]
+
+
+def old_kind(o: dict) -> str:
+    """옛 주문을 그대로 넣을 때의 주문 종류: 비트코인은 지금(그 09:00), 한국 거래소는 fill_rule "open"이면 장 시작, 없으면 장 마감
+    (옛 규칙 = 판단 뒤 첫 종가)."""
+    if C.ASSETS[o["asset"]].kind == "coin":
+        return "now"
+    return "open" if o.get("fill_rule") == C.FILL_RULE else "close"
+
+
+def _start_errors(lines: dict[str, list[dict]], acc: str, start: dict, items: list[tuple[str, dict]],
+                  rows: dict[str, tuple]) -> list[str]:
+    """시작 잔고와 갈아타는 날 다시 넣은 옛 주문(2026-11-10 3회 — 사용자 결정 '판단은 기록에 남아 있으니 그때 가격으로 그대로').
+    - seq 없는 줄이 정당한 경우: 옛 계좌·주문·체결 줄은 start 실행 날짜 **전**(체결은 옛 주문에 딸린 것). 그 밖의 seq 없는
+      order·fill·account 줄은 오류 — 증권사가 만들지 않은 줄이다.
+    - 진짜 계좌(config.LIVE_ACCOUNTS): ① start = 은행 1,000만 원, 보유·산 값 없음, 시각 = 첫 옛 실행의 판단 시각(run 줄이 있으면)
+      ② 갈아타는 시각(phase 'carry' 줄의 시각, start 실행 날짜까지) 전의 증권사 주문 줄·주문 거절 줄이 그 계좌의 옛 주문 줄과
+      **하나씩 맞는다**(replay_of = 옛 주문 id, 대상·방향·수량·종류) — 더한 것도 뺀 것도 없다. 그 전의 취소 줄도 오류(다시 넣기는
+      취소하지 않는다)."""
     errs = []
     run = start.get("run", "")
-    old_orders = {o.get("id") for o in lines.get("order", []) if o.get("account") == acc and "seq" not in o}
+    old = _old_orders(lines, acc)
+    old_ids = {o.get("id") for o in old}
     for kind in ("order", "fill", "account"):
         for x in lines.get(kind, []):
             if x.get("account") != acc or "seq" in x:
                 continue
-            ok = (x.get("run", "") <= run and x.get("order") in old_orders) if kind == "fill" else x.get("run", "") < run
-            if not ok:
+            if not (x.get("run", "") < run and (kind != "fill" or x.get("order") in old_ids)):
                 errs.append(f"{acc} {kind} {x.get('id')}: 시작 잔고(start, {run}) 뒤의 seq 없는 줄 — 증권사가 만든 줄이 아니다")
-    if acc in C.LIVE_ACCOUNTS:
-        cash, units = _old_ledger(lines, acc, run)
-        data = start.get("data") or {}
-        total = sum(int(v) for v in (data.get("pockets") or {}).values())
-        got = {a: int(n) for a, n in (data.get("units") or {}).items() if n}
-        if total != cash or got != units:
-            errs.append(f"{acc} broker {start.get('id')}: 시작 잔고(주머니 합 {total:,}원, 보유 {got})가 옛 장부의 마지막 상태"
-                        f"(현금 {cash:,}원, 보유 {units})와 다름")
+    if acc not in C.LIVE_ACCOUNTS:
+        return errs
+    w = f"{acc} broker {start.get('id')}"
+    data = start.get("data") or {}
+    if (data.get("pockets") != {"bank": C.START_CASH, "sec": 0, "upbit": 0} or data.get("units") or data.get("cost")):
+        errs.append(f"{w}: 시작 잔고가 은행 {C.START_CASH:,}원(보유 없음)이 아님 — 진짜 계좌는 첫 옛 실행 시각의 1,000만 원에서 "
+                    f"옛 주문을 그대로 넣어 다시 계산한다(주머니 {data.get('pockets')}, 보유 {data.get('units')})")
+    runs = sorted((r for r in lines.get("run", []) if r.get("mode") == "live" and r.get("run", "") < run),
+                  key=lambda r: r.get("run", ""))
+    if runs and start.get("at") != runs[0].get("steps", {}).get("decided_at"):
+        errs.append(f"{w}: 시작 시각 {start.get('at')} ≠ 첫 옛 실행의 판단 시각 {runs[0].get('steps', {}).get('decided_at')}")
+    if old and _t(start["at"]) > min(_t(o["decided_at"]) for o in old if o.get("decided_at")):
+        errs.append(f"{w}: 시작 시각 {start.get('at')}가 첫 옛 주문보다 늦음")
+    carry = [d for k, d in items if k == "broker" and d.get("type") == "phase" and (d.get("data") or {}).get("name") == CARRY]
+    if not carry:
+        if old:
+            errs.append(f"{acc}: 옛 주문 {len(old)}건이 있는데 그대로 다시 넣은 끝(phase '{CARRY}' 줄)이 없음")
+        return errs
+    until = _t(carry[0]["at"])
+    if len(carry) > 1:
+        errs.append(f"{acc}: phase '{CARRY}' 줄이 둘 이상")
+    if until.date().isoformat() > run:
+        errs.append(f"{acc}: 갈아타는 시각 {carry[0]['at']}가 start 실행 날짜 {run} 뒤")
+    fills = {f.get("order"): f for k, f in items if k == "fill"}
+    seen: dict[str, list[tuple[str, dict]]] = {}
+    for k, d in items:
+        if k == "order":
+            ref, t = d.get("replay_of"), _t(d["decided_at"])
+            if ref is None:
+                if t < until or t.date().isoformat() < run:
+                    errs.append(f"{acc} order {d.get('id')}: 갈아타는 시각 전의 주문인데 옛 주문을 다시 넣은 것이 아님(끼워 넣은 주문)")
+                continue
+            if t > until:
+                errs.append(f"{acc} order {d.get('id')}: 옛 주문 {ref}를 갈아타는 시각 뒤에 넣음")
+            seen.setdefault(ref, []).append(("order", d))
+        elif k == "broker" and d.get("type") == "reject" and (d.get("data") or {}).get("type") == "order":
+            ref = d["data"].get("replay_of")
+            if ref is None:
+                if _t(d["at"]) < until or d["at"][:10] < run:
+                    errs.append(f"{acc} broker {d.get('id')}: 갈아타는 시각 전의 거절인데 옛 주문을 다시 넣은 것이 아님")
+                continue
+            seen.setdefault(ref, []).append(("reject", d))
+        elif k == "broker" and d.get("type") == "cancel" and _t(d["at"]) < until:
+            errs.append(f"{acc} broker {d.get('id')}: 갈아타는 시각 전의 취소 — 옛 주문을 그대로 넣을 때는 취소하지 않는다")
+    for ref in sorted(set(seen) - old_ids):
+        errs.append(f"{acc}: 다시 넣은 주문의 replay_of {ref}가 옛 주문에 없음")
+    for o in old:
+        got = seen.get(o.get("id"), [])
+        if len(got) != 1:
+            errs.append(f"{acc}: 옛 주문 {o.get('id')}이 다시 넣은 줄과 하나씩 맞지 않음({len(got)}줄) — 빠졌거나 두 번 넣음")
+            continue
+        errs += [f"{acc}: 옛 주문 {o.get('id')} — {e}" for e in _replay_match(o, *got[0], fills, rows)]
+    return errs
+
+
+def _replay_match(o: dict, how: str, d: dict, fills: dict, rows: dict[str, tuple]) -> list[str]:
+    """다시 넣은 줄 하나가 옛 주문과 맞나(대상·방향·종류·수량). 비트코인 사기는 금액으로 내므로 수량은 체결 수량(받아졌으면)이나
+    그 봉 시가로 바꾼 금액(거절됐으면)으로 견준다 — 원 단위 금액이라 1e-8 단위 한 칸까지는 같은 것으로 본다."""
+    want = old_kind(o)
+    coin_buy = C.ASSETS[o["asset"]].kind == "coin" and o["side"] == "buy"
+    # 기준선 셋 나눠 사 두기의 사기만 '살 수 있는 만큼' 줄여 넣는다(2026-11-10 3회 2회차) — 옛 수량 이하·0 초과면 맞음
+    less_ok = o.get("account") in SHRINK_ACCOUNTS and o["side"] == "buy"
+    if how == "order":
+        asset, side, kind, qty, at = d.get("asset"), d.get("side"), d.get("order_kind"), d.get("qty_units"), d["decided_at"]
+        if coin_buy:
+            f = fills.get(d.get("id"))
+            qty = f.get("qty_units") if f else None
+    else:
+        x = d.get("data") or {}
+        asset, side, kind, qty, at = x.get("asset"), x.get("side"), x.get("kind"), x.get("qty"), d["at"]
+        if coin_buy:
+            bar = _bar(rows, o["asset"], Q.coin_bar_date(_t(at)))
+            amt = x.get("amount")
+            qty = (_floor(amt / bar.open * C.ASSETS[o["asset"]].unit) if bar and bar.open and isinstance(amt, int) else o["qty_units"])
+    errs = []
+    if (asset, side, kind) != (o["asset"], o["side"], want):
+        errs.append(f"대상·방향·종류 {asset}·{side}·{kind} ≠ 옛 주문 {o['asset']}·{o['side']}·{want}")
+    if not isinstance(qty, int):
+        errs.append(f"수량 {qty} ≠ 옛 주문 {o['qty_units']}")
+    elif less_ok:
+        if not 0 < qty <= o["qty_units"] + (1 if coin_buy else 0):
+            errs.append(f"수량 {qty}이 옛 주문 {o['qty_units']} 이하·0 초과가 아님(기준선 사기는 줄일 수만 있다)")
+    elif (abs(qty - o["qty_units"]) > 1 if coin_buy else qty != o["qty_units"]):
+        errs.append(f"수량 {qty} ≠ 옛 주문 {o['qty_units']}")
     return errs
 
 
@@ -1211,7 +1309,7 @@ def check(lines: dict[str, list[dict]], bars: dict[str, Iterable] | None = None)
                 errs += _order_rule_errors(d, rows)
         start = next((d for k, d in items if k == "broker" and d.get("type") == "start"), None)
         if start is not None:
-            errs += _start_errors(lines, acc, start)
+            errs += _start_errors(lines, acc, start, items, rows)
         for kind, d in items:
             if kind == "fill":
                 e, w = _fill_price_errors(d, rows)
@@ -1227,8 +1325,9 @@ def check(lines: dict[str, list[dict]], bars: dict[str, Iterable] | None = None)
 
 def check_folder(folder: Path, prices_folder: Path | None = None) -> tuple[list[str], list[str]]:
     """기록 폴더의 증권사 줄 검산. 시세는 prices_folder(기본 data/prices)에서 줄에 나온 대상만 읽는다."""
-    lines = {k: R.read(folder, k) for k in KINDS}
-    assets = {d.get("asset") for k in ("order", "fill") for d in lines[k] if "seq" in d}
+    lines = {k: R.read(folder, k) for k in (*KINDS, "run")}
+    assets = ({d.get("asset") for k in ("order", "fill") for d in lines[k] if "seq" in d}
+              | {(d.get("data") or {}).get("asset") for d in lines["broker"] if d.get("type") == "reject"})
     bars = {a: PR.load(a, prices_folder) for a in assets if a}
     return check(lines, bars)
 

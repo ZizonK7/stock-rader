@@ -227,15 +227,20 @@ class WhatIf(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             rec, prices, coin, _ = build(Path(tmp))
             res = W.run(rec, prices, coin, None, root=Path(tmp))
+            n_old = len((rec / "order.jsonl").read_text(encoding="utf-8").splitlines())
         self.assertTrue(res["same_marks"])
         for aid in C.LIVE_ACCOUNTS:
             parts = res["accounts"][aid]["parts"]
             self.assertAlmostEqual(parts["old"]["identity"], 0, places=4)
             self.assertAlmostEqual(parts["old"]["end"], res["accounts"][aid]["revalued"], delta=0.02)
-            for case in W.CASES:
+            for case in ("verbatim", *W.CASES):   # verbatim = 옛 주문 그대로 대입(2026-11-10 3회)
                 self.assertAlmostEqual(parts[case]["identity"], 0, places=4)
                 self.assertAlmostEqual(parts[case]["end"], res["accounts"][aid][case], delta=0.02)
                 self.assertAlmostEqual(parts[case]["vs_old"]["rest"], 0, delta=0.05)
+        # 그대로 대입: 증권사 검산(옛 주문과 하나씩) 오류 0, 옛 주문마다 한 일, 셋 값이 표에 나란히
+        self.assertEqual(res["carry"]["check_errors"], [])
+        self.assertEqual(len(res["carry"]["steps"]) + len(res["carry"]["waiting"]), n_old)
+        self.assertTrue(all({"revalued", "verbatim", "once"} <= set(a) for a in res["accounts"].values()))
 
 
 if __name__ == "__main__":
