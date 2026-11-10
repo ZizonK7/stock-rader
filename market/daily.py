@@ -490,14 +490,8 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     # 계산기 계좌·기준선의 목표: 계산기는 R_weights_v2, 셋 나눠 사 두기는 아직 못 산 대상만 1/3(문턱 0).
     # 돈이 모자라 덜 산 대상(지난 plan 줄의 short)은 다음 실행에서 마저 산다.
     D.calc_w, D.calc_reasons = calc_w, reasons
-    bought = {o["asset"] for o in D.recs["order"] if o["account"] == "baseline:equal_hold"}
-    if mode == "broker":
-        # 첫 사기가 돈이 잡혀(장 시작 사기는 한도만큼 잡아 둔다) 덜 된 대상은 남은 돈이 계좌의 문턱(2%) 이상일 때 마저 산다
-        eb = brokers["baseline:equal_hold"]
-        plans = eb.events("plan")
-        if plans and sum(eb.pockets().values()) >= RB.BAND * RB.total_value(eb, D.prices):
-            bought -= set(plans[-1]["data"].get("short", []))
-    D.equal_first = {a: 1 / 3 for a in predictable if a not in bought}
+    D.equal_first = equal_targets(D.recs["order"], brokers["baseline:equal_hold"] if mode == "broker" else None,
+                                  D.prices, predictable)
     if not already and mode == "ledger" and accounts:   # 갈아타기 전(옛 장부로 도는 날): 옛 규칙 그대로
         D.calc_orders = [o.record() for o in accounts["live:calc"].plan(day, calc_w, D.prices, 0.02, reasons, at,
                                                                         C.FILL_RULE)]
@@ -525,6 +519,19 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     D.stale = RS.stale_places(root.records, day, D.places)
     D.questions = RS.questions(day, raw, D.places, RS.place_cards(root.records, D.places))
     return D
+
+
+def equal_targets(orders: list[dict], eb: B.Broker | None, prices: dict[str, float], predictable) -> dict[str, float]:
+    """셋 나눠 사 두기(baseline:equal_hold)의 오늘 목표: 아직 못 산 대상만 1/3(문턱 0). orders = 지금까지의 주문 줄(그 계좌의 것을
+    고른다), eb = 그 계좌의 증권사(갈아타기 전이면 None). 첫 사기가 돈이 잡혀(장 시작 사기는 한도만큼 잡아 둔다) 덜 된 대상(지난
+    plan 줄의 short)은 남은 돈이 계좌의 문턱(2%) 이상일 때 마저 산다. compute에서 떼어 냈다(2026-11-10, 동작 같음 —
+    market/whatif.py가 같은 규칙을 부른다)."""
+    bought = {o["asset"] for o in orders if o["account"] == "baseline:equal_hold"}
+    if eb is not None:
+        plans = eb.events("plan")
+        if plans and sum(eb.pockets().values()) >= RB.BAND * RB.total_value(eb, prices):
+            bought -= set(plans[-1]["data"].get("short", []))
+    return {a: 1 / 3 for a in predictable if a not in bought}
 
 
 def fill_base(a: str, at: dt.datetime) -> dict:
