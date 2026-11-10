@@ -1,7 +1,7 @@
 # tests/ — 표준 라이브러리 unittest
 
 ## 역할
-`python -m unittest discover -s tests -t .` (저장소 루트, 30초쯤 — 2026-11-10 시험 261개, 21개는 PROVISO·저장 시세가 없으면 건너뜀). 네트워크를 쓰지 않는다. 가짜 시세는 `fixtures.py`(정해진 씨앗의 무작위 일봉, 실제 시세가 아님).
+`python -m unittest discover -s tests -t .` (저장소 루트, 30초쯤 — 2026-11-10 시험 262개, PROVISO·저장 시세가 없으면 21개를 건너뜀). 네트워크를 쓰지 않는다. 가짜 시세는 `fixtures.py`(정해진 씨앗의 무작위 일봉, 실제 시세가 아님).
 
 | 파일 | 지키는 것 |
 |---|---|

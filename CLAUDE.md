@@ -3,7 +3,7 @@
 Claude가 세션 시작 때 읽는 작업 문서다. 매일 도는 클라우드 예약 실행도 이 파일을 읽는다. 사람용 소개는 [README.md](README.md), 설계 상세는 [docs/design.md](docs/design.md)에 있다.
 
 ## 프로젝트
-실제 돈 없이 Claude가 혼자 가상 투자를 하면서 **논리 조각화**를 시험한다. 상위 프로젝트는 [PROVISO-Nesy](https://github.com/ZizonK7/PROVISO-Nesy)(SELA 구현)다. 논리집을 쌓는 방식은 그곳의 `domains/agent_usage/CLAUDE.md`(AI가 사용자의 논리집 쌓는 법을 따라 스스로 쌓기)를 따른다. 지식 양식과 검사 도구도 그곳 코어를 쓴다.
+실제 돈 없이 Claude가 혼자 가상 투자를 하면서 **논리 조각화**를 시험한다. 상위 프로젝트는 [PROVISO-Nesy](https://github.com/ZizonK7/PROVISO-Nesy)(SELA 구현)다. 그 저장소는 2026-11-10부터 **비공개**다(사용자가 바꿈) — 이 저장소는 그 코어를 읽기만 하고(논리집 검사·시험 일부), 세션·예약 실행에 저장소로 붙어 있어야 받아진다(주소로 그냥 받아 올 수 없다). 없으면 논리집 검사만 건너뛰고 시세·주문·채점·기록·일지는 그대로 돈다. 논리집을 쌓는 방식은 그곳의 `domains/agent_usage/CLAUDE.md`(AI가 사용자의 논리집 쌓는 법을 따라 스스로 쌓기)를 따른다. 지식 양식과 검사 도구도 그곳 코어를 쓴다.
 
 ## 사용자 의도 (2026-10-20 대화, 사용자 말 그대로 또는 요지)
 이 저장소에서 판단이 갈릴 때 기준이 되는 말이다. 바뀌면 날짜를 붙여 고친다.
@@ -86,7 +86,7 @@ Claude가 세션 시작 때 읽는 작업 문서다. 매일 도는 클라우드 
 - `python -m market.research places | questions [날짜]` — 볼 곳 성적표, 그날 조사 질문
 - `python -m unittest discover -s tests -t .` — 시험(30초쯤)
 - `python -m market.records check` — 기록 검사(칸 + git HEAD와 비교 + 가상 증권사 검산: 잔고 다시 계산·체결가 = 실제 봉). 커밋 전에
-- `python -m market.logic validate|check|audit` — 논리집 검사·성적표·점검(PROVISO 코어: 환경변수 `PROVISO_PATH` 또는 형제 폴더 `../PROVISO-Nesy`)
+- `python -m market.logic validate|check|audit` — 논리집 검사·성적표·점검(PROVISO 코어: 환경변수 `PROVISO_PATH` 또는 형제 폴더 `../PROVISO-Nesy` — 폴더 이름의 대소문자는 가리지 않는다)
 - `python -m market.prices update|show` — 시세 덧붙이기(네트워크, 시간 제한 30초)
 - `python -m market.calc [날짜]` — 그날 07:37 계산기 답 보기(기록하지 않음)
 - `python -m market.fit [--write]` — 조각 숫자를 2026-06-30까지의 시세로 맞추기
@@ -95,7 +95,7 @@ Claude가 세션 시작 때 읽는 작업 문서다. 매일 도는 클라우드 
 - 기록(`records/`, `reports/`, `data/prices/`)을 쓰는 것은 매일 예약 실행뿐이다. 로컬·대화 세션은 코드·문서·논리집 모양만 고친다.
 
 ## 지금 상태 (2026-10-21, 2026-11-03·11-04·11-10 더함)
-- **2026-11-10 가상 증권사**(아래 절): 2026-11-10 16:00쯤 main에 합쳤다(사용자 "메인에 합치면 되고") — 그 뒤 첫 예약 실행(2026-11-11 07:17)이 갈아타는 날이다. 그날부터 계좌 넷의 주문·체결·잔고는 `market/broker.py`가 정하고, 기록에 `broker` 종류와 주머니 칸이 생기며, 세금을 떼고, 어제 09:00 체결이 다음 날 실행에서 장부에 들어온다(옛 장부는 이틀 뒤). 설계·규칙 [docs/broker-sandbox.md](docs/broker-sandbox.md), 작업 보고서 [1회차](docs/worklog/2026-11-10-broker-core.md)·[2회차](docs/worklog/2026-11-10-broker-daily.md)·[새 눈 검토](docs/worklog/2026-11-10-broker-review.md)·[실제 주소 시험](docs/worklog/2026-11-10-broker-live-smoke.md)·[3회차 고침](docs/worklog/2026-11-10-broker-fixes.md)·[지난 결정 대입](docs/worklog/2026-11-10-broker-whatif.md)(덧붙임: 주문 계획 고침)·[갈아타는 날 = 옛 주문 그대로 다시 계산한 잔고](docs/worklog/2026-11-10-broker-carryover.md). 시험 261개(2026-11-10 통째 예행연습 뒤 일지 문장 고침까지). 실제 주소 시험(장중 11:28–11:32)에서 지금 주문이 실제 가격으로 됐고, 네이버 지금 가격은 그때 본 응답 모양(거래 정지·정규장·지연 칸, 시각 = 응답 시각)으로 읽는다(3회차). 장 밖 상태 값과 09:00·종가 체결이 실제로 장부에 들어오는 것은 아직 못 봤다(다음 할 일 5).
+- **2026-11-10 가상 증권사**(아래 절): 2026-11-10 16:00쯤 main에 합쳤다(사용자 "메인에 합치면 되고") — 그 뒤 첫 예약 실행(2026-11-11 07:17)이 갈아타는 날이다. 그날부터 계좌 넷의 주문·체결·잔고는 `market/broker.py`가 정하고, 기록에 `broker` 종류와 주머니 칸이 생기며, 세금을 떼고, 어제 09:00 체결이 다음 날 실행에서 장부에 들어온다(옛 장부는 이틀 뒤). 설계·규칙 [docs/broker-sandbox.md](docs/broker-sandbox.md), 작업 보고서 [1회차](docs/worklog/2026-11-10-broker-core.md)·[2회차](docs/worklog/2026-11-10-broker-daily.md)·[새 눈 검토](docs/worklog/2026-11-10-broker-review.md)·[실제 주소 시험](docs/worklog/2026-11-10-broker-live-smoke.md)·[3회차 고침](docs/worklog/2026-11-10-broker-fixes.md)·[지난 결정 대입](docs/worklog/2026-11-10-broker-whatif.md)(덧붙임: 주문 계획 고침)·[갈아타는 날 = 옛 주문 그대로 다시 계산한 잔고](docs/worklog/2026-11-10-broker-carryover.md). 시험 262개(2026-11-10 통째 예행연습 뒤 일지 문장 고침, PROVISO 폴더 찾기까지). 실제 주소 시험(장중 11:28–11:32)에서 지금 주문이 실제 가격으로 됐고, 네이버 지금 가격은 그때 본 응답 모양(거래 정지·정규장·지연 칸, 시각 = 응답 시각)으로 읽는다(3회차). 장 밖 상태 값과 09:00·종가 체결이 실제로 장부에 들어오는 것은 아직 못 봤다(다음 할 일 5).
 - **2026-11-04 조사를 오늘 판단용으로**(아래 절): 2026-11-05 실행부터 주문은 판단 뒤 첫 시가(09:00)에 체결되고(`fill_rule = "open"`, 옛 주문은 종가), 새 예측 줄은 체결가 기준(`base_kind = "fill"`, 채점 때 `fill_price`), 계산 조각은 시가→종가 수익률로 다시 맞춤(반영 전 모음 `versions/v5.toml`; 활성 v3·v4·v5, v1·v2 쉼), 출발점 조각 은퇴. 조사 각도 넷이 간밤 반응·일정과 예상치·수급·공시로 바뀌고 모든 답에 `numbers`·`as_of`, 숫자 상태는 코드가 값을 정함, 씨앗 조각 셋(`Q_overnight_lead_v2`·`Q_surprise_follow`·`Q_foreign_flow`). 반영 기록: [docs/worklog/2026-11-04-fill-open.md](docs/worklog/2026-11-04-fill-open.md)(팀 A), [docs/worklog/2026-11-04-research-fast.md](docs/worklog/2026-11-04-research-fast.md)(팀 B). 테스트 150개.
 - **2026-11-04 계산기 분석 반영**(아래 '계산기 분석 반영' 절): 방향 기본값 동전(`C_base_coin`), 출발점 조각(`C_started_move`), 계산기 계좌 `R_weights_v2`, 기준선 `baseline:all`, 예측 줄 `layer`·`analog`와 손 입력 `info`, 성적표 고침(5구간·동점·`layer_vs_baselines`), 시험 전 규칙 `R_layer_v0`, 씨앗 조각(`Q_overnight_lead`). 반영 전 모음은 `versions/v4.toml`(지문 dc873b5c52d9)로 매일 같이 채점되고, 활성 상한 3 때문에 v1은 쉰다. 논리집: 목표 6, 상태 17, 사실 23, 가설 25(살아 있는 계산 조각 9 = 기준값 1 + 곱하기 7 + 출발점 1, 정식 조사 조각 6 + 종목 1 + 씨앗 1), 규칙 3(R_weights 은퇴, R_weights_v2, R_layer_v0). 반영 기록: [docs/worklog/2026-11-04-calc-apply.md](docs/worklog/2026-11-04-calc-apply.md).
 - **2026-11-03 논리집 점검 반영**(아래 '논리집 점검 반영' 절): 계산기 움직임 기준값을 최근 250봉 흔들림의 배수로(`C_base_vol`), `C_drawdown` 쪼개기(`C_drawdown_volup`), 겁먹은 시장을 값 기준으로(`Q_risk_off_level`), 쪼갠 조각의 두 번째 조건도 묻기, 종목 비교군. 반영 전 모음은 `versions/v3.toml`로 매일 같이 채점된다.

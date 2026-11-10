@@ -4,7 +4,7 @@
 
 예약 실행 설정에서 미리 해 둘 것 (사람·메인 세션이 한 번):
 - 전용 클라우드 환경 「stock-rader」, 네트워크 **Full**(전체 허용). 처음엔 Custom(시세 3곳만)이었지만 조사가 여러 사이트 페이지를 직접 읽어야 해서 2026-10-21 Full로 바꿨다. 이 환경에는 비밀값이 없다. 블로그 토큰이 있는 「Daily Briefing」 환경은 같이 쓰지 않는다. 2026-10-21 시험 실행에서 시세 3곳·업비트 현재가·두 저장소 함께 받기·GitHub·웹 검색·웹 읽기가 모두 통과했다.
-- 저장소: `ZizonK7/stock-rader`(작업 폴더)와 `ZizonK7/PROVISO-Nesy`(형제 폴더로 같이 받는다). 둘 다 공개 저장소다.
+- 저장소: `ZizonK7/stock-rader`(작업 폴더, 공개)와 `ZizonK7/PROVISO-Nesy`(형제 폴더로 같이 받는다, **비공개** — 2026-11-10 사용자가 바꿈). 둘 다 이 예약에 저장소로 붙어 있어야 한다(비공개 저장소는 키 없이 받아 올 수 없다).
 - 시간: 매일 07:17 (한국 시간으로 입력 — 예약 설정의 실제 값, 2026-11-10 확인. 처음엔 07:37이었다). 09:05에는 따로 「stock-rader 장 시작 뒤 실행」이 돈다([routine-open-prompt.md](routine-open-prompt.md)).
 - 비용은 줄이지 않는다(사용자 결정). 문제가 되면 사용자가 그만하라고 한다.
 
@@ -26,9 +26,9 @@
 ## 1. 준비 (저장소 찾기)
 1. 작업 폴더가 stock-rader 저장소인지 본다: `git remote -v`, `git status`. main 브랜치에서 `git pull --ff-only origin main`.
 2. **PROVISO-Nesy 찾기**: 코어(지식 양식 검사)는 형제 폴더 `../PROVISO-Nesy`에서 찾는다(`market/logic.py`). 차례대로:
-   - `ls ..` 로 `PROVISO-Nesy`가 있는지 본다. 지난 클라우드 실행에서는 두 저장소가 함께 클론되어 형제 폴더로 있었다. 있으면 그 폴더에서 `git pull --ff-only`.
-   - 없으면 `git clone --depth 1 https://github.com/ZizonK7/PROVISO-Nesy ../PROVISO-Nesy` (공개 저장소, 키 필요 없음).
-   - 그래도 안 되면 다른 경로에 있는지 찾아(`find / -maxdepth 3 -name PROVISO-Nesy -type d 2>/dev/null`) `export PROVISO_PATH=<그 경로>`.
+   - `ls ..` 로 `PROVISO-Nesy`(또는 `proviso-nesy` — 코드는 폴더 이름의 대소문자를 가리지 않는다)가 있는지 본다. 이 예약에 두 저장소가 붙어 있어 함께 클론되어 형제 폴더로 있다. 있으면 그 폴더에서 `git pull --ff-only`.
+   - 없으면 다른 경로에 있는지 찾아(`find / -maxdepth 3 -iname proviso-nesy -type d 2>/dev/null`) `export PROVISO_PATH=<그 경로>`.
+   - **비공개 저장소라 주소로 직접 받아 오려 하지 않는다**(2026-11-10부터 — 키 없이는 안 되고, 키를 만들거나 적지 않는다). 폴더가 없으면 예약 설정에서 저장소가 빠졌거나 접근 권한이 없는 것이다 — 마지막 보고에 "PROVISO 못 찾음: 예약에 저장소가 붙어 있는지 확인 필요"를 적는다.
    - 확인: `python -m market.logic validate` 가 "문제 없음"이면 된다. 끝까지 못 찾으면 논리집 검사 없이 진행하고, 커밋 메시지와 run notes에 "PROVISO 못 찾음"을 적는다(기록 쓰기·채점은 PROVISO 없이 돈다).
 3. 한국 시간 확인: `TZ=Asia/Seoul date`. 한글이 깨지면 `export PYTHONIOENCODING=utf-8`.
 4. 시간 기록: 시작 시각을 적어 둔다(마지막 보고에 걸린 시간을 쓴다).

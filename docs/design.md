@@ -1,6 +1,6 @@
 # stock-rader 설계 v0 (2026-10-20)
 
-실제 돈 없이 Claude가 혼자 가상 투자를 하면서 **논리 조각화**를 시험하는 곳이다. 상위 프로젝트는 [PROVISO-Nesy](https://github.com/ZizonK7/PROVISO-Nesy)(SELA 구현)이다. 논리집을 쌓는 방식은 그 저장소의 `domains/agent_usage/CLAUDE.md`를 따른다. 그곳은 AI가 사용자의 논리집 쌓는 법을 보고 따라 해서 스스로 쌓는 첫 분야다. 이곳은 두 번째 분야이고, 채점자가 실측 대신 시장이다.
+실제 돈 없이 Claude가 혼자 가상 투자를 하면서 **논리 조각화**를 시험하는 곳이다. 상위 프로젝트는 [PROVISO-Nesy](https://github.com/ZizonK7/PROVISO-Nesy)(SELA 구현, 2026-11-10부터 비공개 저장소)이다. 논리집을 쌓는 방식은 그 저장소의 `domains/agent_usage/CLAUDE.md`를 따른다. 그곳은 AI가 사용자의 논리집 쌓는 법을 보고 따라 해서 스스로 쌓는 첫 분야다. 이곳은 두 번째 분야이고, 채점자가 실측 대신 시장이다.
 
 사용자 의도는 [../CLAUDE.md](../CLAUDE.md)의 "사용자 의도"에 있다. 이 문서는 그 의도를 어떻게 구현하는지를 적는다.
 

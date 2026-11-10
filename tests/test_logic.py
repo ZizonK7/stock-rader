@@ -99,3 +99,20 @@ class Devices(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FindCore(unittest.TestCase):
+    """PROVISO-Nesy 찾기(2026-11-10: 비공개로 바뀌어 주소로 받아 올 수 없다 — 붙은 저장소의 폴더를 이름의 대소문자와 상관없이 찾는다)."""
+
+    def test_sibling_folder_is_found_whatever_its_letter_case(self):
+        import tempfile
+        from pathlib import Path
+        from market import logic as LG
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "stock-rader").mkdir()
+            (root / "other").mkdir()
+            self.assertEqual(LG.siblings(root), [])
+            (root / "proviso-nesy").mkdir()   # 세션에 따라 소문자로 받아진다
+            self.assertEqual([p.name for p in LG.siblings(root)], ["proviso-nesy"])
+        self.assertEqual(LG.siblings(Path("/없는/폴더")), [])

@@ -88,6 +88,6 @@
 - 기본 저장소에서 `daily`에 `--day`/`--at`을 쓰지 못한다(지난 날짜로 예측하지 않는다). 흉내 내기는 `--root <임시 폴더>`(`daily.copy_for_simulation`).
 
 ## 다른 폴더와의 관계
-- 읽음: `data/prices/*.csv`, `knowledge.toml`, `places.toml`, `stocks.toml`, `versions/`, PROVISO-Nesy 코어(`PROVISO_PATH` 또는 형제 폴더 `../PROVISO-Nesy`).
+- 읽음: `data/prices/*.csv`, `knowledge.toml`, `places.toml`, `stocks.toml`, `versions/`, PROVISO-Nesy 코어(`PROVISO_PATH` 또는 형제 폴더 `../PROVISO-Nesy` — 이름의 대소문자 무시; 비공개 저장소라 세션·예약 실행에 붙어 있어야 한다).
 - 씀: `data/prices/`(prices update, prepare의 종목 시세), `stocks.toml`(stocks add — 끝에 덧붙임), `records/`(재생은 `records/replay/`, 진짜 계좌는 `daily record`와 `daily open`), `reports/`(daily report), `knowledge.toml`의 계산 조각 구역(fit --write), `versions/`(versions save), `out/daily/<날짜>/`(prepare의 중간 파일, git 제외).
 - 시험: `tests/`.
