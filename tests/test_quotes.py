@@ -1,7 +1,8 @@
 """실제 가격 받기(market/quotes.py): 예시 응답 → 값 바꾸기, 실패하면 None, 일봉 가짜 공급자가 시각에 정직한지 (1회차 시험 목록 21).
 
-예시 응답은 2026-11-10 장중 시험에서 본 칸 이름(지시서 '실제 응답에서 본 것')과 업비트 공개 문서의 칸으로 만든 것이다 — 값은
-지어낸 것이고 네트워크를 쓰지 않는다. 네이버 지금 가격의 겹 구조·시각 칸 이름과 네이버 분봉 칸 이름은 확인 못 해서 여러 꼴을 시험한다."""
+예시 응답은 2026-11-10 장중 시험에서 본 칸 이름(지시서 '실제 응답에서 본 것'과 실제 주소 시험 보고서
+docs/worklog/2026-11-10-broker-live-smoke.md)과 업비트 공개 문서의 칸으로 만든 것이다 — 값은 지어낸 것이고 네트워크를 쓰지 않는다.
+네이버 지금 가격은 실제 주소 시험에서 본 모양(바깥 datas 목록·pollingInterval·time, 값 사전의 거래 정지·장 구분·지연 칸)만 읽는다."""
 import datetime as dt
 import json
 import unittest
@@ -39,7 +40,10 @@ FCHART = ('<?xml version="1.0" encoding="EUC-KR" ?><protocol><chartdata symbol="
           '<item data="20261110|82400|82600|82300|82495|500" /></chartdata></protocol>')
 NOW = {"pollingInterval": 7000, "datas": [{"itemCode": "069500", "stockName": "KODEX 200", "closePrice": "82,495",
                                             "openPrice": "82,400", "highPrice": "82,600", "lowPrice": "82,300",
-                                            "localTradedAt": "2026-11-10T10:07:05+09:00", "marketStatus": "OPEN"}],
+                                            "localTradedAt": "2026-11-10T10:07:05+09:00", "marketStatus": "OPEN",
+                                            "marketSessionType": "regularMarket",
+                                            "tradeStopType": {"code": "1", "name": "TRADING"}, "tradableStatus": "tradable",
+                                            "tradableStatusCode": "1", "stockExchangeType": {"code": "KS", "delayTime": 0}}],
        "time": "20261110100710"}
 NAVER_MIN = [{"localDateTime": "20261110100700", "currentPrice": 82495, "openPrice": 82490, "highPrice": 82500,
               "lowPrice": 82485, "accumulatedTradingVolume": 1000}]
@@ -80,13 +84,15 @@ class Parse(unittest.TestCase):
         self.assertEqual([d.date for d in Q.parse_naver_days(FCHART, "069500", K(2026, 11, 10, 8, 0))],
                          [D(2026, 11, 6), D(2026, 11, 9)])
 
-    def test_naver_now_finds_the_price_in_unknown_nesting(self):
+    def test_naver_now_reads_the_real_shape(self):
+        """3회차에서 바꿈(실제 주소 시험 S1·S2): 모르는 겹 구조를 너그럽게 찾지 않고 실제 모양(datas)만 읽는다."""
         n = Q.parse_naver_now(NOW, "069500")
         self.assertEqual((n.price, n.time, n.open), (82_495.0, K(2026, 11, 10, 10, 7, 5), True))
         flat = dict(NOW["datas"][0])
         del flat["localTradedAt"]
-        n = Q.parse_naver_now({"result": {"items": [flat]}, "time": "20261110100710"}, "069500")
-        self.assertEqual(n.time, K(2026, 11, 10, 10, 7, 10))                # 겉의 time
+        n = Q.parse_naver_now({"datas": [flat], "time": "20261110100710"}, "069500")
+        self.assertEqual(n.time, K(2026, 11, 10, 10, 7, 10))                # 겉의 time(응답 시각)
+        self.assertIsNone(Q.parse_naver_now({"result": {"items": [flat]}, "time": "20261110100710"}, "069500"))
         self.assertIsNone(Q.parse_naver_now({"datas": [flat]}, "069500"))  # 시각이 없으면 None
         closed = json.loads(json.dumps(NOW).replace('"OPEN"', '"CLOSE"'))
         self.assertFalse(Q.parse_naver_now(closed, "069500").open)

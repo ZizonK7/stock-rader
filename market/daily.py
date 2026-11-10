@@ -22,7 +22,8 @@
 - **갈아타는 날**(17절): broker 기록에 start가 없으면 그 실행에서 갈아탄다 — 옛 대기 주문을 옛 규칙 가격으로 모두 끝내고(옛 모양
   체결 줄), 보유는 그대로·현금은 은행에 둔 start 줄을 계좌 넷에 만든다. 끝낼 수 없는 옛 주문이 하나라도 남으면 계좌 넷 모두
   그날은 옛 장부(market/ledger.py)로 돌고 다음 실행에서 다시 시도한다. 기록이 없는 폴더는 첫 실행에서 바로 start.
-- 증권사 기록이 어긋나 있으면(Broker.problems) prepare·record·open은 아무것도 쓰지 않고 멈춘다.
+- 증권사 기록이 어긋나 있거나(Broker.problems) 증권사 안에서 예외가 나면(broker.BrokerError 등) prepare·record·open은 아무것도
+  쓰지 않고 멈춘다(까닭 글, 종료 코드 1 — 예외로 죽지 않는다).
 - 판단 시각 = record를 돌린 실제 시각. 판단 시각까지 끝났어야 할 일봉이 시세 파일에 없으면 그 대상은 그날 예측·주문하지 않는다.
 - 예측 기준 = 판단 뒤 첫 시가(2026-11-05~, 결정 E2): 새 예측 줄은 base_kind "fill", base_date = 판단 뒤 첫 체결 봉 날짜
   (config.fill_bar), base_close = null. 채점이 그 봉의 시가(fill_price)에서 목표 종가까지 잰다. 장 시작 주문은 그 시가에 체결되어
@@ -110,8 +111,8 @@ class Root:
 
 def quotes_for(root: Root) -> Q.Quotes:
     """가상 증권사가 가격을 받을 곳: 진짜 기록 폴더는 실제 주소, 흉내 내기 폴더는 그 폴더의 시세 파일(시각에 정직한 가짜)."""
-    if root.live:
-        return Q.NetQuotes()
+    if root.live:   # 끝난 봉은 시세 파일(덧붙이기만 하는 공식 값)에서 먼저 읽는다(오래 멈췄다 돈 실행 — 검토 발견 4)
+        return Q.NetQuotes(prices_folder=root.prices)
     return Q.BarQuotes({p.stem: PR.load(p.stem, root.prices) for p in sorted(root.prices.glob("*.csv"))})
 
 
@@ -367,14 +368,17 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     switched, switch_note = False, ""
     if all(started.values()):
         for aid in C.LIVE_ACCOUNTS:
-            b = brokers[aid] = B.Broker(aid, quotes, recs, bar_days)
-            problems += b.problems
-            if not b.problems:
-                res = b.sync(at)
-                if not res.ok:
-                    problems.append(f"{aid}: {res.reason}")
-                sync_lines += res.lines
-                sync_warnings += res.warnings
+            try:
+                b = brokers[aid] = B.Broker(aid, quotes, recs, bar_days)
+                problems += b.problems
+                if not b.problems:
+                    res = b.sync(at)
+                    if not res.ok:
+                        problems.append(f"{aid}: {res.reason}")
+                    sync_lines += res.lines
+                    sync_warnings += res.warnings
+            except Exception as exc:   # 증권사 안의 예외는 멈춤으로(예외로 죽지 않는다 — 검토 발견 3)
+                problems.append(crash(aid, exc))
     elif any(started.values()):
         problems.append(f"계좌 일부만 갈아탔다({[a for a, v in started.items() if v]}) — 섞인 채로 돌지 않는다")
     else:
@@ -385,12 +389,15 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
         if done is not None:
             accounts, fills, switched = done, fills + forced, True
             for aid, acc in accounts.items():
-                b = brokers[aid] = B.Broker(aid, quotes, {}, bar_days)
-                units = {a: n for a, n in acc.units.items() if n}
-                res = b.start(at, bank=acc.cash, units=units, cost=cost_basis(recs["fill"] + fills, aid),
-                              note="갈아타기: 옛 장부의 보유는 그대로(ETF·종목 → 증권 계좌, 비트코인 → 업비트), 현금은 은행에")
-                if not res.ok:
-                    problems.append(f"{aid}: 시작 잔고를 만들지 못함 — {res.reason}")
+                try:
+                    b = brokers[aid] = B.Broker(aid, quotes, {}, bar_days)
+                    units = {a: n for a, n in acc.units.items() if n}
+                    res = b.start(at, bank=acc.cash, units=units, cost=cost_basis(recs["fill"] + fills, aid),
+                                  note="갈아타기: 옛 장부의 보유는 그대로(ETF·종목 → 증권 계좌, 비트코인 → 업비트), 현금은 은행에")
+                    if not res.ok:
+                        problems.append(f"{aid}: 시작 잔고를 만들지 못함 — {res.reason}")
+                except Exception as exc:
+                    problems.append(crash(aid, exc))
     mode = "broker" if brokers and not problems else "ledger"
     if mode == "broker":
         hb = brokers["live:hand"]
@@ -419,7 +426,10 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
         mine = set(C.ASSET_IDS) | {a for b in brokers.values() for a in b.expected_units()}
         D.value_prices = value_prices(hists, quotes, at, ticker, brokers["live:hand"].market(at) == "now", mine)
         D.prices = {a: v for a, (v, _) in D.value_prices.items()}
-        D.account_lines = [b.account_line(at, day, D.value_prices)[0] for b in brokers.values()]  # 미리 보기(record가 다시 만든다)
+        try:
+            D.account_lines = [b.account_line(at, day, D.value_prices)[0] for b in brokers.values()]  # 미리 보기(record가 다시 만든다)
+        except Exception as exc:
+            D.problems.append(crash("계좌 줄 미리 보기", exc))
         D.hand_units = brokers["live:hand"].expected_units()
         D.hand_total = RB.total_value(brokers["live:hand"], D.prices)
     elif accounts:
@@ -575,11 +585,18 @@ def prepare(root: Root, day: dt.date, at: dt.datetime, fetch: bool = True, ticke
 
 
 def stop(problems: list[str]) -> int:
-    """증권사 기록이 어긋나 있으면 매일 실행은 아무것도 쓰지 않고 멈춘다(메인 결정, 2026-11-10)."""
+    """증권사 기록이 어긋나 있거나 증권사 안에서 예외가 나면 매일 실행은 아무것도 쓰지 않고 멈춘다(메인 결정, 2026-11-10).
+    예외도 같은 글로 시작한다(지시문 9절 표의 한 줄이 둘 다 다룬다)."""
     print(f"가상 증권사 기록이 어긋나 있다({len(problems)}건) — 아무것도 쓰지 않고 멈춘다. `python -m market.broker status`로 본다:")
     for e in problems[:30]:
         print("  -", e)
     return 1
+
+
+def crash(where: str, exc: BaseException) -> str:
+    """증권사 안에서 난 예외를 멈춤 까닭 한 줄로(검토 발견 3 — 예외로 죽으면 다음 날도 같은 곳에서 다시 죽고 까닭이 안 남는다)."""
+    first = str(exc).strip().splitlines()
+    return f"{where}: 증권사 안에서 예외 {type(exc).__name__}: {' / '.join(first[:4])[:600]}"
 
 
 def late_note(at: dt.datetime, by: dt.time, what: str, broker: bool = True) -> str:
@@ -658,7 +675,7 @@ def briefing(D: Day, fetched: dict, tick: dict, late: str = "") -> str:
         L_.append(f"- 체결 {f['account']} {f['asset']} {f['side']} {f['qty_units']}단위 @ {f['price']:,} ({f['fill_date']})")
     for k, d in D.sync_lines:
         if k == "broker" and d["type"] in ("expire", "adjust"):
-            L_.append(f"- {'체결 못 하고 끝남' if d['type'] == 'expire' else '체결 값 바로잡음'} {d['account']}: {d['note']}")
+            L_.append(f"- {'체결 못 하고 끝남' if d['type'] == 'expire' else '치른 값이 끝난 봉과 다름(돈은 그대로, 적어 둠)'} {d['account']}: {d['note']}")
     for w in D.sync_warnings:
         L_.append(f"- **경고: {w}**")
     for a in D.account_lines:
@@ -830,11 +847,14 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
         jobs = [("live:hand", targets, RB.BAND, why), ("live:calc", D.calc_w, RB.BAND, D.calc_reasons)]
         if D.equal_first:
             jobs.append(("baseline:equal_hold", D.equal_first, 0.0, {a: EQUAL_NOTE for a in D.equal_first}))
-        for aid, tg, band, rs in jobs:
-            plans[aid] = RB.rebalance(D.brokers[aid], tg, D.prices, clock, band, rs)
-        for aid, b in D.brokers.items():   # 계좌 줄: 판단 때의 상태(그날 낸 지금 주문과 이체까지 반영), 하루 한 줄
-            res = b.snapshot(clock.now(), day, D.value_prices)
-            warns += [f"{aid}: {w}" for w in res.warnings] + ([] if res.ok else [f"{aid}: {res.reason}"])
+        try:
+            for aid, tg, band, rs in jobs:
+                plans[aid] = RB.rebalance(D.brokers[aid], tg, D.prices, clock, band, rs)
+            for aid, b in D.brokers.items():   # 계좌 줄: 판단 때의 상태(그날 낸 지금 주문과 이체까지 반영), 하루 한 줄
+                res = b.snapshot(clock.now(), day, D.value_prices)
+                warns += [f"{aid}: {w}" for w in res.warnings] + ([] if res.ok else [f"{aid}: {res.reason}"])
+        except Exception as exc:   # 증권사 안의 예외: 아무것도 쓰지 않고 멈춘다(예외로 죽지 않는다)
+            return stop([crash("주문·계좌 줄", exc)])
         for aid, plan in plans.items():
             warns += [f"{aid}: {w}" for w in plan.warnings]
     else:
@@ -941,11 +961,45 @@ def open_phase(root: Root, day: dt.date, at: dt.datetime) -> int:
     rows = {p.stem: PR.load(p.stem, root.prices) for p in sorted(root.prices.glob("*.csv"))}
     hists = {a: PR.view(a, r, at) for a, r in rows.items() if a in C.CORE or C.is_stock(a)}
     bar_days = [r.date for r in hists["069500"].rows] if "069500" in hists else None
-    brokers = {aid: B.Broker(aid, quotes, recs, bar_days) for aid in C.LIVE_ACCOUNTS}
+    try:
+        brokers = {aid: B.Broker(aid, quotes, recs, bar_days) for aid in C.LIVE_ACCOUNTS}
+    except Exception as exc:
+        return stop([crash("기록 다시 돌리기", exc)])
     problems = [e for b in brokers.values() for e in b.problems]
     if problems:
         return stop(problems)
-    clock = RB.Clock(at, root.live)
+    try:
+        said = open_accounts(brokers, run, at, quotes, hists, root.live)
+    except Exception as exc:   # 증권사 안의 예외: 아무것도 쓰지 않고 멈춘다
+        return stop([crash("장 시작 뒤 단계", exc)])
+    if isinstance(said, int):
+        return said
+    lines = {k: [x for b in brokers.values() for x in b.new[k]] for k in B.KINDS}
+    problems = []
+    for kind, items in lines.items():
+        ids = {x["id"] for x in recs.get(kind, [])}
+        for i, it in enumerate(items):
+            problems += R.line_errors(kind, {"kind": kind, **it}, f"{kind}+{i}")
+            if it["id"] in ids:
+                problems.append(f"{kind}: id '{it['id']}'가 이미 있음")
+            ids.add(it["id"])
+    if problems:
+        print(f"기록 칸 오류 {len(problems)}건 — 아무것도 쓰지 않았다:")
+        for e in problems[:50]:
+            print("  -", e)
+        return 1
+    for kind in KIND_ORDER:
+        if lines.get(kind):
+            R.write(root.records, kind, lines[kind])
+    print(f"{run} 장 시작 뒤 단계({at:%H:%M}): " + (", ".join(f"{k} {len(v)}" for k, v in lines.items() if v) or "쓴 줄 없음"))
+    for x in said:
+        print("  " + x)
+    return 0
+
+
+def open_accounts(brokers: dict, run: str, at: dt.datetime, quotes: Q.Quotes, hists: dict, live: bool) -> list[str] | int:
+    """open_phase의 계좌마다 일(기록은 쓰지 않는다 — 증권사의 새 줄로 남는다). 말할 줄 목록, 멈추면 종료 코드."""
+    clock = RB.Clock(at, live)
     said, live_prices = [], {}
 
     def price(a: str, t: dt.datetime) -> float | None:
@@ -964,6 +1018,14 @@ def open_phase(root: Root, day: dt.date, at: dt.datetime) -> int:
         res = b.sync(t)
         if not res.ok:
             return stop([f"{aid}: {res.reason}"])
+        waiting = b.unbooked_open(t)
+        if waiting:   # 오늘 장 시작 주문이 아직 장부에 안 들어왔다(오늘 봉을 못 받음): phase 줄을 남기지 않는다 — 다시 돌릴 수 있게
+            said.append(f"[{aid}] 오늘 장 시작 주문 {len(waiting)}건이 아직 장부에 안 들어왔다(오늘 봉의 시가를 아직 못 받음: "
+                        f"{', '.join(sorted({p.asset for p in waiting}))}) — 이 계좌는 아무것도 사지 않고 단계 표시도 남기지 않았다. "
+                        f"몇 분 뒤 `python -m market.daily open`을 다시 돌린다")
+            said += [f"[{aid}] {x}" for x in RB.describe(RB.Plan(lines=list(res.lines), warnings=list(res.warnings)),
+                                                         lambda a: C.ASSETS[a].name if a else "")]
+            continue
         plan = RB.Plan(lines=list(res.lines), warnings=list(res.warnings))
         todays = [x for x in b.events("plan") if x["run"] == run]
         if todays:
@@ -987,28 +1049,7 @@ def open_phase(root: Root, day: dt.date, at: dt.datetime) -> int:
         b.mark(clock.now(), "phase", {"name": "open", "orders": len(plan.of("order")),
                                       "fills": len(plan.of("fill")), "rejects": len(plan.of("broker", "reject"))})
         said += [f"[{aid}] {x}" for x in RB.describe(plan, lambda a: C.ASSETS[a].name if a else "")]
-
-    lines = {k: [x for b in brokers.values() for x in b.new[k]] for k in B.KINDS}
-    problems = []
-    for kind, items in lines.items():
-        ids = {x["id"] for x in recs.get(kind, [])}
-        for i, it in enumerate(items):
-            problems += R.line_errors(kind, {"kind": kind, **it}, f"{kind}+{i}")
-            if it["id"] in ids:
-                problems.append(f"{kind}: id '{it['id']}'가 이미 있음")
-            ids.add(it["id"])
-    if problems:
-        print(f"기록 칸 오류 {len(problems)}건 — 아무것도 쓰지 않았다:")
-        for e in problems[:50]:
-            print("  -", e)
-        return 1
-    for kind in KIND_ORDER:
-        if lines.get(kind):
-            R.write(root.records, kind, lines[kind])
-    print(f"{run} 장 시작 뒤 단계({at:%H:%M}): " + (", ".join(f"{k} {len(v)}" for k, v in lines.items() if v) or "쓴 줄 없음"))
-    for x in said:
-        print("  " + x)
-    return 0
+    return said
 
 
 # ---------- 명령줄 ----------

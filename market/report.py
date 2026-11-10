@@ -58,7 +58,12 @@ class Book:
         ST.register(folder.parent / "stocks.toml")  # 종목 이름 (기록 폴더의 저장소 루트)
         self.recs = {k: R.read(folder, k) for k in R.FIELDS}
         self.acc = defaultdict(dict)  # 계좌 → 날짜 → 기록
+        # 가상 증권사로 갈아탄 계좌(start 줄)는 start 실행 날짜부터 seq 있는 계좌 줄만 읽는다 — 증권사가 만들지 않은 줄(손으로 덧붙인
+        # 옛 모양 줄)이 그날 평가액이 되지 않게(검토 발견 2c; records check도 그 줄을 오류로 잡는다)
+        started = {x["account"]: x["run"] for x in self.recs.get("broker", []) if x.get("type") == "start"}
         for a in self.recs["account"]:
+            if "seq" not in a and a["account"] in started and a["run"] >= started[a["account"]]:
+                continue
             self.acc[a["account"]][a["run"]] = a
         self.preds = {p["id"]: p for p in self.recs["prediction"]}
 
@@ -116,12 +121,14 @@ def order_amount(o: dict) -> float:
 
 
 # 거절 이유(증권사의 글)를 일지에 쓸 쉬운 말로. 앞에서부터 처음 맞는 것
-REJECT_WORDS = (("돈이 모자람", "그때 계좌에 쓸 수 있는 돈이 모자라서"), ("옮길 수 있는 돈", "아직 꺼낼 수 없는 돈이라서"),
+REJECT_WORDS = (("거래 정지 여부를 모름", "거래할 수 있는 상태인지 알 수 없어서"), ("돈이 모자람", "그때 계좌에 쓸 수 있는 돈이 모자라서"), ("옮길 수 있는 돈", "아직 꺼낼 수 없는 돈이라서"),
                 ("가진 것보다", "가진 수량보다 많아서"), ("받지 못함", "그 순간의 가격을 받지 못해서"),
                 ("묵었음", "받은 가격이 너무 오래된 것이라서"), ("시계가", "받은 가격의 시각이 맞지 않아서"),
                 ("최소 주문", "금액이 너무 작아서"), ("닫혀", "장이 닫혀 있어서"), ("장중", "주문을 낼 수 없는 시간이라서"),
                 ("15:20", "주문을 낼 수 없는 시간이라서"), ("가격 제한", "하루에 움직일 수 있는 값의 범위를 벗어나서"),
-                ("전 거래일 종가", "전날 마감 가격을 받지 못해서"), ("지난 시각", "지난 시각으로는 주문할 수 없어서"))
+                ("전 거래일 종가", "전날 마감 가격을 받지 못해서"), ("지난 시각", "지난 시각으로는 주문할 수 없어서"),
+                ("거래 정지", "그 종목의 거래가 멈춰 있어서"), ("정규장", "정규 거래 시간의 가격이 아니라서"),
+                ("지연 시세", "늦게 오는 가격이라서"))
 
 
 def reject_reason(note: str) -> str:
@@ -176,10 +183,7 @@ def broker_notes(b: Book, me: dict, pa: dict | None, run: str) -> list[str]:
     if "seq" not in (pa or {"seq": 0}):   # 갈아타는 날: 오늘 실행이 끝낸 옛 주문(옛 모양 체결 줄)
         earlier = [f for f in b.recs["fill"] if f["account"] == "live:hand" and "seq" not in f and f["run"] == run] + earlier
     if earlier:
-        out.append("지난 주문이 치러진 값: " + ", ".join(
-            f"{asset_label(f['asset'])} {'사기' if f['side'] == 'buy' else '팔기'} {units_text(f['asset'], f['qty_units'])} × "
-            f"{f['price']:,.0f}원({md(f.get('at') or f['fill_date'])})" + (f", 세금 {won(f['tax'], False)}" if f.get("tax") else "")
-            for f in earlier) + ".")
+        out.append(paid_text(earlier))
     events = b.window("broker", "live:hand", me, pa)
     ended = [e for e in events if e["type"] == "expire"]
     if ended:
@@ -204,6 +208,18 @@ def broker_notes(b: Book, me: dict, pa: dict | None, run: str) -> list[str]:
         where += ". 증권 계좌에서 판 돈은 이틀 뒤(영업일 기준)부터 다른 곳으로 옮길 수 있다"
     out.append(where + ".")
     return out
+
+
+def paid_text(fills: list[dict]) -> str:
+    """'지난 주문이 치러진 값' 문장. 0주 체결(갈아타는 날 옛 장부가 수량을 0으로 줄인 주문)은 값 대신 까닭으로 쓴다(검토 발견 7)."""
+    def one(f: dict) -> str:
+        side = "사기" if f["side"] == "buy" else "팔기"
+        if not f["qty_units"]:
+            why = ("돈이 모자라 사지 못함" if f["side"] == "buy" else "가진 것이 없어 팔지 못함") if f.get("note") else "치러지지 않음"
+            return f"{asset_label(f['asset'])} {side}는 {why}"
+        return (f"{asset_label(f['asset'])} {side} {units_text(f['asset'], f['qty_units'])} × {f['price']:,.0f}원"
+                f"({md(f.get('at') or f['fill_date'])})" + (f", 세금 {won(f['tax'], False)}" if f.get("tax") else ""))
+    return "지난 주문이 치러진 값: " + ", ".join(one(f) for f in fills) + "."
 
 
 def priced_text(me: dict) -> str:

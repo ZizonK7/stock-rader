@@ -578,6 +578,8 @@ class Check(Base):
         self.assertTrue(any("저가–고가" in e for e in B.check(lines, rows)[0]))
 
     def test_t16b_in_progress_open_that_differs_makes_an_adjust_line_and_a_warning(self):
+        """3회차(검토 발견 3)에서 바꿈: 바로잡기 줄은 두 값과 출처만 적고 돈을 옮기지 않는다(진행 중인 봉에서 받은 값이 치른 값).
+        검산은 그 체결을 시세 파일과 견줘 2% 안이면 경고 — 바로잡기 줄이 있든 없든 같다(바로잡기가 값을 바꾸지 않으니)."""
         class Drift(Q.BarQuotes):
             """진행 중인 봉의 시가가 끝난 봉과 5원 다르게 온다."""
             def day(self, asset, date, at):
@@ -596,15 +598,16 @@ class Check(Base):
         adj = [d for k, d in r.lines if k == "broker" and d["type"] == "adjust"]
         self.assertEqual(len(adj), 1)
         self.assertEqual((adj[0]["data"]["price_was"], adj[0]["data"]["price_final"]), (o + 5, o))
-        self.assertEqual(b.pockets()["sec"] - sec_before, adj[0]["data"]["cash"])
-        self.assertLess(adj[0]["data"]["cash"], 0)
+        self.assertEqual((b.pockets()["sec"] - sec_before, adj[0]["data"]["cash"]), (0, 0))
         self.assertTrue(r.warnings)
         self.assertEqual(b.sync(T(11, 6, 8, 1)).lines, [])                # 한 번만
         lines = b.lines()
-        self.assertEqual(B.check(lines, self.rows)[0], [])
+        errs, warns = B.check(lines, self.rows)
+        self.assertEqual(errs, [])
+        self.assertTrue(any("진행 중인 봉" in w for w in warns))
         no_adjust = copy.deepcopy(lines)
         no_adjust["broker"] = [d for d in no_adjust["broker"] if d["type"] != "adjust"]
-        self.assertTrue(any("끝난 일봉" in e for e in B.check(no_adjust, self.rows)[0]))
+        self.assertEqual(B.check(no_adjust, self.rows), (errs, warns))
 
 
 class Records(Base):

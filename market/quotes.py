@@ -8,7 +8,9 @@
   그날 09:00 전에는 그날 봉이 없고, 09:00 뒤에는 시가만 보이며 고가·저가·종가는 봉이 끝난 뒤(config.final_dt)에만 보인다.
 
 값의 모양
-- `Now`: 지금 가격·그 가격의 시각·장 상태(열림/닫힘)·출처.
+- `Now`: 지금 가격·시각·지금 주문을 받을 수 있는 상태인가(open)와 아니면 그 까닭(why)·출처. 시각은 업비트는 그 체결의 시각,
+  네이버는 **응답 시각**이다(마지막 체결 시각을 주는 칸이 없다 — 2026-11-10 실제 주소 시험). 그래서 '받은 값의 나이' 검사는 묵은
+  응답·시계 어긋남만 거르고, 거래가 드문 종목의 묵은 체결가는 거르지 못한다(docs/broker-sandbox.md 18절).
 - `Book`: 업비트 호가 — 팔려는 값들(asks, 낮은 값부터)·사려는 값들(bids, 높은 값부터), (값, 수량 코인 개수).
 - `Day`: 그날 봉(시가·고가·저가·종가, final = 끝났는가). **끝나지 않은 봉에서 증권사는 시가만 쓴다**
   (NetQuotes는 진행 중인 고가·저가·지금 값도 채워 오지만 끝난 값이 아니다).
@@ -32,9 +34,10 @@ from .prices import Row
 class Now:
     asset: str
     price: float
-    time: dt.datetime     # 그 가격이 나온 시각(체결 시각)
-    open: bool            # 장 상태: 열림
+    time: dt.datetime     # 값의 시각: 업비트는 그 체결의 시각, 네이버는 응답 시각(마지막 체결 시각이 아니다)
+    open: bool            # 지금 주문을 받을 수 있는 상태: 업비트는 늘, 네이버는 정규장 열림·거래 중·지연 없음
     source: str
+    why: str = ""         # open이 아니면 그 까닭(사람 말, 증권사 거절 이유에 그대로 들어간다)
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,11 @@ class Quotes:
     def known_days(self, at: dt.datetime) -> frozenset[dt.date] | None:
         """시각 at까지 끝난 한국 거래소 봉이 있던 날짜들(영업일 세기용). 모르면 None(휴장일 표만 쓴다)."""
         return None
+
+
+def _now() -> dt.datetime:
+    """지금 시각(읽기 전용 도구가 대상마다 새로 잡는다 — 시험이 바꿔 끼운다)."""
+    return C.now_kst()
 
 
 def coin_bar_date(at: dt.datetime) -> dt.date:
@@ -182,7 +190,7 @@ def parse_naver_days(text: str, asset: str, at: dt.datetime) -> list[Day]:
 
 
 def _find_dict(data: Any, key: str, depth: int = 4) -> dict | None:
-    """겹 구조를 모르는 JSON에서 key를 가진 첫 사전(너그럽게 찾기 — 네이버 지금 가격의 겹 구조는 확인 못 함)."""
+    """겹 구조를 모르는 JSON에서 key를 가진 첫 사전(읽기 전용 도구가 응답 모양을 보여 줄 때만 쓴다)."""
     if isinstance(data, dict):
         if key in data:
             return data
@@ -216,24 +224,54 @@ def _naver_time(text: Any) -> dt.datetime | None:
     return None
 
 
-NAVER_TIME_KEYS = ("localTradedAt", "tradedAt", "localDateTime", "time")
+def naver_now_item(data: Any, asset: str) -> dict | None:
+    """네이버 지금 가격 응답의 값 사전: 바깥 `datas`(목록)에서 itemCode가 그 대상인 것(없으면 첫 것). 다른 겹 구조는 읽지 않는다
+    (2026-11-10 실제 주소 시험에서 본 모양: {datas: [...], pollingInterval, time})."""
+    if not isinstance(data, dict) or not isinstance(data.get("datas"), list):
+        return None
+    items = [x for x in data["datas"] if isinstance(x, dict)]
+    return next((x for x in items if str(x.get("itemCode", "")) == asset), items[0] if items else None)
+
+
+def naver_gate(it: dict) -> str:
+    """한국 거래소 지금 주문을 받을 수 있나 — 받을 수 있으면 '', 아니면 까닭. 모두 맞아야 받는다:
+    장 상태 열림(marketStatus OPEN) / 정규장(marketSessionType이 있으면 regularMarket — 장 전·장 뒤 거래 값을 쓰지 않는다) /
+    거래 중(tradeStopType.name TRADING이고 tradableStatus tradable — 칸이 없으면 모르는 것이라 받지 않는다) /
+    지연 없음(stockExchangeType.delayTime이 있으면 0)."""
+    status = str(it.get("marketStatus", "")).upper()
+    if status != "OPEN":
+        return f"장이 닫혀 있음(받은 장 상태 {status or '없음'})"
+    session = it.get("marketSessionType")
+    if session is not None and str(session) != "regularMarket":
+        return f"정규장이 아님(받은 장 구분 {session}) — 장 전·장 뒤 거래 값은 쓰지 않는다"
+    stop, tradable = it.get("tradeStopType"), it.get("tradableStatus")
+    name = stop.get("name") if isinstance(stop, dict) else None
+    if name is None or tradable is None:
+        return "거래 정지 여부를 모름(tradeStopType·tradableStatus 칸이 없음) — 모르면 받지 않는다"
+    if str(name).upper() != "TRADING" or str(tradable).lower() != "tradable":
+        return f"거래 정지·거래 불가(받은 값 {name}/{tradable})"
+    ex = it.get("stockExchangeType")
+    delay = _num(ex.get("delayTime")) if isinstance(ex, dict) and "delayTime" in ex else 0.0
+    if delay is None or delay != 0:
+        return f"지연 시세(delayTime {ex.get('delayTime')})"
+    return ""
 
 
 def parse_naver_now(data: Any, asset: str) -> Now | None:
-    """polling.finance.naver.com/api/realtime/domestic/stock/<코드> → Now.
-    확인한 칸: closePrice(지금 값), 시각 칸, 장 상태 OPEN. 겹 구조와 시각 칸 이름은 확인 못 했다 — closePrice가 든 사전을 찾고,
-    시각은 그 사전의 NAVER_TIME_KEYS 중 첫 것, 없으면 겉의 time. 시각을 못 찾으면 None(나이를 모르는 값은 쓰지 않는다)."""
-    it = _find_dict(data, "closePrice")
+    """polling.finance.naver.com/api/realtime/domestic/stock/<코드> → Now. 실제 응답 모양(2026-11-10 장중 시험):
+    바깥 {datas: [값 사전], pollingInterval, time(YYYYMMDDHHMMSS)}, 값 사전에 closePrice(쉼표 든 글자)·marketStatus·
+    marketSessionType·localTradedAt·tradeStopType {code, name}·tradableStatus·tradableStatusCode·stockExchangeType.delayTime.
+    시각은 localTradedAt, 없으면 바깥 time — 둘 다 **응답 시각**이다(마지막 체결 시각이 아니다). 시각을 못 찾으면 None
+    (나이를 모르는 값은 쓰지 않는다). 지금 주문을 받을 수 있는지는 naver_gate."""
+    it = naver_now_item(data, asset)
     if it is None:
         return None
     p = _num(it.get("closePrice"))
-    t = next((x for x in (_naver_time(it.get(k)) for k in NAVER_TIME_KEYS) if x), None)
-    if t is None and isinstance(data, dict):
-        t = _naver_time(data.get("time"))
+    t = _naver_time(it.get("localTradedAt")) or _naver_time(data.get("time"))
     if p is None or p <= 0 or t is None:
         return None
-    status = str(it.get("marketStatus", "")).upper()
-    return Now(asset, p, t, status == "OPEN", "naver:realtime")
+    why = naver_gate(it)
+    return Now(asset, p, t, not why, "naver:realtime", why)
 
 
 def parse_naver_minutes(data: Any, asset: str) -> list[Minute]:
@@ -264,11 +302,28 @@ LIVE_ONLY = dt.timedelta(minutes=5)
 
 
 class NetQuotes(Quotes):
-    """네이버·업비트 실제 주소. 실패하면 None. 같은 at의 같은 요청은 한 번만 받는다(한 번의 맞추기 안에서)."""
+    """네이버·업비트 실제 주소. 실패하면 None. 같은 at의 같은 요청은 한 번만 받는다(한 번의 맞추기 안에서).
+    prices_folder(시세 파일 폴더)를 주면 **끝난 봉은 시세 파일(덧붙이기만 하는 공식 값)에서 먼저 읽고**, 없을 때만 실제 주소에
+    묻는다 — 그때 받을 개수는 그 날짜까지 닿을 만큼(오래 멈췄다 돈 실행이 지난 장 시작 주문의 봉을 못 찾는 일을 막는다, 검토 발견 4)."""
 
-    def __init__(self, clock=C.now_kst):
+    def __init__(self, clock=C.now_kst, prices_folder=None):
         self._clock = clock
         self._memo: dict[tuple, Any] = {}
+        self._folder = prices_folder
+        self._files: dict[str, dict[dt.date, Row]] = {}
+
+    def _file_bar(self, asset: str, date: dt.date, at: dt.datetime) -> Day | None:
+        if self._folder is None or not _is_final(asset, date, at):
+            return None
+        if asset not in self._files:
+            try:
+                self._files[asset] = {r.date: r for r in PR.load(asset, self._folder)}
+            except (OSError, SystemExit, ValueError):
+                self._files[asset] = {}
+        r = self._files[asset].get(date)
+        if r is None:
+            return None
+        return Day(asset, date, r.open, r.high, r.low, r.close, True, f"file:{r.source or 'prices'}")
 
     def _get(self, url: str, at: dt.datetime, text: bool = False) -> Any:
         key = (url, at)
@@ -298,11 +353,16 @@ class NetQuotes(Quotes):
         return parse_upbit_book(self._get(f"{UPBIT}/orderbook?markets={asset}", at))
 
     def day(self, asset: str, date: dt.date, at: dt.datetime) -> Day | None:
+        got = self._file_bar(asset, date, at)
+        if got is not None:
+            return got
+        # 그 날짜까지 닿을 만큼(달력 날 수 + 여유 — 한국 거래소 봉은 영업일만이라 넉넉하다). 업비트는 한 번에 200개까지
+        n = max(10, (at.astimezone(C.KST).date() - date).days + 3)
         if C.ASSETS[asset].kind == "coin":
-            q = {"market": asset, "count": "10"}
+            q = {"market": asset, "count": str(min(n, 200))}
             days = parse_upbit_days(self._get(f"{UPBIT}/candles/days?" + urllib.parse.urlencode(q), at), at, asset)
         else:
-            text = self._get(NAVER_DAY.format(code=asset, n=10), at, text=True)
+            text = self._get(NAVER_DAY.format(code=asset, n=n), at, text=True)
             days = parse_naver_days(text, asset, at) if text else []
         return next((d for d in days if d.date == date), None)
 
@@ -397,34 +457,41 @@ def naver_now_fields(data: Any) -> dict:
     outer = 바깥 겹의 열쇠 이름들, item = closePrice가 든 사전의 열쇠 이름들, times = 이름에 시각·상태 낱말이 든 칸과 값(겉과 속)."""
     outer = sorted(data) if isinstance(data, dict) else f"{type(data).__name__}({len(data) if hasattr(data, '__len__') else ''})"
     it = _find_dict(data, "closePrice") or {}
+    gate = {k: it.get(k) for k in ("marketStatus", "marketSessionType", "tradeStopType", "tradableStatus", "tradableStatusCode")}
+    ex = it.get("stockExchangeType")
+    gate["delayTime"] = ex.get("delayTime") if isinstance(ex, dict) else None
 
     def pick(d: Any) -> dict:
         return {k: v for k, v in (d.items() if isinstance(d, dict) else ()) if not isinstance(v, (dict, list))
                 and any(w in str(k).lower() for w in TIME_WORDS)}
     return {"outer": outer, "item": sorted(it), "times": {**{f"(겉) {k}": v for k, v in pick(data).items()}, **pick(it)},
-            "closePrice": it.get("closePrice")}
+            "closePrice": it.get("closePrice"), "gate": gate}
 
 
 def show(assets: list[str], at: dt.datetime | None = None, quotes: "NetQuotes | None" = None) -> list[str]:
-    """대상마다 지금 가격·시각·장 상태, 업비트 호가 위 3단계, 오늘 봉(진행 중 포함), 직전 분봉을 사람 말로. 기록을 쓰지 않는다."""
+    """대상마다 지금 가격·시각·받을 수 있는 상태, 업비트 호가 위 3단계, 오늘 봉(진행 중 포함), 직전 분봉을 사람 말로. 기록을 쓰지
+    않는다. at을 주지 않으면 **대상마다 요청 시각을 새로 잡는다**(한 번만 잡으면 뒤 대상의 값이 '요청보다 뒤'로 찍힌다)."""
     q = quotes or NetQuotes()
-    at = (at or C.now_kst()).replace(microsecond=0)
-    out = [f"# 실제 가격 받기 시험 ({at.isoformat(timespec='seconds')})"]
-    for a in assets:
+    first = (at or _now()).replace(microsecond=0)
+    out = [f"# 실제 가격 받기 시험 ({first.isoformat(timespec='seconds')})"]
+    for i, a in enumerate(assets):
+        at_a = first if (at is not None or i == 0) else _now().replace(microsecond=0)
         coin = C.ASSETS[a].kind == "coin"
-        out += ["", f"## {a} {C.ASSETS[a].name}"]
-        n = q.now(a, at)
+        out += ["", f"## {a} {C.ASSETS[a].name} (요청 시각 {at_a.isoformat(timespec='seconds')})"]
+        n = q.now(a, at_a)
         if n is None:
             out.append("- 지금 가격: 받지 못함(None) — 이 대상의 지금 주문은 거절된다")
         else:
-            age = (at - n.time).total_seconds()
-            out.append(f"- 지금 가격: {n.price:,.0f}원, 가격의 시각 {n.time.isoformat(timespec='seconds')}(요청보다 {age:+.0f}초), "
-                       f"장 {'열림' if n.open else '닫힘'}, 출처 {n.source}")
+            age = (at_a - n.time).total_seconds()
+            what = "체결 시각" if coin else "응답 시각(마지막 체결 시각이 아니다)"
+            out.append(f"- 지금 가격: {n.price:,.0f}원, 값의 시각 = {what} {n.time.isoformat(timespec='seconds')}"
+                       f"(요청보다 {age:+.0f}초), 지금 주문 {'받음' if n.open else '안 받음 — ' + n.why}, 출처 {n.source}")
         if not coin:
-            raw = q._get(NAVER_NOW.format(code=a), at)
+            raw = q._get(NAVER_NOW.format(code=a), at_a)
             f = naver_now_fields(raw)
             out += [f"  - 응답 바깥 겹의 열쇠: {f['outer']}", f"  - closePrice가 든 사전의 열쇠: {f['item']}",
-                    f"  - 시각·상태로 보이는 칸: {f['times']}", f"  - closePrice 값 그대로: {f['closePrice']!r}"]
+                    f"  - 시각·상태로 보이는 칸: {f['times']}", f"  - 받을지 가르는 칸: {f['gate']}",
+                    f"  - closePrice 값 그대로: {f['closePrice']!r}"]
         else:
             b = q.book(a, at)
             if b is None:
@@ -433,11 +500,11 @@ def show(assets: list[str], at: dt.datetime | None = None, quotes: "NetQuotes | 
                 out.append(f"- 호가(시각 {b.time.isoformat(timespec='seconds')}, {len(b.asks)}단계): 팔려는 값 "
                            + ", ".join(f"{p:,.0f}×{s}" for p, s in b.asks[:3]) + " / 사려는 값 "
                            + ", ".join(f"{p:,.0f}×{s}" for p, s in b.bids[:3]))
-        d = q.day(a, coin_bar_date(at) if coin else at.astimezone(C.KST).date(), at)
+        d = q.day(a, coin_bar_date(at_a) if coin else at_a.astimezone(C.KST).date(), at_a)
         out.append("- 오늘 봉: 없음(None — 장 시작 전이거나 받지 못함)" if d is None else
                    f"- 오늘 봉 {d.date}: 시가 {d.open:,.0f}, 고가 {d.high}, 저가 {d.low}, 지금·종가 {d.close}, "
                    f"{'끝남' if d.final else '진행 중'}, 출처 {d.source}")
-        m = q.minute(a, at - dt.timedelta(minutes=1))
+        m = q.minute(a, at_a - dt.timedelta(minutes=1))
         out.append("- 직전 분봉: 없음(None)" if m is None else
                    f"- 직전 분봉 {m.time.isoformat(timespec='minutes')}: 고가 {m.high:,.0f}, 저가 {m.low:,.0f}, 출처 {m.source}")
     return out
@@ -445,6 +512,8 @@ def show(assets: list[str], at: dt.datetime | None = None, quotes: "NetQuotes | 
 
 def main(argv: list[str]) -> int:
     """python -m market.quotes [대상…] — 실제 주소에서 받은 값을 보여 준다(읽기 전용, 기본 대상은 세 대상)."""
+    from . import stocks as ST
+    ST.register(C.STOCKS)   # 종목 이름(목록 stocks.toml) — 없으면 이름 자리에 코드가 나온다
     assets = [a for a in argv if not a.startswith("-")] or list(C.ASSET_IDS)
     for a in assets:
         try:

@@ -51,6 +51,14 @@ ROUTES = {("bank", "sec"), ("bank", "upbit"), ("sec", "bank"), ("upbit", "bank")
 KINDS = ("order", "fill", "broker", "account")       # 증권사가 만드는 기록 종류(쓰는 순서)
 LOOKBACK_DAYS = 12                                    # 전 거래일 종가·뒤 봉을 찾을 때 거슬러 보는 날 수
 ADJUST_DAYS = 10                                      # 진행 중인 봉으로 넣은 체결을 끝난 봉과 견주는 기간(일)
+# 진행 중인 봉에서 받은 시가가 시세 파일의 끝난 봉 시가와 다를 때 검산이 경고로 두는 폭. 네이버가 ETF 분배금을 지난 값에 소급해
+# 고친 몫은 1% 안쪽이다(2026년 한국 묶음 분배금 가장 큰 회차 446원 ÷ 약 8만 원 = 0.6%). 그보다 크면 손으로 적은 줄이 '진행 중'이라고
+# 둘러대는 것일 수 있어 오류로 둔다(검토 발견 3).
+IN_PROGRESS_TOLERANCE = 0.02
+
+
+class BrokerError(RuntimeError):
+    """증권사가 검사한 뒤 만든 줄이 상태 검사에 걸림 = 증권사 코드의 잘못. 매일 실행은 이것을 잡아 멈춘다(아무것도 쓰지 않음)."""
 
 
 def pocket_of(asset: str) -> str:
@@ -284,16 +292,18 @@ class State:
         return [] if self.pending.pop(oid, None) else [f"끝낼 주문 {oid}이 걸려 있지 않음"]
 
     def _b_adjust(self, d: dict, at: dt.datetime) -> list[str]:
+        """바로잡기 = 적어 두기만(2026-11-10 3회차 결정): 진행 중인 봉에서 받은 시가가 **실제로 치른 값**이다. 끝난 봉의 시가가
+        다르면(네이버가 분배금·액면분할을 지난 값에 소급해 고친 값일 수 있다) 돈·평균 산 값을 옮기지 않고 두 값과 출처만 적는다."""
         x = d.get("data", {})
         f = self.fills.get(x.get("fill"))
         if f is None:
             return [f"바로잡을 체결 {x.get('fill')}이 없음"]
-        settle = dt.date.fromisoformat(f["settle"]) if f.get("settle") else None
-        self._move(x.get("pocket", f.get("pocket")), int(x.get("cash", 0)), at.date(), settle)
-        self.cost[f["asset"]] = self.cost.get(f["asset"], 0.0) + float(x.get("cost", 0))
+        errs = []
+        if x.get("cash", 0) != 0 or x.get("cost", 0) != 0:
+            errs.append(f"바로잡기 줄이 돈({x.get('cash')})·산 값({x.get('cost')})을 옮김 — 바로잡기는 적어 두기만 한다")
         self.adjusted.add(f["id"])
         self.unverified.pop(f["id"], None)
-        return []
+        return errs
 
     def _order(self, d: dict, at: dt.datetime) -> list[str]:
         errs = []
@@ -355,6 +365,7 @@ class State:
         settle = dt.date.fromisoformat(d["settle"]) if d.get("settle") else None
         if (p.pocket == "sec") != (settle is not None):
             errs.append("증권 계좌 체결에만 결제일이 있다")
+        errs += _fill_when_errors(p, d, at)
         held = self.units.get(a, 0)
         if p.side == "buy":
             if tax:
@@ -397,6 +408,29 @@ class State:
         if sorted(d.get("pending", [])) != sorted(self.pending):
             errs.append("걸린 주문 목록이 다시 센 것과 다름")
         return errs
+
+
+def _fill_when_errors(p: Pending, d: dict, at: dt.datetime) -> list[str]:
+    """체결 줄의 날짜·시각이 주문과 맞나(검토 발견 2b): 장 시작·장 마감 주문의 체결 날짜 = 주문의 장(session), 시각 = 그 장의
+    09:00(장 시작)·15:30(장 마감, 장중 한도 체결 포함). 지금 주문의 체결 시각 = 주문의 요청 시각, 날짜 = 한국 거래소는 그날·업비트는
+    그 시각이 속한 일봉."""
+    h = RU.hours()
+    fill_date = str(d.get("fill_date"))
+    if p.kind in ("open", "close"):
+        errs = []
+        if p.session is None or fill_date != p.session.isoformat():
+            errs.append(f"체결 날짜 {fill_date} ≠ 주문의 장 {p.session}")
+        want = _kst(p.session, h["open"] if d.get("price_kind") == "open" else h["close"]) if p.session else None
+        if want is not None and at != want:
+            errs.append(f"체결 시각 {_iso(at)} ≠ 그 장의 {'09:00' if d.get('price_kind') == 'open' else '15:30'}({_iso(want)})")
+        return errs
+    errs = []
+    if at != p.at:
+        errs.append(f"지금 주문의 체결 시각 {_iso(at)} ≠ 요청 시각 {_iso(p.at)}")
+    want_day = Q.coin_bar_date(at) if p.pocket == "upbit" else at.date()
+    if fill_date != want_day.isoformat():
+        errs.append(f"체결 날짜 {fill_date} ≠ 체결 시각의 봉 {want_day}")
+    return errs
 
 
 def first_fill_time(p: Pending) -> dt.datetime | None:
@@ -453,7 +487,7 @@ class Broker:
         line["seq"] = self.state.seq + 1
         errs = self.state.apply(kind, line)
         if errs:  # 증권사가 검사한 뒤 만든 줄이 상태 검사에 걸리면 증권사 코드의 잘못이다
-            raise RuntimeError("증권사 내부 오류:\n" + "\n".join(errs))
+            raise BrokerError("증권사 내부 오류:\n" + "\n".join(errs))
         self.new[kind].append(line)
         if kind == "broker":
             self._broker_lines.append(line)
@@ -525,6 +559,15 @@ class Broker:
     def events(self, typ: str) -> list[dict]:
         """이 계좌의 증권사 사건 줄(지난 것 + 이번에 만든 것) 중 그 종류."""
         return [d for d in self._broker_lines if d.get("type") == typ]
+
+    def unbooked_open(self, at: dt.datetime) -> list[Pending]:
+        """그날(at의 날짜) 장 시작에 치러졌어야 하는데 아직 장부에 안 들어온 걸린 주문 — 오늘 봉(진행 중인 봉의 시가)을 아직 못 받음.
+        시가를 받고도 걸려 있는 사기(시가 ≥ 한도, 장중에 한도로 걸려 있음)는 들지 않는다(검토 발견 5)."""
+        at = _at(at)
+        if at < _kst(at.date(), RU.hours()["open"]):
+            return []
+        return [p for p in self.state.pending.values() if p.kind == "open" and p.session == at.date()
+                and self.quotes.day(p.asset, p.session, at) is None]
 
     # ----- 시작·사건 -----
     def start(self, at: dt.datetime, bank: int = 0, sec: int = 0, upbit: int = 0,
@@ -646,7 +689,9 @@ class Broker:
         return self._emit(res, "fill", line)
 
     def _verify(self, res: Result, at: dt.datetime) -> None:
-        """진행 중인 봉의 시가로 넣은 장 시작 체결을 끝난 봉의 시가와 견준다. 다르면 adjust 줄과 경고(지난 줄은 고치지 않는다)."""
+        """진행 중인 봉의 시가로 넣은 장 시작 체결을 끝난 봉의 시가와 견준다. 다르면 adjust 줄(돈 0 — 두 값과 출처만)과 경고 한 줄
+        (한 체결에 한 번). 진행 중인 봉에서 받은 값이 그 시각에 실제로 치른 값이라 돈·평균 산 값을 옮기지 않는다: 네이버 일봉은
+        ETF 분배금·액면분할을 지난 값에 소급해 고치므로 끝난 봉 쪽이 조정된 값일 수 있다(docs/broker-sandbox.md 15·18절)."""
         for fid, f in sorted(self.state.unverified.items()):
             if fid in self._verified:
                 continue
@@ -659,23 +704,16 @@ class Broker:
             if got.open == f["price"]:
                 self._verified.add(fid)
                 continue
-            a, q, side = f["asset"], f["qty_units"], f["side"]
-            if side == "buy":
-                v = _ceil(q * got.open)
-                cash, cost = -((v + RU.fee(a, v)) - (f["value"] + f["fee"])), v - f["value"]
-            else:
-                v = _floor(q * got.open)
-                gain = f.get("gain", 0.0) + (v - f["value"])
-                cash = (v - RU.fee(a, v) - RU.sell_tax(a, v, gain)) - (f["value"] - f["fee"] - f.get("tax", 0))
-                cost = 0
-            msg = (f"{fid}: 진행 중인 봉에서 받은 시가 {f['price']}가 끝난 봉의 시가 {got.open}와 다름 — "
-                   f"차액 {cash}원을 adjust 줄로 바로잡음")
+            gap = (got.open - f["price"]) / f["price"] if f["price"] else 0.0
+            msg = (f"{fid}: 진행 중인 봉에서 받아 치른 시가 {f['price']:,}가 끝난 봉의 시가 {got.open:,}와 다름({gap:+.2%}) — "
+                   f"치른 값은 바로잡지 않고 적어 둠(분배금·액면분할을 지난 값에 소급한 조정일 수 있다)")
             lim = (self.state.orders.get(f.get("order")) or {}).get("limit")
-            if side == "buy" and lim is not None and got.open >= lim:
-                msg += (f". 끝난 봉의 시가가 한도 {lim} 이상이다 — 실제로는 그 시각(09:00)에 체결되지 않았을 주문이다"
-                        f"(체결은 되돌리지 않고 값만 바로잡았다)")
-            self._broker_line(res, at, "adjust", {"fill": fid, "asset": a, "pocket": f["pocket"], "price_was": f["price"],
-                                                  "price_final": got.open, "cash": cash, "cost": cost}, msg)
+            if f["side"] == "buy" and lim is not None and got.open >= lim:
+                msg += f". 끝난 봉의 시가가 한도 {lim:,} 이상이다 — 사람이 본다"
+            self._broker_line(res, at, "adjust", {"fill": fid, "asset": f["asset"], "pocket": f["pocket"],
+                                                  "price_was": f["price"], "price_final": got.open, "cash": 0, "cost": 0,
+                                                  "source_was": f.get("source") or {},
+                                                  "source_final": {"from": got.source, "time": _iso(at), "final": True}}, msg)
             res.warnings.append(msg)
 
     # ----- 요청 -----
@@ -759,8 +797,8 @@ class Broker:
             got = self.quotes.now(asset, at)
             if got is None:
                 return self._reject(res, at, req, "지금 가격을 받지 못함")
-            if not got.open:
-                return self._reject(res, at, req, "장이 닫혀 있음(받은 장 상태)")
+            if not got.open:   # 장 닫힘·정규장 아님·거래 정지·지연 시세(quotes.naver_gate)
+                return self._reject(res, at, req, got.why or "장이 닫혀 있음(받은 장 상태)")
             bad = self._quote_error(got.time, at)
             if bad:
                 return self._reject(res, at, req, bad)
@@ -959,26 +997,30 @@ class Broker:
         st = self.state
         keep = list(C.ASSET_IDS) + sorted({a for a, n in st.units.items() if n and a not in C.CORE}
                                           | {p.asset for p in st.pending.values() if p.asset not in C.CORE})
-        prices, priced_at, value = {}, {}, 0.0
+        given = prices or {}   # 넘겨받은 평가 가격(매일 실행의 daily.value_prices) — 이름이 겹쳐 버려지던 것을 고침(검토 발견 1)
+        out, priced_at, value = {}, {}, 0.0
         pk = self.pockets()
         for a in keep:
-            got = (prices or {}).get(a) or self._price(a, at)
+            got = given.get(a) or self._price(a, at)
             if got is None:
                 if st.units.get(a):
                     res.warnings.append(f"{a}: 평가 가격을 받지 못함 — 평가액에서 빠짐")
                 continue
             p, t = got
-            prices[a] = [t.date().isoformat(), p]
+            out[a] = [t.date().isoformat(), p]
             priced_at[a] = _iso(t)
             value += st.units.get(a, 0) * p / C.ASSETS[a].unit
         line = {"id": aid, "run": run.isoformat(), "account": self.account, "cash": sum(pk.values()),
-                "positions": st.positions(), "prices": prices, "value": round(sum(pk.values()) + value, 2),
+                "positions": st.positions(), "prices": out, "value": round(sum(pk.values()) + value, 2),
                 "pending": sorted(st.pending), "pockets": pk, "priced_at": priced_at, "at": _iso(at)}
         return line, res.warnings
 
     def _price(self, asset: str, at: dt.datetime) -> tuple[float, dt.datetime] | None:
+        """넘겨받은 값이 없는 대상의 평가 가격: 지금 값(한국 거래소는 받은 장 상태가 '열림'일 때만 — 장 밖의 값은 공식 가격이
+        아니다) → 마지막 끝난 봉의 종가."""
         got = self.quotes.now(asset, at)
-        if got is not None and got.time <= at + dt.timedelta(seconds=RU.value("quote_clock_skew")):
+        if (got is not None and (got.open or not C.on_exchange(asset))
+                and got.time <= at + dt.timedelta(seconds=RU.value("quote_clock_skew"))):
             return got.price, got.time
         d = at.date()
         for _ in range(LOOKBACK_DAYS):
@@ -1039,39 +1081,120 @@ def _order_rule_errors(o: dict, rows: dict[str, list]) -> list[str]:
     return errs
 
 
-def _fill_price_errors(f: dict, order: dict | None, adjust: dict | None, rows: dict[str, list]) -> list[str]:
-    """체결가 검산(P8-4): 장 시작·장 마감은 끝난 일봉의 시가·종가와 같고(바로잡은 값이 있으면 그 값), 장중 한도는 저가 < 한도,
-    지금 체결은 그날 저가 − 한 칸 ≤ 값 ≤ 고가 + 한 칸."""
+def _fill_price_errors(f: dict, rows: dict[str, list]) -> tuple[list[str], list[str]]:
+    """체결가 검산(P8-4) → (오류, 경고). 장 시작·장 마감은 끝난 일봉의 시가·종가와 같아야 한다. 다만 진행 중인 봉에서 받아 넣은 장 시작
+    체결(source.final 거짓)은 시세 파일의 값과 다르면 경고(네이버의 소급 조정일 수 있다 — 치른 값은 바로잡지 않는다), 차이가
+    IN_PROGRESS_TOLERANCE(2%)를 넘으면 오류. 장중 한도는 저가 < 한도, 지금 체결은 그날 저가 − 한 칸 ≤ 값 ≤ 고가 + 한 칸."""
     w = f"{f.get('account')} fill {f.get('id')}"
     a = f.get("asset")
     rs = rows.get(a, ())
     if not rs:
-        return []
+        return [], []
     day = dt.date.fromisoformat(f["fill_date"])
     if day > rs[-1].date:
-        return []  # 아직 끝난 봉이 없다 — 다음 검사에서
+        return [], []  # 아직 끝난 봉이 없다 — 다음 검사에서
     bar = _bar(rows, a, day)
     if bar is None:
-        return [f"{w}: 체결 날짜 {day}의 일봉이 시세 파일에 없음"]
+        return [f"{w}: 체결 날짜 {day}의 일봉이 시세 파일에 없음"], []
     kind, price = f.get("price_kind"), f.get("price")
     if kind in ("open", "close"):
         want = bar.open if kind == "open" else bar.close
-        eff = adjust["data"]["price_final"] if adjust else price
-        if eff != want:
-            return [f"{w}: 체결가 {price}{f'(바로잡은 값 {eff})' if adjust else ''} ≠ 끝난 일봉의 {kind} {want}"]
-    elif kind == "limit":
+        if price == want:
+            return [], []
+        running = kind == "open" and (f.get("source") or {}).get("final") is False
+        gap = abs(price - want) / want if want else 1.0
+        if running and gap <= IN_PROGRESS_TOLERANCE:
+            return [], [f"{w}: 진행 중인 봉에서 받아 치른 시가 {price}가 시세 파일의 끝난 봉 시가 {want}와 다름({gap:.2%}) — "
+                        f"치른 값 그대로 둔다(분배금 소급 조정인지 사람이 본다)"]
+        why = f" — 진행 중인 봉 값이라도 {IN_PROGRESS_TOLERANCE:.0%}를 넘는 차이({gap:.2%})" if running else ""
+        return [f"{w}: 체결가 {price} ≠ 끝난 일봉의 {kind} {want}{why}"], []
+    if kind == "limit":
         if not bar.low < price:
-            return [f"{w}: 장중 한도 체결 {price}인데 그날 저가 {bar.low}가 한도보다 낮지 않음"]
+            return [f"{w}: 장중 한도 체결 {price}인데 그날 저가 {bar.low}가 한도보다 낮지 않음"], []
     elif kind == "now":
         t = RU.tick(a, price) or 0
         if not bar.low - t <= price <= bar.high + t:
-            return [f"{w}: 지금 체결가 {price}이 그날 저가–고가({bar.low}–{bar.high}) ± 한 칸 밖"]
+            return [f"{w}: 지금 체결가 {price}이 그날 저가–고가({bar.low}–{bar.high}) ± 한 칸 밖"], []
+    return [], []
+
+
+def _expire_errors(e: dict, order: dict | None, rows: dict[str, list]) -> list[str]:
+    """끝난(expire) 주문을 그 장의 봉과 견준다(검토 발견 4): 그 장의 봉이 시세 파일에 있고(시가 > 0) 그 주문이 치러졌어야 하면 오류 —
+    팔기(시장가), 시가 < 한도인 장 시작 사기, 시가 ≥ 한도여도 저가 < 한도인 장 시작 사기(장중 한도 체결), 종가 < 한도인 장 마감 사기.
+    봉이 없는 날(휴장·거래 정지)이나 시가 0인 봉의 expire는 그대로다."""
+    if not order or not order.get("session") or order.get("order_kind") not in ("open", "close"):
+        return []
+    a, day = order.get("asset"), dt.date.fromisoformat(order["session"])
+    bar = _bar(rows, a, day)
+    if bar is None or bar.open <= 0:
+        return []
+    lim = order.get("limit")
+    if order.get("order_kind") == "open":
+        filled = order.get("side") == "sell" or (lim is not None and (bar.open < lim or bar.low < lim))
+        what = f"시가 {bar.open}·저가 {bar.low}, 한도 {lim}"
+    else:
+        filled = order.get("side") == "sell" or (lim is not None and bar.close < lim)
+        what = f"종가 {bar.close}, 한도 {lim}"
+    if filled:
+        return [f"{e.get('account')} broker {e.get('id')}: 주문 {order.get('id')}을 끝냈는데({e.get('note')}) 시세 파일의 "
+                f"{day} 봉으로는 치러졌어야 함({what})"]
     return []
 
 
+def _old_ledger(lines: dict[str, list[dict]], acc: str, start_run: str) -> tuple[int, dict[str, int]]:
+    """갈아타기 전 옛 장부의 마지막 상태(현금, 보유): 그 계좌의 마지막 옛 계좌 줄(start 실행 날짜 전) + 그 뒤의 옛 체결 줄
+    (start 실행 날짜까지 — 갈아타는 날 옛 장부가 끝낸 주문). 옛 기록이 없으면 시작 금액과 빈 보유(첫 실행)."""
+    olds = [x for x in lines.get("account", []) if x.get("account") == acc and "seq" not in x and x.get("run", "") < start_run]
+    cash, units, since = C.START_CASH, {}, ""
+    if olds:
+        last = olds[-1]
+        cash, since = int(last.get("cash", 0)), last.get("run", "")
+        units = {a: int(n) for a, n in (last.get("positions") or {}).items() if n}
+    for f in lines.get("fill", []):
+        if f.get("account") != acc or "seq" in f or not since < f.get("run", "") <= start_run:
+            continue
+        q, a = int(f.get("qty_units", 0)), f.get("asset")
+        if f.get("side") == "buy":
+            cash -= int(f.get("value", 0)) + int(f.get("fee", 0))
+            units[a] = units.get(a, 0) + q
+        else:
+            cash += int(f.get("value", 0)) - int(f.get("fee", 0)) - int(f.get("tax", 0) or 0)
+            units[a] = units.get(a, 0) - q
+    return cash, {a: n for a, n in units.items() if n}
+
+
+def _start_errors(lines: dict[str, list[dict]], acc: str, start: dict) -> list[str]:
+    """(검토 발견 2c·2d) start 줄 뒤의 seq 없는 줄과, start의 시작 잔고가 옛 장부와 같은지.
+    - seq 없는 줄이 정당한 경우: 옛 계좌·주문 줄은 start 실행 날짜 **전**, 옛 체결 줄은 start 실행 날짜**까지**이면서 옛(seq 없는)
+      주문에 딸린 것(갈아타는 날 옛 장부가 끝낸 주문). 그 밖의 seq 없는 order·fill·account 줄은 오류 — 증권사가 만들지 않은 줄이다.
+    - 시작 잔고: 진짜 계좌(config.LIVE_ACCOUNTS)만 견준다 — 주머니 합 = 옛 장부 현금, 보유 = 옛 장부 보유(시험 계좌는 옛 기록이 없다)."""
+    errs = []
+    run = start.get("run", "")
+    old_orders = {o.get("id") for o in lines.get("order", []) if o.get("account") == acc and "seq" not in o}
+    for kind in ("order", "fill", "account"):
+        for x in lines.get(kind, []):
+            if x.get("account") != acc or "seq" in x:
+                continue
+            ok = (x.get("run", "") <= run and x.get("order") in old_orders) if kind == "fill" else x.get("run", "") < run
+            if not ok:
+                errs.append(f"{acc} {kind} {x.get('id')}: 시작 잔고(start, {run}) 뒤의 seq 없는 줄 — 증권사가 만든 줄이 아니다")
+    if acc in C.LIVE_ACCOUNTS:
+        cash, units = _old_ledger(lines, acc, run)
+        data = start.get("data") or {}
+        total = sum(int(v) for v in (data.get("pockets") or {}).values())
+        got = {a: int(n) for a, n in (data.get("units") or {}).items() if n}
+        if total != cash or got != units:
+            errs.append(f"{acc} broker {start.get('id')}: 시작 잔고(주머니 합 {total:,}원, 보유 {got})가 옛 장부의 마지막 상태"
+                        f"(현금 {cash:,}원, 보유 {units})와 다름")
+    return errs
+
+
 def check(lines: dict[str, list[dict]], bars: dict[str, Iterable] | None = None) -> tuple[list[str], list[str]]:
-    """기록 전체를 다시 돌려 어긋남을 찾는다 (오류, 경고). ① 주머니 음수 없음 ② 판 수량 ≤ 가진 수량 ③ 받은 주문마다 받을 때 조건
-    ④ account 줄 = 다시 센 값, 그리고 체결가 검산(bars = 대상 → 끝난 일봉 묶음, 없으면 건너뜀). 손으로 적은 줄은 여기서 걸린다."""
+    """기록 전체를 다시 돌려 어긋남을 찾는다 (오류, 경고). docs/broker-sandbox.md 15절 '검산이 잡는 것 / 못 잡는 것'.
+    ① 주머니 음수 없음 ② 판 수량 ≤ 가진 수량 ③ 받은 주문마다 받을 때 조건(돈·수량·시각·호가 단위·가격 제한 폭) ④ account 줄 = 다시
+    센 값 ⑤ 체결 줄의 날짜·시각 = 주문의 장·요청 시각 ⑥ start 뒤의 seq 없는 줄 없음, 진짜 계좌의 start = 옛 장부의 마지막 상태
+    ⑦ 체결가 = 끝난 일봉(bars = 대상 → 끝난 일봉 묶음, 없으면 건너뜀) ⑧ 끝난(expire) 주문이 그 장의 봉으로 치러졌어야 했는지.
+    **못 잡는 것**: 그날 저가–고가 안의 값으로 꾸민 지금 체결, 값의 출처 칸까지 꾸민 줄 — 마지막 장치는 git 기록과 사람 눈이다."""
     rows = {a: tuple(sorted(rs, key=lambda r: r.date)) for a, rs in (bars or {}).items()}
     errs: list[str] = []
     warns: list[str] = []
@@ -1086,10 +1209,16 @@ def check(lines: dict[str, list[dict]], bars: dict[str, Iterable] | None = None)
             errs += st.apply(kind, d)
             if kind == "order":
                 errs += _order_rule_errors(d, rows)
-        adjusts = {d["data"].get("fill"): d for k, d in items if k == "broker" and d.get("type") == "adjust"}
+        start = next((d for k, d in items if k == "broker" and d.get("type") == "start"), None)
+        if start is not None:
+            errs += _start_errors(lines, acc, start)
         for kind, d in items:
             if kind == "fill":
-                errs += _fill_price_errors(d, st.orders.get(d.get("order")), adjusts.get(d["id"]), rows)
+                e, w = _fill_price_errors(d, rows)
+                errs += e
+                warns += w
+            elif kind == "broker" and d.get("type") == "expire":
+                errs += _expire_errors(d, st.orders.get((d.get("data") or {}).get("order")), rows)
         for fid, f in st.unverified.items():   # 끝난 봉이 시세 파일에 있으면 위 체결가 검산이 이미 견줬다
             if _bar(rows, f["asset"], dt.date.fromisoformat(f["fill_date"])) is None:
                 warns.append(f"{acc} fill {fid}: 진행 중인 봉의 시가로 넣었고 아직 끝난 봉과 견주지 않음")
