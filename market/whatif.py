@@ -243,12 +243,12 @@ def simulate(case: str, runs: list[dict], recs: dict, rows: dict, coin: dict | N
 # 안 되는 거래로 만들어져 이어 쓰지 않고 비교용으로만 남긴다. 기록에 남은 옛 주문(무엇을, 몇 주, 언제)을 그대로 그때의 공식 값으로
 # 가상 증권사에 넣고, 그 순간 돈이나 주식이 없어 안 되는 주문은 거절된 채로 둔다("체결된 줄 알았는데 안 된 것").
 MORNING = dt.time(8, 30)                    # 그 시각에 받지 않는 종류의 옛 주문(주말에 낸 종가 주문 등)을 내는 그 장의 아침
-COIN_DELAY = dt.timedelta(seconds=5)
-CARRY_TAIL = dt.timedelta(minutes=1)        # whatif: 마지막 판단 시각 뒤 이만큼까지 넣는다(그날 옛 주문을 다 넣게)        # 비트코인은 그 09:00 몇 초 뒤(같은 09:00의 한국 거래소 체결과 섞이지 않게)
-BOOK_DEPTH = 1_000_000.0
+COIN_DELAY = dt.timedelta(seconds=5)       # 비트코인은 그 09:00 몇 초 뒤(같은 09:00의 한국 거래소 체결과 섞이지 않게)
+CARRY_TAIL = dt.timedelta(minutes=1)        # whatif: 마지막 판단 시각 뒤 이만큼까지 넣는다(그날 옛 주문을 다 넣게)
+BOOK_DEPTH = 1_000_000.0                    # 다시 넣기의 업비트 호가 수량(코인 개수) — 기록된 수량이 그 값에 다 치러지게
 # 2회차(메인 결정): 이 계좌는 판단이 아니라 규칙('처음 살 수 있는 날 1/3씩 사서 그대로 둔다')이라, 돈이 모자란 사기는 그때 쓸 수 있는
 # 돈 안에서 살 수 있는 만큼 산다(매일 실행의 주문 계획과 같은 뜻). 손 계좌·계산기 계좌는 판단을 내린 계좌라 통째로 받거나 거절한다
-SHRINK_ACCOUNTS = B.SHRINK_ACCOUNTS                    # 다시 넣기의 업비트 호가 수량(코인 개수) — 기록된 수량이 그 값에 다 치러지게
+SHRINK_ACCOUNTS = B.SHRINK_ACCOUNTS
 
 
 class CarryQuotes(Q.BarQuotes):

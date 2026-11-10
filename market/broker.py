@@ -1164,8 +1164,8 @@ def _expire_errors(e: dict, order: dict | None, rows: dict[str, list]) -> list[s
     return []
 
 
-CARRY = "carry"
-SHRINK_ACCOUNTS = ("baseline:equal_hold",)   # 다시 넣을 때 사기를 살 수 있는 만큼 줄여도 되는 계좌(판단이 아니라 규칙인 기준선)   # 갈아타는 날 옛 주문을 그대로 다시 넣은 끝을 적는 phase 줄의 이름(data.name) — 그 줄의 시각이 '갈아타는 시각'
+CARRY = "carry"   # 갈아타는 날 옛 주문을 그대로 다시 넣은 끝을 적는 phase 줄의 이름(data.name) — 그 줄의 시각이 '갈아타는 시각'
+SHRINK_ACCOUNTS = ("baseline:equal_hold",)   # 다시 넣을 때 사기를 살 수 있는 만큼 줄여도 되는 계좌(판단이 아니라 규칙인 기준선)
 
 
 def _old_orders(lines: dict[str, list[dict]], acc: str) -> list[dict]:

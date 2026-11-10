@@ -45,7 +45,7 @@
 7. **주문**: 목표 비중을 정해 주문을 낸다. 비중은 손 예측이 정한다. 계산기가 손 예측을 이기면 바꾸는 것을 검토하고, 그 결정을 기록한다. 주문은 가상 증권사 프로그램이 받는다(아래 '가상 증권사', 2026-11-10): 비트코인은 그 순간의 실제 가격에 바로, ETF·종목은 장이 열리는 09:00 시가에. **6·7(record)은 09:00 전에 끝낸다**(아래 '체결 규칙').
 8. **보고서**를 쓰고, 모든 기록을 한 번에 커밋해 main에 push한다.
 
-명령으로는 `python -m market.daily prepare`(1~3과 5의 질문) → 메인의 조사·대 보기·손 예측(입력 파일) → `python -m market.daily record`(기록을 한 번에) → `python -m market.daily report`(일지 뼈대) → (09:00 뒤, 세션이 살아 있을 때만) `python -m market.daily open`(장 시작 뒤 단계)이다. 지시문 전체는 [routine-prompt.md](routine-prompt.md).
+명령으로는 `python -m market.daily prepare`(1~3과 5의 질문) → 메인의 조사·대 보기·손 예측(입력 파일) → `python -m market.daily record`(기록을 한 번에) → `python -m market.daily report`(일지 뼈대) 이다. 지시문 전체는 [routine-prompt.md](routine-prompt.md). 장 시작 뒤 단계 `python -m market.daily open`은 09:05에 따로 도는 예약 실행이 돌린다(2026-11-10, [routine-open-prompt.md](routine-open-prompt.md)).
 
 ### 계좌 넷과 첫날 (2026-10-21)
 - `live:hand`(진짜 계좌, 손 예측이 비중을 정함), `live:calc`(계산기를 따름, R_weights — 2026-11-04 결정부터 v2: 손 계좌와 같은 식 1/3 + (p − 0.5) × 4/3), `baseline:equal_hold`(처음 살 수 있는 날 1/3씩 사 두기), `baseline:cash`(현금). **첫 예약 실행 날**에 넷 다 1,000만 원 현금으로 시작한다.
