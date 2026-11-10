@@ -818,3 +818,23 @@ covers = ["coin_funding_pct"]
 official = false
 added = 2026-11-09
 note = "2026-11-09 수급 조사가 새로 찾음. 키 없이 열림. 바이낸스·바이비트가 지역 차단일 때 OKX와 견줄 두 번째 값"
+
+[[place]]
+id = "P_globale_premarket"
+name = "아침 장 전 시황 기사 (글로벌이코노믹 등, 한국 지수 야간 선물 등락)"
+url = "https://www.globale.co.kr/news/articleView.html?idxno=41563"
+angle = "간밤 반응"
+covers = ["S_q_overnight_gap", "kr_overnight_pct"]
+official = false
+added = 2026-11-11
+note = "2026-11-11 2차 조사가 새로 찾음. 07:13 기사에 KOSPI200 야간 선물 등락(−1.74%)이 나왔다 — 인베스팅이 403일 때 대신. 주소는 날마다 다르다(네이버 뉴스 최신순 '야간선물' 검색으로 찾음). 한 곳뿐이라 숫자를 다른 곳과 견줄 것"
+
+[[place]]
+id = "P_naver_mstock_api"
+name = "네이버 모바일 증권 종목 뉴스 (JSON)"
+url = "https://m.stock.naver.com/api/news/stock/005490?pageSize=6&page=1"
+angle = "공시·뉴스"
+covers = ["S_q_earnings_beat"]
+official = false
+added = 2026-11-11
+note = "2026-11-11 공시·뉴스 조사가 새로 찾음. 키 없이 종목별 최근 기사 제목·시각이 나온다(주소의 코드를 바꿔 본다). 밤사이 새 소식이 있는지 빠르게 거르는 데 쓴다 — 실적 발표 날짜를 놓친 적이 있으니(POSCO·LG화학) 발표 여부는 지난 기록과 견줄 것"
