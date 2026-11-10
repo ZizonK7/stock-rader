@@ -47,14 +47,26 @@ FIELDS: dict[str, dict[str, tuple]] = {
     "hand_reading": {"values": (dict,), "why": (dict,), "places": (dict,), "research": (list,)},
     "reading_check": {"target": (str,), "state": (str,), "then": (str,), "now": (str,), "hit": OPT_BOOL,
                       "late": (list,), "reason": (str,)},
+    # 가상 증권사(2026-11-10, market/broker.py): 주문·체결 밖의 증권사 사건 한 줄씩 — type은 BROKER_TYPES, seq = 계좌 안에서
+    # 증권사가 줄을 만든 순서(order·fill·account 줄의 seq와 한 줄로 이어진다)
+    "broker": {"account": (str,), "at": (str,), "type": (str,), "data": (dict,), "note": (str,), "seq": (int,)},
 }
 # 있을 때만 검사하는 칸 (1단계 재생 기록에는 없다)
 OPTIONAL: dict[str, dict[str, tuple]] = {
     # 2026-11-05~(결정 E2): 체결가 기준 예측 줄의 채점은 체결 봉 날짜·시가(fill_date·fill_price)를 적는다
     "score": {"counted": OPT_BOOL, "fill_date": (str,), "fill_price": NUM},
     # 2026-11-05~(결정 E1): fill_rule = "open"(판단 뒤 첫 시가에 체결). 없으면 옛 규칙(ETF·종목 종가, 코인 시가)
-    "order": {"decided_at": (str,), "fill_rule": (str,)},
-    "fill": {"price_kind": (str,)},   # 체결 가격이 시가(open)인가 종가(close)인가
+    # 가상 증권사(2026-11-10, broker.py가 만든 줄 — pocket이 있으면 증권사 주문): pocket(주머니), order_kind(open 장 시작 /
+    # close 장 마감 / now 지금 — 기록 종류 칸 kind와 겹치지 않게 이름을 바꿈, fill_rule에도 같은 값), limit(한도 가격),
+    # amount(업비트 금액 주문), reserved(잡아 둔 돈), session(체결될 장의 날짜), seq(계좌 안 순서)
+    "order": {"decided_at": (str,), "fill_rule": (str,), "pocket": (str,), "order_kind": (str,), "limit": NUM,
+              "amount": (int,), "reserved": (int,), "session": (str,), "seq": (int,)},
+    # price_kind: 시가(open)·종가(close)·지금(now)·장중 한도(limit). 증권사 체결은 at(체결 시각)·pocket·tax(세금)·
+    # source(가격을 받은 곳과 그 시각, 진행 중인 봉이었나)·settle(결제일, 업비트는 null)·gain(판 이익, 팔기만)·seq
+    "fill": {"price_kind": (str,), "at": (str,), "pocket": (str,), "tax": (int,), "source": (dict,),
+             "settle": (str, type(None)), "gain": NUM, "seq": (int,)},
+    # 증권사 계좌 줄: pockets(주머니별 원화 — cash는 그 합), priced_at(대상 → 평가 가격의 시각), at(상태의 시각), seq
+    "account": {"pockets": (dict,), "priced_at": (dict,), "at": (str,), "seq": (int,)},
     # 2026-11-04: layer = 답한 층(계산기 출발점/조각/동전/모름, 이전 버전 조각/기준값, 손 조각/출발점/기타),
     # analog = 계산기 줄의 참고 칸(같은 대상 3년 창에서 시세 상태가 같은 지난 날들 {n, runs, eff, up_rate}, 없으면 null)
     # 2026-11-05~: base_kind = "fill"(기준이 체결가 — base_date = 체결 봉 날짜, base_close = null). 없으면 옛 기준(마지막 끝난 종가)
@@ -70,7 +82,11 @@ WHY = ("맞음", "잡음", "대 보기 틀림", "조건 흐림", "이유 틀림"
 # 예측 줄 layer 낱말 (2026-11-04): 계산기 출발점/조각/동전/모름, 이전 버전 조각/기준값, 손 예측 조각/출발점/기타(입력 info)
 LAYERS = ("출발점", "조각", "동전", "기준값", "모름", "기타")
 BASE_KINDS = ("fill",)            # 예측 줄 base_kind (2026-11-05~): 체결가 기준
-PRICE_KINDS = ("open", "close")   # 체결 줄 price_kind
+PRICE_KINDS = ("open", "close", "now", "limit")   # 체결 줄 price_kind (now·limit은 가상 증권사, 2026-11-10)
+# 가상 증권사 낱말 (market/broker.py가 같은 것을 쓴다)
+POCKETS = ("bank", "sec", "upbit")                 # 은행 / 증권 계좌 / 업비트
+ORDER_KINDS = ("open", "close", "now")             # 장 시작 / 장 마감 / 지금
+BROKER_TYPES = ("start", "reject", "transfer", "cancel", "expire", "adjust", "plan", "phase")
 LOOK_RESULT = ("찾음", "없음", "늦음", "막힘")
 SUMMARY_MAX = 300  # 조사 기록의 요약 칸 최대 글자 수 — 기사 본문을 옮기지 않는다(요약 + 링크)
 # 숫자 이름(2026-11-04): 소문자·숫자·밑줄, 끝 낱말이 단위다 — 같은 뜻은 날마다 같은 이름으로 적어야 견줄 수 있다.
@@ -84,9 +100,10 @@ DESCRIBE = {
     "reading": "대 보기: 대상 하나의 조각 값(values: 상태 id → 예/아니오/모름)과 계산에 쓴 숫자(numbers), known_through = 본 마지막 일봉 날짜",
     "prediction": "예측: predictor(calc / hand / version:<id> / baseline:half / baseline:base_rate / baseline:all), 기간(봉 수), 기준(2026-11-05~ base_kind fill: 체결 봉 날짜, 기준가 null — 채점 때 그 봉의 시가; 옛 줄: 마지막 끝난 종가), 오를 확률과 범위, 움직임 크기 범위(%, 절댓값), 쓴 조각·결론을 바꾸는 조각, 이유, 논리집 지문, (있으면) 답한 층 layer·참고 칸 analog",
     "score": "채점: 기한이 된 예측의 목표 종가와 수익률(체결가 기준이면 체결 봉 날짜·시가 fill_date·fill_price도), 방향 적중(확률 0.5면 null), 확률 점수(Brier), 크기 적중",
-    "order": "주문: 계좌, 대상(세 대상 또는 종목 코드), buy/sell, 수량(최소 단위 개수: ETF·종목 주, 코인 1e-8), 판단 때 가격, (2단계) 판단 시각, (2026-11-05~) 체결 규칙 fill_rule = open(판단 뒤 첫 시가)",
-    "fill": "체결: 주문 id, 체결일, 가격(price_kind 시가/종가), 수량(현금이 모자라면 줄어듦 — note), 금액·수수료(원), 체결 뒤 현금",
-    "account": "계좌 상태: 현금(원), 보유(최소 단위; 세 대상은 늘, 종목은 들고 있을 때만), 평가 가격(대상 → [날짜, 가격]; 세 대상 + 들거나 기다리는 종목), 평가액, 아직 체결 안 된 주문",
+    "order": "주문: 계좌, 대상(세 대상 또는 종목 코드), buy/sell, 수량(최소 단위 개수: ETF·종목 주, 코인 1e-8; 업비트 금액 사기는 0), 판단 때 가격, (2단계) 판단 시각, (2026-11-05~) 체결 규칙 fill_rule = open(판단 뒤 첫 시가), (증권사 2026-11-10~) pocket·order_kind(open/close/now, fill_rule도 같은 값)·limit·amount·reserved·session·seq",
+    "fill": "체결: 주문 id, 체결일, 가격(price_kind 시가/종가, 증권사는 지금/장중 한도도), 수량(옛 장부는 현금이 모자라면 줄어듦 — note), 금액·수수료(원), 체결 뒤 현금(증권사: 그 주머니 원화), (증권사) 체결 시각 at·주머니·세금·가격 출처·결제일·판 이익·seq",
+    "account": "계좌 상태: 현금(원; 증권사는 세 주머니 합), 보유(최소 단위; 세 대상은 늘, 종목은 들고 있을 때만), 평가 가격(대상 → [날짜, 가격]; 세 대상 + 들거나 기다리는 종목), 평가액, 아직 체결 안 된 주문, (증권사) 주머니별 원화 pockets·평가 가격의 시각 priced_at·상태의 시각 at·seq",
+    "broker": "가상 증권사 사건(2026-11-10): type = start 시작 잔고 / reject 거절과 이유 / transfer 이체 / cancel 취소 / expire 체결 못 하고 끝남 / adjust 검산에서 어긋난 값 바로잡기 / plan 그날의 목표 비중 / phase 단계가 돌았다는 표시, at(사건 시각), data, note, seq",
     "review": "돌아보기(2단계): 예측 id, 틀린 조각 id, 까닭(조건 흐림/이유 틀림/바깥 상황/잡음/대 보기 틀림), 이유",
     "correction": "정정: 고칠 기록 id(target)와 설명. 지난 줄은 고치지 않는다",
     "research": "조사(질문 하나): 대 볼 상태 id(각도 질문·2차 조사면 ''), 각도, 질문, 답 요약, 본 곳마다 결과(찾음/없음/늦음/막힘)·새 곳 여부·링크·날짜, 맡은 에이전트, (2026-11-05~) numbers = 숫자 이름_단위 → 값, as_of = 정보 시각",
@@ -139,10 +156,40 @@ def line_errors(kind: str, d: dict, where: str) -> list[str]:
             errs.append(f"{where}: 체결가 기준 줄(base_kind fill)의 base_close는 null — 예측 때는 체결가를 모른다")
         elif "base_kind" not in d and "base_close" in d and d["base_close"] is None:
             errs.append(f"{where}: 옛 기준 줄은 base_close(기준 종가)가 있어야 함")
-    if kind == "order" and "fill_rule" in d and d["fill_rule"] not in C.FILL_RULES:
+    if kind == "order" and "pocket" in d:   # 가상 증권사 주문
+        if d["pocket"] not in POCKETS:
+            errs.append(f"{where}: pocket은 {list(POCKETS)} 중 하나")
+        if d.get("order_kind") not in ORDER_KINDS or d.get("fill_rule") != d.get("order_kind"):
+            errs.append(f"{where}: 증권사 주문의 order_kind는 {list(ORDER_KINDS)} 중 하나이고 fill_rule과 같아야 함")
+        for k in ("decided_at", "reserved", "seq"):
+            if k not in d:
+                errs.append(f"{where}: 증권사 주문에 '{k}' 칸이 없음")
+        if isinstance(d.get("decided_at"), str) and as_of_time(d["decided_at"]) is None:
+            errs.append(f"{where}: decided_at은 시간대가 붙은 ISO 시각")
+    elif kind == "order" and "fill_rule" in d and d["fill_rule"] not in C.FILL_RULES:
         errs.append(f"{where}: fill_rule은 {list(C.FILL_RULES)} 중 하나(없으면 옛 규칙)")
     if kind == "fill" and "price_kind" in d and d["price_kind"] not in PRICE_KINDS:
         errs.append(f"{where}: price_kind는 {list(PRICE_KINDS)} 중 하나")
+    if kind == "fill" and "pocket" in d:    # 가상 증권사 체결
+        for k in ("at", "tax", "seq", "price_kind", "settle", "source"):
+            if k not in d:
+                errs.append(f"{where}: 증권사 체결에 '{k}' 칸이 없음")
+        if isinstance(d.get("at"), str) and as_of_time(d["at"]) is None:
+            errs.append(f"{where}: at은 시간대가 붙은 ISO 시각")
+        if isinstance(d.get("tax"), int) and d["tax"] < 0:
+            errs.append(f"{where}: 세금이 음수")
+    if kind == "broker":
+        if d.get("type") not in BROKER_TYPES:
+            errs.append(f"{where}: type은 {list(BROKER_TYPES)} 중 하나")
+        if isinstance(d.get("at"), str) and as_of_time(d["at"]) is None:
+            errs.append(f"{where}: at은 시간대가 붙은 ISO 시각")
+    if kind == "account" and "pockets" in d:
+        pk = d["pockets"]
+        if not isinstance(pk, dict) or sorted(pk) != sorted(POCKETS) or not all(
+                isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in pk.values()):
+            errs.append(f"{where}: pockets는 {list(POCKETS)} → 0 이상 정수(원)")
+        elif d.get("cash") != sum(pk.values()):
+            errs.append(f"{where}: cash는 세 주머니의 합")
     for k, types in OPTIONAL.get(kind, {}).items():
         if k in d and (not isinstance(d[k], types) or (isinstance(d[k], bool) and bool not in types)):
             errs.append(f"{where}: '{k}' 타입이 {[t.__name__ for t in types]}가 아님")
@@ -282,6 +329,9 @@ def check(root: Path = C.ROOT, folders: list[Path] | None = None) -> list[str]:
     errs = []
     for f in folders:
         errs += check_folder(f)
+        if (f / "broker.jsonl").exists():   # 가상 증권사 검산(다시 계산·체결가) — docs/broker-sandbox.md 15절
+            from . import broker
+            errs += broker.check_folder(f, root / "data" / "prices")[0]
     errs += head_errors(root)
     return errs
 
