@@ -419,10 +419,13 @@ class Broker:
         self.problems: list[str] = []
         self._verified: set[str] = set()
         self._account_ids: set[str] = set()
+        self._broker_lines: list[dict] = []
         for kind, d in mine(lines or {}, account):
             self.problems += self.state.apply(kind, d)
             if kind == "account":
                 self._account_ids.add(d["id"])
+            elif kind == "broker":
+                self._broker_lines.append(d)
 
     @classmethod
     def load(cls, folder: Path, account: str, quotes: Q.Quotes, bar_days: Iterable[dt.date] | None = None) -> "Broker":
@@ -452,6 +455,8 @@ class Broker:
         if errs:  # 증권사가 검사한 뒤 만든 줄이 상태 검사에 걸리면 증권사 코드의 잘못이다
             raise RuntimeError("증권사 내부 오류:\n" + "\n".join(errs))
         self.new[kind].append(line)
+        if kind == "broker":
+            self._broker_lines.append(line)
         res.lines.append((kind, line))
         return line
 
@@ -494,6 +499,32 @@ class Broker:
 
     def pockets(self) -> dict[str, int]:
         return {k: self.state.pocket_cash(k) for k in POCKETS}
+
+    def sellable(self, asset: str, at: dt.datetime) -> int:
+        return self.state.sellable(asset, _at(at))
+
+    def expected_units(self) -> dict[str, int]:
+        """든 수량에 걸린 주문을 더한 것(걸린 사기는 든 것으로, 걸린 팔기는 판 것으로) — 주문 계획이 이것으로 차이를 잰다."""
+        out = {a: n for a, n in self.state.units.items() if n}
+        for p in self.state.pending.values():
+            out[p.asset] = out.get(p.asset, 0) + (p.qty if p.side == "buy" else -p.qty)
+        return out
+
+    def market(self, at: dt.datetime) -> str:
+        """한국 거래소에 지금 낼 수 있는 주문: "open"(장이 닫혀 있음 → 다음 장 시작 주문) / "now"(장중 → 지금 주문) /
+        ""(둘 다 못 냄 — 09:00 정각, 장 마감 동시호가 15:20–15:30)."""
+        at = _at(at)
+        h = RU.hours()
+        if not RU.is_business_day(at.date(), self._days(at)):
+            return "open"
+        t = at.time()
+        if h["open"] < t < h["close_auction"]:
+            return "now"
+        return "open" if t < h["open"] or t >= h["close"] else ""
+
+    def events(self, typ: str) -> list[dict]:
+        """이 계좌의 증권사 사건 줄(지난 것 + 이번에 만든 것) 중 그 종류."""
+        return [d for d in self._broker_lines if d.get("type") == typ]
 
     # ----- 시작·사건 -----
     def start(self, at: dt.datetime, bank: int = 0, sec: int = 0, upbit: int = 0,
@@ -556,8 +587,10 @@ class Broker:
         """걸린 한국 거래소 주문의 (시각, 주문, 'expire'|가격 종류, 가격|이유, 봉 날짜, 출처) — 아직 모르면 None."""
         h = RU.hours()
         d = p.session
-        day = self.quotes.day(p.asset, d, at)
         close_at = _kst(d, h["close"])
+        if at < _kst(d, h["open"]) or (p.kind == "close" and C.final_dt(C.ASSETS[p.asset], d) > at):
+            return None  # 그 장의 값이 아직 없다 — 받으러 가지 않는다(실제 주소를 헛되이 부르지 않게)
+        day = self.quotes.day(p.asset, d, at)
         if day is None:
             if C.final_dt(C.ASSETS[p.asset], d) <= at and self._later_bar(p.asset, d, at):
                 return close_at, p, "expire", "그날 봉이 없음(휴장·거래 정지로 봄)", d, None
@@ -618,7 +651,7 @@ class Broker:
             if fid in self._verified:
                 continue
             day = dt.date.fromisoformat(f["fill_date"])
-            if (at.date() - day).days > ADJUST_DAYS:
+            if (at.date() - day).days > ADJUST_DAYS or C.final_dt(C.ASSETS[f["asset"]], day) > at:
                 continue
             got = self.quotes.day(f["asset"], day, at)
             if got is None or not got.final:
@@ -637,6 +670,10 @@ class Broker:
                 cost = 0
             msg = (f"{fid}: 진행 중인 봉에서 받은 시가 {f['price']}가 끝난 봉의 시가 {got.open}와 다름 — "
                    f"차액 {cash}원을 adjust 줄로 바로잡음")
+            lim = (self.state.orders.get(f.get("order")) or {}).get("limit")
+            if side == "buy" and lim is not None and got.open >= lim:
+                msg += (f". 끝난 봉의 시가가 한도 {lim} 이상이다 — 실제로는 그 시각(09:00)에 체결되지 않았을 주문이다"
+                        f"(체결은 되돌리지 않고 값만 바로잡았다)")
             self._broker_line(res, at, "adjust", {"fill": fid, "asset": a, "pocket": f["pocket"], "price_was": f["price"],
                                                   "price_final": got.open, "cash": cash, "cost": cost}, msg)
             res.warnings.append(msg)
@@ -766,7 +803,9 @@ class Broker:
         bad = self._money_error(at, asset, side, qty, reserved)
         if bad:
             return self._reject(res, at, req, bad)
-        ref = limit if side == "buy" else (prev or 0.0)
+        # ref_price = 주문 수량을 잡은 가격(전 거래일 종가). 한도는 limit 칸에 따로 — 바깥 그래프 코드가 걸린 주문을
+        # 수량 × ref_price로 어림하므로 여유(5%)가 든 한도를 넣지 않는다
+        ref = prev or limit or 0.0
         o = self._emit(res, "order", self._order_line(at, asset, side, kind, qty, ref, reason, reserved, limit,
                                                        session=session))
         res.order = o["id"]
@@ -891,9 +930,11 @@ class Broker:
         return res
 
     # ----- 평가 -----
-    def snapshot(self, at: dt.datetime, run: dt.date | None = None) -> Result:
+    def snapshot(self, at: dt.datetime, run: dt.date | None = None,
+                 prices: dict[str, tuple[float, dt.datetime]] | None = None) -> Result:
         """그 시각의 계좌 줄(옛 account 모양 + pockets·priced_at·at·seq). 평가 가격은 그 시각에 받을 수 있는 가장 새 실제 값
-        (한국 거래소는 장이 닫혀 있으면 마지막 공식 종가). 같은 날 두 번은 만들지 않는다(id가 계좌:날짜)."""
+        (한국 거래소는 장이 닫혀 있으면 마지막 공식 종가). 같은 날 두 번은 만들지 않는다(id가 계좌:날짜).
+        prices(대상 → (값, 그 값의 시각))를 주면 그 값으로 치고, 없는 대상만 공급자에게 묻는다(매일 실행이 받아 둔 값을 넘긴다)."""
         at = _at(at)
         res = self.sync(at)
         res.ok, res.reason = True, ""
@@ -902,13 +943,26 @@ class Broker:
         if aid in self._account_ids:
             res.ok, res.reason = False, f"{aid} 계좌 줄이 이미 있다"
             return res
+        line, warns = self.account_line(at, run, prices)
+        res.warnings += warns
+        self._emit(res, "account", line)
+        self._account_ids.add(aid)
+        return res
+
+    def account_line(self, at: dt.datetime, run: dt.date | None = None,
+                     prices: dict[str, tuple[float, dt.datetime]] | None = None) -> tuple[dict, list[str]]:
+        """계좌 줄을 만들기만 한다(기록에 넣지 않는다 — 미리 보기용). (줄, 경고)."""
+        at = _at(at)
+        run = run or at.date()
+        aid = f"{self.account}:{run.isoformat()}"
+        res = Result(True)
         st = self.state
         keep = list(C.ASSET_IDS) + sorted({a for a, n in st.units.items() if n and a not in C.CORE}
                                           | {p.asset for p in st.pending.values() if p.asset not in C.CORE})
         prices, priced_at, value = {}, {}, 0.0
         pk = self.pockets()
         for a in keep:
-            got = self._price(a, at)
+            got = (prices or {}).get(a) or self._price(a, at)
             if got is None:
                 if st.units.get(a):
                     res.warnings.append(f"{a}: 평가 가격을 받지 못함 — 평가액에서 빠짐")
@@ -920,9 +974,7 @@ class Broker:
         line = {"id": aid, "run": run.isoformat(), "account": self.account, "cash": sum(pk.values()),
                 "positions": st.positions(), "prices": prices, "value": round(sum(pk.values()) + value, 2),
                 "pending": sorted(st.pending), "pockets": pk, "priced_at": priced_at, "at": _iso(at)}
-        self._emit(res, "account", line)
-        self._account_ids.add(aid)
-        return res
+        return line, res.warnings
 
     def _price(self, asset: str, at: dt.datetime) -> tuple[float, dt.datetime] | None:
         got = self.quotes.now(asset, at)
@@ -1038,8 +1090,9 @@ def check(lines: dict[str, list[dict]], bars: dict[str, Iterable] | None = None)
         for kind, d in items:
             if kind == "fill":
                 errs += _fill_price_errors(d, st.orders.get(d.get("order")), adjusts.get(d["id"]), rows)
-        for fid, f in st.unverified.items():
-            warns.append(f"{acc} fill {fid}: 진행 중인 봉의 시가로 넣었고 아직 끝난 봉과 견주지 않음")
+        for fid, f in st.unverified.items():   # 끝난 봉이 시세 파일에 있으면 위 체결가 검산이 이미 견줬다
+            if _bar(rows, f["asset"], dt.date.fromisoformat(f["fill_date"])) is None:
+                warns.append(f"{acc} fill {fid}: 진행 중인 봉의 시가로 넣었고 아직 끝난 봉과 견주지 않음")
     return errs, warns
 
 
@@ -1049,3 +1102,71 @@ def check_folder(folder: Path, prices_folder: Path | None = None) -> tuple[list[
     assets = {d.get("asset") for k in ("order", "fill") for d in lines[k] if "seq" in d}
     bars = {a: PR.load(a, prices_folder) for a in assets if a}
     return check(lines, bars)
+
+
+# ---------- 상태 보기 (읽기 전용 명령) ----------
+class _NoQuotes(Q.Quotes):
+    """가격을 주지 않는 공급자 — 상태만 볼 때 쓴다(아무것도 체결하지 않는다)."""
+
+    def now(self, asset, at):
+        return None
+
+    def book(self, asset, at):
+        return None
+
+    def day(self, asset, date, at):
+        return None
+
+
+def status(root: Path, at: dt.datetime | None = None) -> tuple[list[str], int]:
+    """계좌마다 주머니·보유·걸린 주문·주문 가능/출금 가능 금액과 검산 결과를 사람 말로. 기록을 쓰지 않는다. (줄들, 오류 수)"""
+    at = _at(at or C.now_kst())
+    folder = root / "records"
+    lines = {k: R.read(folder, k) for k in KINDS}
+    accounts = sorted({d.get("account") for _, d in mine(lines)})
+    out = [f"# 가상 증권사 상태 ({folder}, {_iso(at)} 기준)"]
+    if not accounts:
+        out.append("증권사 기록이 없다(아직 갈아타기 전) — 옛 장부(market/ledger.py)로 돈다.")
+    brokers = {acc: Broker(acc, _NoQuotes(), lines) for acc in accounts}
+    # 흉내 내기 폴더의 기록은 실제 시계보다 앞날일 수 있다 — 마지막 사건보다 이른 시각으로는 보지 않는다
+    at = max([at] + [b.state.last_at for b in brokers.values() if b.state.last_at])
+    out[0] = f"# 가상 증권사 상태 ({folder}, {_iso(at)} 기준)"
+    for acc, b in brokers.items():
+        pk = b.pockets()
+        out += ["", f"## {acc}",
+                f"- 원화: 은행 {pk['bank']:,}원 · 증권 계좌 {pk['sec']:,}원 · 업비트 {pk['upbit']:,}원 (합 {sum(pk.values()):,}원)",
+                f"- 주문 가능: 증권 계좌 {b.orderable('sec', at):,}원 · 업비트 {b.orderable('upbit', at):,}원 / "
+                f"출금 가능: 증권 계좌 {b.withdrawable('sec', at):,}원 · 업비트 {b.withdrawable('upbit', at):,}원",
+                "- 보유: " + (", ".join(f"{a} {n}단위(평균 산 값 {b.avg_cost(a) * C.ASSETS[a].unit:,.0f}원)"
+                                      for a, n in sorted(b.holdings().items())) or "없음")]
+        later = sorted((d, a) for d, a, instant in b.state.flows if not instant and not RU.settled_by(d, at))
+        if later:
+            out.append("- 결제를 기다리는 돈: " + ", ".join(f"{d} {a:+,}원" for d, a in later))
+        for p in b.pending():
+            what = f"{p.qty}단위" + (f" 한도 {p.limit:,.0f}원" if p.limit else "")
+            out.append(f"- 걸린 주문 {p.id}: {p.asset} {'사기' if p.side == 'buy' else '팔기'} {what}, "
+                       f"{p.session} {'장 시작' if p.kind == 'open' else '장 마감'}, 잡아 둔 돈 {p.reserved:,}원")
+        if not b.pending():
+            out.append("- 걸린 주문: 없음")
+        for e in b.problems:
+            out.append(f"- **기록이 어긋남**: {e}")
+    errs, warns = check_folder(folder, root / "data" / "prices")
+    out += ["", f"## 검산 (오류 {len(errs)}건, 경고 {len(warns)}건)"]
+    out += [f"- 오류: {e}" for e in errs[:50]] + [f"- 경고: {w}" for w in warns[:50]]
+    return out, len(errs)
+
+
+def main(argv: list[str]) -> int:
+    """python -m market.broker status [--root <폴더>] — 계좌 상태와 검산(읽기 전용)."""
+    if not argv or argv[0] != "status":
+        print(main.__doc__)
+        return 2
+    root = Path(argv[argv.index("--root") + 1]).resolve() if "--root" in argv else C.ROOT
+    out, n = status(root)
+    print("\n".join(out))
+    return 1 if n else 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main(sys.argv[1:]))

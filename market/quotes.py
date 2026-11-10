@@ -386,3 +386,76 @@ class BarQuotes(Quotes):
         if not ex:
             return None
         return frozenset(r.date for r in self.rows[ex[0]] if _is_final(ex[0], r.date, at))
+
+
+# ---------- 실제 주소 시험 (읽기 전용 명령) ----------
+TIME_WORDS = ("time", "date", "at", "status", "delay", "traded")
+
+
+def naver_now_fields(data: Any) -> dict:
+    """네이버 지금 가격 응답에서 겹 구조와 시각으로 보이는 칸을 그대로 뽑는다(1회차에서 확인 못 한 칸의 뜻을 보려고).
+    outer = 바깥 겹의 열쇠 이름들, item = closePrice가 든 사전의 열쇠 이름들, times = 이름에 시각·상태 낱말이 든 칸과 값(겉과 속)."""
+    outer = sorted(data) if isinstance(data, dict) else f"{type(data).__name__}({len(data) if hasattr(data, '__len__') else ''})"
+    it = _find_dict(data, "closePrice") or {}
+
+    def pick(d: Any) -> dict:
+        return {k: v for k, v in (d.items() if isinstance(d, dict) else ()) if not isinstance(v, (dict, list))
+                and any(w in str(k).lower() for w in TIME_WORDS)}
+    return {"outer": outer, "item": sorted(it), "times": {**{f"(겉) {k}": v for k, v in pick(data).items()}, **pick(it)},
+            "closePrice": it.get("closePrice")}
+
+
+def show(assets: list[str], at: dt.datetime | None = None, quotes: "NetQuotes | None" = None) -> list[str]:
+    """대상마다 지금 가격·시각·장 상태, 업비트 호가 위 3단계, 오늘 봉(진행 중 포함), 직전 분봉을 사람 말로. 기록을 쓰지 않는다."""
+    q = quotes or NetQuotes()
+    at = (at or C.now_kst()).replace(microsecond=0)
+    out = [f"# 실제 가격 받기 시험 ({at.isoformat(timespec='seconds')})"]
+    for a in assets:
+        coin = C.ASSETS[a].kind == "coin"
+        out += ["", f"## {a} {C.ASSETS[a].name}"]
+        n = q.now(a, at)
+        if n is None:
+            out.append("- 지금 가격: 받지 못함(None) — 이 대상의 지금 주문은 거절된다")
+        else:
+            age = (at - n.time).total_seconds()
+            out.append(f"- 지금 가격: {n.price:,.0f}원, 가격의 시각 {n.time.isoformat(timespec='seconds')}(요청보다 {age:+.0f}초), "
+                       f"장 {'열림' if n.open else '닫힘'}, 출처 {n.source}")
+        if not coin:
+            raw = q._get(NAVER_NOW.format(code=a), at)
+            f = naver_now_fields(raw)
+            out += [f"  - 응답 바깥 겹의 열쇠: {f['outer']}", f"  - closePrice가 든 사전의 열쇠: {f['item']}",
+                    f"  - 시각·상태로 보이는 칸: {f['times']}", f"  - closePrice 값 그대로: {f['closePrice']!r}"]
+        else:
+            b = q.book(a, at)
+            if b is None:
+                out.append("- 호가: 받지 못함(None)")
+            else:
+                out.append(f"- 호가(시각 {b.time.isoformat(timespec='seconds')}, {len(b.asks)}단계): 팔려는 값 "
+                           + ", ".join(f"{p:,.0f}×{s}" for p, s in b.asks[:3]) + " / 사려는 값 "
+                           + ", ".join(f"{p:,.0f}×{s}" for p, s in b.bids[:3]))
+        d = q.day(a, coin_bar_date(at) if coin else at.astimezone(C.KST).date(), at)
+        out.append("- 오늘 봉: 없음(None — 장 시작 전이거나 받지 못함)" if d is None else
+                   f"- 오늘 봉 {d.date}: 시가 {d.open:,.0f}, 고가 {d.high}, 저가 {d.low}, 지금·종가 {d.close}, "
+                   f"{'끝남' if d.final else '진행 중'}, 출처 {d.source}")
+        m = q.minute(a, at - dt.timedelta(minutes=1))
+        out.append("- 직전 분봉: 없음(None)" if m is None else
+                   f"- 직전 분봉 {m.time.isoformat(timespec='minutes')}: 고가 {m.high:,.0f}, 저가 {m.low:,.0f}, 출처 {m.source}")
+    return out
+
+
+def main(argv: list[str]) -> int:
+    """python -m market.quotes [대상…] — 실제 주소에서 받은 값을 보여 준다(읽기 전용, 기본 대상은 세 대상)."""
+    assets = [a for a in argv if not a.startswith("-")] or list(C.ASSET_IDS)
+    for a in assets:
+        try:
+            C.ASSETS[a]
+        except KeyError:
+            print(f"모르는 대상 {a}")
+            return 2
+    print("\n".join(show(assets)))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main(sys.argv[1:]))

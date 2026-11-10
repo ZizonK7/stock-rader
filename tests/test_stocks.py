@@ -273,9 +273,10 @@ class DailyStocks(unittest.TestCase):
             RP.write(root, d0)
             first = (root.reports / f"{d0}.md").read_text(encoding="utf-8")
             self.assertIn("가짜반도체(종목)", first)
-            self.assertIn("ETF·종목은 장이 열리는 09:00 가격", first)
+            self.assertIn("오늘 장이 열리는 09:00 가격에 치른다", first)   # 가상 증권사(2026-11-10): 장 시작 주문
+            self.assertIn("아직 치러지지 않은 주문", first)
 
-            # 다음 날들: 든 종목은 틀에 나오고 매일 예측한다. ETF처럼 판단 뒤 첫 시가에 체결되어 D+2 실행에서 정산된다
+            # 다음 날들: 든 종목은 틀에 나오고 매일 예측한다. ETF처럼 그날 09:00 시가에 체결되어 다음 실행에서 장부에 들어온다
             for d in (dt.date(2025, 9, 3), dt.date(2025, 9, 4), dt.date(2025, 9, 5)):
                 D.prepare(root, d, at(d, 7, 37), fetch=False, ticker=TICK, echo=False)
                 tpl = json.loads((root.day_dir(d) / "input.json").read_text(encoding="utf-8"))
@@ -286,8 +287,9 @@ class DailyStocks(unittest.TestCase):
                 self.assertEqual(code, 0, d)
                 RP.write(root, d)
             fills = [f for f in R.read(root.records, "fill") if f["asset"] == S1]
-            self.assertEqual(fills[0]["run"], "2025-09-04")
-            self.assertEqual((fills[0]["fill_date"], fills[0]["price_kind"]), ("2025-09-02", "open"))
+            self.assertEqual(fills[0]["run"], "2025-09-03")   # 가상 증권사: 어제 09:00 체결이 다음 날 실행에 들어온다(옛 장부는 D+2)
+            self.assertEqual((fills[0]["fill_date"], fills[0]["price_kind"], fills[0]["at"]),
+                             ("2025-09-02", "open", "2025-09-02T09:00:00+09:00"))
             self.assertEqual(fills[0]["price"], next(r.open for r in PR.load(S1, root.prices) if r.date == d0))
             acc = [a for a in R.read(root.records, "account") if a["account"] == "live:hand" and a["run"] == "2025-09-05"][0]
             self.assertGreater(acc["positions"][S1], 0)

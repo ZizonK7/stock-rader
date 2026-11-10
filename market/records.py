@@ -331,7 +331,8 @@ def check(root: Path = C.ROOT, folders: list[Path] | None = None) -> list[str]:
         errs += check_folder(f)
         if (f / "broker.jsonl").exists():   # 가상 증권사 검산(다시 계산·체결가) — docs/broker-sandbox.md 15절
             from . import broker
-            errs += broker.check_folder(f, root / "data" / "prices")[0]
+            near = f.parent / "data" / "prices"   # 그 기록 폴더의 저장소(흉내 내기 폴더면 그 폴더의 시세)
+            errs += broker.check_folder(f, near if near.exists() else root / "data" / "prices")[0]
     errs += head_errors(root)
     return errs
 

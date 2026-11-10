@@ -74,10 +74,17 @@ class DailyLoop(unittest.TestCase):
                 self.assertEqual(RP.write(root, d), 0)
             self.assertEqual(R.check_folder(root.records), [])
             recs = {k: R.read(root.records, k) for k in R.FIELDS}
-            # 첫날 계좌 넷이 1,000만 원으로 시작
+            # 첫날 계좌 넷이 1,000만 원으로 시작(가상 증권사 start 줄: 은행에 1,000만 원). 계좌 줄은 판단 때의 상태라
+            # 그날 바로 체결된 비트코인 사기(지금 주문)의 수수료만큼만 1,000만 원과 다르다
             first = [a for a in recs["account"] if a["run"] == "2025-09-02"]
             self.assertEqual({a["account"] for a in first}, set(C.LIVE_ACCOUNTS))
-            self.assertTrue(all(a["value"] == C.START_CASH for a in first))
+            starts = [x for x in recs["broker"] if x["type"] == "start"]
+            self.assertEqual({x["account"] for x in starts}, set(C.LIVE_ACCOUNTS))
+            self.assertTrue(all(x["run"] == "2025-09-02" and x["data"]["pockets"] == {"bank": C.START_CASH, "sec": 0, "upbit": 0}
+                                for x in starts))
+            self.assertEqual(next(a["value"] for a in first if a["account"] == "baseline:cash"), C.START_CASH)
+            self.assertTrue(all(0 <= C.START_CASH - a["value"] < C.START_CASH * 0.002 for a in first), [a["value"] for a in first])
+            self.assertTrue(all(a["cash"] == sum(a["pockets"].values()) for a in first))
             # 예측기: 손·계산기·이전 버전·기준선 셋 (v1은 2026-11-04 쉼)
             preds = {p["predictor"] for p in recs["prediction"]}
             self.assertLessEqual({"hand", "calc", "version:v4", "baseline:half", "baseline:base_rate", "baseline:all"}, preds)
@@ -119,14 +126,21 @@ class DailyLoop(unittest.TestCase):
             # 계산기 계좌는 R_weights_v2: 동전(0.5)이면 정확히 1/3
             reasons = [o["reason"] for o in recs["order"] if o["account"] == "live:calc"]
             self.assertTrue(reasons and all(r.startswith("R_weights_v2") for r in reasons), reasons)
-            # 정산: 판단 뒤 첫 시가(결정 E1) — 코인·ETF 모두 D+2 실행에서. 08:30 판단이라 그날 09:00 시가에 체결
+            # 체결(가상 증권사, 2026-11-10): 비트코인은 판단 때 지금 주문으로 그 자리에서, ETF는 08:30 판단이라 그날 09:00 시가에
+            # 체결되어 **다음 날 실행**에서 장부에 들어온다(옛 장부는 코인·ETF 모두 D+2 실행)
             fills = recs["fill"]
-            self.assertTrue(any(f["asset"] == "KRW-BTC" and f["run"] == "2025-09-04" for f in fills), fills)
-            self.assertTrue(any(f["asset"] == "069500" and f["run"] == "2025-09-04" for f in fills), fills)
-            self.assertTrue(all(o.get("fill_rule") == "open" for o in recs["order"]))
+            self.assertTrue(any(f["asset"] == "KRW-BTC" and f["run"] == "2025-09-02" and f["price_kind"] == "now" for f in fills), fills)
+            self.assertTrue(any(f["asset"] == "069500" and f["run"] == "2025-09-03" and f["fill_date"] == "2025-09-02"
+                                for f in fills), fills)
+            self.assertTrue(all(o["fill_rule"] == o["order_kind"] == ("now" if o["asset"] == "KRW-BTC" else "open")
+                                for o in recs["order"]))
             for f in fills:
                 o = next(o for o in recs["order"] if o["id"] == f["order"])
-                when = C.fill_dt(C.ASSETS[f["asset"]], dt.date.fromisoformat(f["fill_date"]))
+                when = dt.datetime.fromisoformat(f["at"])
+                if f["price_kind"] == "now":      # 지금 주문: 주문한 그 시각에
+                    self.assertEqual(when, dt.datetime.fromisoformat(o["decided_at"]))
+                    continue
+                self.assertEqual(when, C.fill_dt(C.ASSETS[f["asset"]], dt.date.fromisoformat(f["fill_date"])))
                 self.assertGreater(when, dt.datetime.fromisoformat(o["decided_at"]))
                 self.assertEqual((f["fill_date"], f["price_kind"]), (o["run"], "open"))
                 self.assertEqual(f["price"], next(r.open for r in rows[f["asset"]] if r.date.isoformat() == f["fill_date"]))
@@ -155,10 +169,11 @@ class DailyLoop(unittest.TestCase):
             filled = text.replace(RP.MARK, "채움 47–49% <!-- 0.6~1.2% -->")
             (root.reports / "2025-09-05.md").write_text(filled, encoding="utf-8")
             self.assertEqual(RP.check(root, dt.date(2025, 9, 5)), 0)
-            # 첫날: 견줄 기준선 문장 없음, 아직 정산 안 된 주문이 표 아래에 보인다
+            # 첫날: 견줄 기준선 문장 없음, 아직 치러지지 않은 주문(장 시작 주문)이 표 아래에 보인다
             first = (root.reports / "2025-09-02.md").read_text(encoding="utf-8")
             self.assertNotIn("셋을 나눠 사 두기만 했을 때", first.split("|")[0])
-            self.assertIn("체결을 기다리는 주문", first)
+            self.assertIn("아직 치러지지 않은 주문", first)
+            self.assertIn("를 바로 샀다", first)   # 비트코인은 판단 때 그 자리에서
 
     def test_sunday_writes_weekly(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -346,8 +361,8 @@ class DailyLoop(unittest.TestCase):
             self.assertNotIn("069500", D.compute(root, d, late, ok, {}).skipped)
 
     def test_late_runs_warn_and_miss_the_open(self):
-        """체결은 판단 뒤 첫 시가(결정 E1): prepare가 08:50 뒤면 경고, record가 09:00 뒤면 그날 시가를 놓쳐 다음 시가에 체결되고
-        예측 기준(체결 봉)도 다음 봉이다 — run notes에 경고가 남는다."""
+        """prepare가 08:50 뒤면 경고, record가 09:00 뒤면 그날 시가를 놓친다 — 예측 기준(체결 봉)은 다음 봉이고 run notes에 경고가
+        남는다. 주문은(가상 증권사, 2026-11-10) 다음 시가를 기다리지 않고 장중이라 지금 가격으로 그 자리에서 체결된다."""
         with tempfile.TemporaryDirectory() as tmp:
             root = make_root(tmp)
             d = dt.date(2025, 9, 5)  # 금: ETF 다음 시가는 월요일
@@ -363,17 +378,22 @@ class DailyLoop(unittest.TestCase):
             self.assertTrue(any("시가를 놓쳐" in n for n in run["notes"]), run["notes"])
             base = {p["asset"]: p["base_date"] for p in R.read(root.records, "prediction")}
             self.assertEqual(base, {"069500": "2025-09-08", "360750": "2025-09-08", "KRW-BTC": "2025-09-06"})
-            # 그 뒤 실행에서 정산: 다음 시가에 체결된다(코인 토 9-06 → 9-08 실행, ETF 월 9-08 → 9-10 실행)
-            later = D.compute(root, dt.date(2025, 9, 10), at(dt.date(2025, 9, 10), 7, 37), {}, {})
-            got = {f["asset"]: f["fill_date"] for f in later.fills if f["account"] == "live:hand"}
-            self.assertEqual(got, {"069500": "2025-09-08", "360750": "2025-09-08", "KRW-BTC": "2025-09-06"})
+            # 주문은 지금 주문으로 나가 그 자리(09:10)에서 체결됐다: ETF는 마지막 체결가 + 호가 한 칸, 걸린 주문 없음
+            fills = [f for f in R.read(root.records, "fill") if f["account"] == "live:hand"]
+            self.assertEqual({f["asset"]: (f["fill_date"], f["price_kind"]) for f in fills},
+                             {a: ("2025-09-05", "now") for a in C.ASSET_IDS})
+            self.assertTrue(all(f["at"].startswith("2025-09-05T09:10") for f in fills))
+            acc = next(a for a in R.read(root.records, "account") if a["account"] == "live:hand")
+            self.assertEqual(acc["pending"], [])
+            self.assertTrue(all(acc["positions"][a] > 0 for a in C.ASSET_IDS))
             # 제때 한 판단(07:37 준비, 08:30 기록)은 경고가 없다
             root2 = make_root(tmp + "/b")
             self.assertEqual(run_day(root2, dt.date(2025, 9, 9))[0], 0)
             self.assertFalse([n for n in R.read(root2.records, "run")[-1]["notes"] if "시가" in n])
 
     def test_cli_day_with_root(self):
-        """명령줄 그대로 하루(prepare → record → report, --root 임시 폴더, --no-fetch): 새 줄은 체결가 기준, 주문은 시가 규칙."""
+        """명령줄 그대로 하루(prepare → record → report, --root 임시 폴더, --no-fetch): 새 줄은 체결가 기준, 주문은 가상 증권사로
+        (ETF는 장 시작 주문, 비트코인은 지금 주문)."""
         import contextlib
         import io
         with tempfile.TemporaryDirectory() as tmp:
@@ -391,7 +411,8 @@ class DailyLoop(unittest.TestCase):
                 self.assertEqual(D.main(["report", *base]), 0)
             preds = R.read(root.records, "prediction")
             self.assertTrue(preds and all(x["base_kind"] == "fill" and x["base_date"] == "2025-09-02" for x in preds))
-            self.assertTrue(all(o["fill_rule"] == "open" for o in R.read(root.records, "order")))
+            self.assertTrue(all(o["fill_rule"] == ("now" if o["asset"] == "KRW-BTC" else "open")
+                                for o in R.read(root.records, "order")))
             self.assertTrue((root.reports / "2025-09-02.md").exists())
             self.assertEqual(R.check_folder(root.records), [])
 

@@ -1,9 +1,11 @@
-"""매일 실행 (클라우드 예약 실행, 한국 시간 07:37): prepare → (메인: 조사·대 보기·손 예측) → record → report.
+"""매일 실행 (클라우드 예약 실행, 한국 시간 07:37): prepare → (메인: 조사·대 보기·손 예측) → record → report, 그리고 open.
 
 사용법 (저장소 루트):
-  python -m market.daily prepare [--no-fetch]      시세 받기 → 정산·채점 미리 보기 → 돌아볼 목록 → 오늘 조사 질문.
+  python -m market.daily prepare [--no-fetch]      시세 받기 → 체결·채점 미리 보기 → 돌아볼 목록 → 오늘 조사 질문.
                                                    out/daily/<날짜>/에 prepare.json, briefing.md, input.json(메인이 채울 틀)
   python -m market.daily record <input.json>       입력을 검사하고 그날 기록을 한 번에 덧붙인다(오류면 아무것도 안 씀)
+  python -m market.daily open                      장 시작 뒤 단계(09:00 뒤 아무 때나, 하루 한 번): 오늘 시가 체결을 장부에 넣고,
+                                                   오늘 목표 비중으로 남은 주문을 지금 가격에 낸다(팔린 돈으로 사기)
   python -m market.daily report [--force]          reports/<날짜>.md 뼈대(숫자는 기록에서). 일요일엔 주간 결산도
   python -m market.daily report --check            일지에 채우지 않은 자리([[채울 것: …]])가 남았나
 흉내 내기·시험용 (기본 저장소에서는 못 씀): --root <폴더> --day YYYY-MM-DD --at HH:MM
@@ -12,14 +14,21 @@
 - **첫 실행 날이 진짜 계좌 시작일**이다: 계좌 넷(live:hand 손 예측, live:calc 계산기 R_weights, baseline:equal_hold 첫날 셋을
   1/3씩 사 두기, baseline:cash 현금)이 1,000만 원 현금으로 시작한다.
 - 빠진 날은 빈 날(run mode "missed")로 남기고, 지난 날짜로 예측하지 않는다(기본 저장소에서 --day 금지).
-- 판단 시각 = record를 돌린 실제 시각. 주문은 그 시각 **뒤에** 정해지는 첫 공식 가격에 체결된다(늦은 실행에서 이미 나온
-  가격으로 사지 않게). 판단 시각까지 끝났어야 할 일봉이 시세 파일에 없으면 그 대상은 그날 예측·주문하지 않는다.
-- 체결 = 판단 뒤 첫 시가(2026-11-05~, 결정 E1): ETF·종목은 그 거래일 09:00 시가, 코인은 09:00 일봉 시가. 주문에 fill_rule "open".
-  그래서 record는 09:00 전에 끝내야 그날 시가에 체결된다 — prepare가 08:50 뒤면, record가 09:00 뒤면 경고한다.
-- 예측 기준 = 체결가(2026-11-05~, 결정 E2): 새 예측 줄은 base_kind "fill", base_date = 판단 뒤 첫 체결 봉 날짜(config.fill_bar),
-  base_close = null. 채점이 그 봉의 시가(fill_price)에서 목표 종가까지 잰다. 손·계산기·이전 버전·기준선 셋·종목 모두 같은 기준.
-- 07:37 업비트 현재가를 '판단 때 가격'으로 따로 적는다(결정 3, 손 예측 근거·주문 수량). 2026-11-05부터 계산기에 넘기지 않는다
-  — 기준이 체결가라 판단 때 이미 움직인 몫이 정의상 0이다(출발점 조각 C_started_move 은퇴, 결정 E3).
+- **주문은 가상 증권사(market/broker.py)를 거친다**(2026-11-10, docs/broker-sandbox.md 16절): 계좌 넷 모두. 매일 실행은 목표 비중을
+  주문 계획(market/rebalance.py)에 넘기고, 받기·거절·체결·잔고는 증권사가 정한다. 비트코인은 판단 때 지금 주문으로 바로,
+  한국 거래소는 팔기를 장 시작 시장가로·사기를 지금 주문 가능 금액 안에서 장 시작 지정가로(판단이 09:00 뒤면 지금 주문).
+  어제 09:00 체결은 오늘 실행의 맞추기(sync)에서 장부에 들어온다. 가격은 진짜 기록 폴더에서는 실제 주소(quotes.NetQuotes),
+  흉내 내기 폴더(--root)에서는 그 폴더의 시세 파일(quotes.BarQuotes)에서 받는다.
+- **갈아타는 날**(17절): broker 기록에 start가 없으면 그 실행에서 갈아탄다 — 옛 대기 주문을 옛 규칙 가격으로 모두 끝내고(옛 모양
+  체결 줄), 보유는 그대로·현금은 은행에 둔 start 줄을 계좌 넷에 만든다. 끝낼 수 없는 옛 주문이 하나라도 남으면 계좌 넷 모두
+  그날은 옛 장부(market/ledger.py)로 돌고 다음 실행에서 다시 시도한다. 기록이 없는 폴더는 첫 실행에서 바로 start.
+- 증권사 기록이 어긋나 있으면(Broker.problems) prepare·record·open은 아무것도 쓰지 않고 멈춘다.
+- 판단 시각 = record를 돌린 실제 시각. 판단 시각까지 끝났어야 할 일봉이 시세 파일에 없으면 그 대상은 그날 예측·주문하지 않는다.
+- 예측 기준 = 판단 뒤 첫 시가(2026-11-05~, 결정 E2): 새 예측 줄은 base_kind "fill", base_date = 판단 뒤 첫 체결 봉 날짜
+  (config.fill_bar), base_close = null. 채점이 그 봉의 시가(fill_price)에서 목표 종가까지 잰다. 장 시작 주문은 그 시가에 체결되어
+  기준과 같고, 지금 주문(비트코인은 판단 때, 장 시작 뒤 사기는 09:0x)은 기준과 몇 분~한 시간 반 어긋난다(알려진 차이).
+  그래서 record는 09:00 전에 끝낸다 — prepare가 08:50 뒤면, record가 09:00 뒤면 경고한다.
+- 07:37 업비트 현재가를 '판단 때 가격'으로 따로 적는다(결정 3, 손 예측 근거). 계산기에는 넘기지 않는다(결정 E3).
 - 예측 줄(2026-11-04): 계산기·이전 버전·손에 layer(답한 층), 계산기에 analog(같은 스위치 지난 날들, 참고 칸 — 체결가 기준),
   기준선 셋(baseline:half, baseline:base_rate, baseline:all).
 - 채점은 같은 (예측기·대상·기간·기준 날짜)를 처음 말한 것 하나만 센다(score.counted, 결정 1). 예측은 매일 적는다.
@@ -36,21 +45,26 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import broker as B
 from . import calc as K
 from . import config as C
 from . import hand as H
 from . import ledger as L
 from . import pieces as P
 from . import prices as PR
+from . import quotes as Q
+from . import rebalance as RB
 from . import records as R
 from . import research as RS
+from . import rules as RU
 from . import scoring as S
 from . import stocks as ST
 from . import versions as V
 
 WEIGHT_HORIZON_INDEX = 1  # R_weights는 1주 기간의 오를 확률로
 KIND_ORDER = ("run", "fill", "score", "account", "reading", "research", "hand_reading", "prediction", "order",
-              "review", "reading_check", "correction")
+              "broker", "review", "reading_check", "correction")
+EQUAL_NOTE = "기준선: 처음 살 수 있는 날 1/3씩 사서 그대로 둔다"
 
 
 @dataclass
@@ -87,6 +101,18 @@ class Root:
 
     def day_dir(self, day: dt.date) -> Path:
         return self.path / "out" / "daily" / day.isoformat()
+
+    @property
+    def live(self) -> bool:
+        """진짜 기록 폴더인가(실제 주소에서 가격을 받고, 요청 시각은 실제 시계)."""
+        return self.path == C.ROOT.resolve()
+
+
+def quotes_for(root: Root) -> Q.Quotes:
+    """가상 증권사가 가격을 받을 곳: 진짜 기록 폴더는 실제 주소, 흉내 내기 폴더는 그 폴더의 시세 파일(시각에 정직한 가짜)."""
+    if root.live:
+        return Q.NetQuotes()
+    return Q.BarQuotes({p.stem: PR.load(p.stem, root.prices) for p in sorted(root.prices.glob("*.csv"))})
 
 
 # ---------- 시각과 시세 ----------
@@ -183,6 +209,120 @@ class Day:
     stock_skipped: dict[str, str] = field(default_factory=dict)
     held: list[str] = field(default_factory=list)
     focus: list[str] = field(default_factory=list)
+    # 가상 증권사 (2026-11-10): mode = "broker"(계좌 넷이 증권사를 거침) / "ledger"(갈아타기 전 — 끝낼 수 없는 옛 주문이 남은 날)
+    mode: str = "ledger"
+    brokers: dict[str, B.Broker] = field(default_factory=dict)
+    quotes: Q.Quotes | None = None
+    problems: list[str] = field(default_factory=list)   # 증권사 기록이 어긋남 → 매일 실행은 멈춘다
+    switched: bool = False                               # 이 실행에서 갈아탔다(start 줄을 만들었다)
+    switch_note: str = ""                                # 갈아타지 못한 까닭(옛 장부로 돈 날)
+    sync_lines: list[tuple[str, dict]] = field(default_factory=list)   # 맞추기에서 장부에 들어온 체결·만료·바로잡기 줄
+    sync_warnings: list[str] = field(default_factory=list)
+    value_prices: dict[str, tuple[float, dt.datetime]] = field(default_factory=dict)  # 평가 가격과 그 시각(P8-3)
+    hand_units: dict[str, int] = field(default_factory=dict)   # 손 계좌가 든 수량 + 걸린 주문
+    hand_total: float = 0.0
+    calc_w: dict[str, float | None] = field(default_factory=dict)
+    calc_reasons: dict[str, str] = field(default_factory=dict)
+    equal_first: dict[str, float] = field(default_factory=dict)
+
+
+def old_lines(recs: dict, kind: str) -> list[dict]:
+    """옛 장부가 읽을 줄: 가상 증권사가 만든 줄(seq가 있는 줄)을 뺀다 — 옛 장부는 증권사 주문(지금 주문 등)을 모른다."""
+    return [x for x in recs[kind] if "seq" not in x]
+
+
+def old_fill_row(o: L.Order, hists: dict, quotes: Q.Quotes, at: dt.datetime) -> tuple[PR.Row | None, str]:
+    """옛 대기 주문이 옛 규칙으로 체결될 봉. 끝난 봉(시세 파일)에 없으면 진행 중인 봉을 공급자에게 묻는다(비트코인: 09:00에 시작한
+    봉의 시가는 이미 정해져 있다). (봉, 못 찾은 까닭)."""
+    row = L.fill_row(o, hists[o.asset]) if o.asset in hists else None
+    if row is not None:
+        return row, ""
+    if o.decided_at is None:
+        return None, "판단 시각이 없는 옛 주문의 체결 봉이 시세 파일에 없음"
+    spec = C.ASSETS[o.asset]
+    kind, when = o.rule()
+    d = max(o.run, o.decided_at.astimezone(C.KST).date())
+    while (C.on_exchange(o.asset) and d.weekday() >= 5) or C.fill_dt(spec, d, when) <= o.decided_at:
+        d += dt.timedelta(days=1)
+    if C.fill_dt(spec, d, when) > at:
+        return None, f"체결 시각({d} {when:%H:%M})이 아직 오지 않음"
+    got = quotes.day(o.asset, d, at)
+    if got is None:
+        return None, f"{d} 봉의 값을 받지 못함"
+    price = got.open if kind == "open" else (got.close if got.final else None)
+    if not price or price <= 0:
+        return None, f"{d} 봉의 {kind} 값이 아직 없음"
+    return PR.Row(d, price, price, price, price, 0.0, got.source, at.isoformat(timespec="seconds")), ""
+
+
+def finish_old(accounts: dict[str, L.Account], hists: dict, quotes: Q.Quotes, at: dt.datetime,
+               day: dt.date) -> tuple[dict[str, L.Account] | None, list[dict], str]:
+    """갈아타기: 옛 대기 주문을 옛 규칙 가격으로 모두 끝낸다. 하나라도 못 끝내면 아무 계좌도 바꾸지 않는다(섞이지 않게).
+    (끝낸 계좌들 또는 None, 옛 모양 체결 줄, 못 끝낸 까닭)."""
+    import copy
+    out, fills = {}, []
+    for aid, acc in accounts.items():
+        acc = copy.deepcopy(acc)
+        ready = []
+        for o in acc.pending:
+            row, why = old_fill_row(o, hists, quotes, at)
+            if row is None:
+                return None, [], f"{o.id}: {why}"
+            ready.append((C.fill_dt(C.ASSETS[o.asset], row.date, o.rule()[1]), 0 if o.side == "sell" else 1, o, row))
+        for _, _, o, row in sorted(ready, key=lambda x: (x[0], x[1])):
+            fills.append(acc._fill(o, row, day))
+            acc.pending.remove(o)
+        out[aid] = acc
+    return out, fills, ""
+
+
+def cost_basis(fills: list[dict], aid: str) -> dict[str, float]:
+    """옛 체결 기록의 이동 평균으로 구한 '산 값의 합'(대상 → 원, 수수료 뺌) — 갈아타는 날 start 줄에 넣는다(해외 지수 ETF 이익 세금)."""
+    units: dict[str, int] = {}
+    cost: dict[str, float] = {}
+    for f in fills:
+        if f["account"] != aid or not f["qty_units"]:
+            continue
+        a, q = f["asset"], f["qty_units"]
+        held = units.get(a, 0)
+        if f["side"] == "buy":
+            cost[a] = cost.get(a, 0.0) + f["value"]
+            units[a] = held + q
+        else:
+            cost[a] = cost.get(a, 0.0) * (1 - q / held) if held > q else 0.0
+            units[a] = max(held - q, 0)
+    return {a: round(v, 2) for a, v in cost.items() if units.get(a)}
+
+
+def value_prices(hists: dict, quotes: Q.Quotes, at: dt.datetime, ticker: dict, market_open: bool,
+                 ask: set[str] | None = None) -> dict:
+    """평가 가격과 그 가격의 시각(P8-3: 평가하는 순간에 받을 수 있는 가장 새 실제 가격). 대상 → (값, 시각).
+    비트코인: 지금 가격 → (못 받으면) prepare가 받은 판단 때 가격 → 마지막 끝난 봉. 한국 거래소: 장이 닫혀 있으면 마지막 공식
+    종가(시세 파일의 끝난 봉 — 가장 새 값이다), 장중이면 지금 가격(못 받으면 마지막 종가). ask가 있으면 장중의 지금 가격은 그
+    대상들만 묻는다(계좌가 든 것 — 목록의 모든 종목을 실제 주소에 묻지 않게)."""
+    out = {}
+    skew = dt.timedelta(seconds=RU.value("quote_clock_skew"))
+    for a, h in hists.items():
+        last = h.last
+        got = None
+        if C.ASSETS[a].kind == "coin" or (market_open and (ask is None or a in ask)):
+            n = quotes.now(a, at)
+            if n is not None and n.price > 0 and n.time <= at + skew and (C.ASSETS[a].kind == "coin" or n.open):
+                got = (n.price, n.time)
+        if got is None and ticker.get(a):
+            try:
+                t = dt.datetime.fromisoformat(ticker[a]["time"])
+                if t <= at + skew and (last is None or t > C.final_dt(C.ASSETS[a], last.date)):
+                    got = (float(ticker[a]["price"]), t)
+            except (KeyError, TypeError, ValueError):
+                pass
+        if got is None and last is not None:
+            end = (dt.datetime.combine(last.date, C.CLOSE_TIME, C.KST) if C.on_exchange(a)
+                   else C.final_dt(C.ASSETS[a], last.date))
+            got = (last.close, end)
+        if got is not None:
+            out[a] = got
+    return out
 
 
 def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict, focus=()) -> Day:
@@ -214,10 +354,49 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     stock_skipped = {a: why for a in sorted(seen_stocks) if (why := skip_reason(a, hists[a], at, fetch))}
     buyable = {str(s["code"]) for s in pool if s.get("buy", True)}
 
-    # 정산 (기록에서 계좌를 되살려 판단 시각에 알려진 일봉으로 체결)
-    accounts = {aid: L.rebuild(aid, recs["account"], recs["order"]) for aid in C.LIVE_ACCOUNTS}
-    fills = [f for acc in accounts.values() for f in acc.settle(hists, day)]
-    held = sorted(accounts["live:hand"].held())  # 정산 뒤: 들고 있거나 체결을 기다리는 종목
+    # 계좌: 가상 증권사(2026-11-10). start 줄이 있으면 증권사 기록을 다시 돌려 맞추고(sync), 없으면 이 실행에서 갈아탄다.
+    quotes = quotes_for(root)
+    bar_days = [r.date for r in hists["069500"].rows]
+    started = {aid: any(x["account"] == aid and x["type"] == "start" for x in recs["broker"]) for aid in C.LIVE_ACCOUNTS}
+    brokers: dict[str, B.Broker] = {}
+    problems: list[str] = []
+    sync_lines: list[tuple[str, dict]] = []
+    sync_warnings: list[str] = []
+    accounts: dict[str, L.Account] = {}
+    fills: list[dict] = []
+    switched, switch_note = False, ""
+    if all(started.values()):
+        for aid in C.LIVE_ACCOUNTS:
+            b = brokers[aid] = B.Broker(aid, quotes, recs, bar_days)
+            problems += b.problems
+            if not b.problems:
+                res = b.sync(at)
+                if not res.ok:
+                    problems.append(f"{aid}: {res.reason}")
+                sync_lines += res.lines
+                sync_warnings += res.warnings
+    elif any(started.values()):
+        problems.append(f"계좌 일부만 갈아탔다({[a for a, v in started.items() if v]}) — 섞인 채로 돌지 않는다")
+    else:
+        # 갈아타는 날(17절): 옛 장부를 되살려 정산하고, 남은 옛 주문을 옛 규칙 가격으로 모두 끝낸 뒤 start
+        accounts = {aid: L.rebuild(aid, old_lines(recs, "account"), old_lines(recs, "order")) for aid in C.LIVE_ACCOUNTS}
+        fills = [f for acc in accounts.values() for f in acc.settle(hists, day)]
+        done, forced, switch_note = finish_old(accounts, hists, quotes, at, day)
+        if done is not None:
+            accounts, fills, switched = done, fills + forced, True
+            for aid, acc in accounts.items():
+                b = brokers[aid] = B.Broker(aid, quotes, {}, bar_days)
+                units = {a: n for a, n in acc.units.items() if n}
+                res = b.start(at, bank=acc.cash, units=units, cost=cost_basis(recs["fill"] + fills, aid),
+                              note="갈아타기: 옛 장부의 보유는 그대로(ETF·종목 → 증권 계좌, 비트코인 → 업비트), 현금은 은행에")
+                if not res.ok:
+                    problems.append(f"{aid}: 시작 잔고를 만들지 못함 — {res.reason}")
+    mode = "broker" if brokers and not problems else "ledger"
+    if mode == "broker":
+        hb = brokers["live:hand"]
+        held = sorted({a for a in hb.expected_units() if a not in C.CORE} | {a for a in hb.holdings() if a not in C.CORE})
+    else:
+        held = sorted(accounts["live:hand"].held()) if accounts else []  # 정산 뒤: 들고 있거나 체결을 기다리는 종목
 
     # 채점
     preds_all = recs["prediction"]
@@ -228,15 +407,28 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     S.mark_counted(scores, by_id, counted)
 
     last = L.last_prices(hists)
-    account_lines = [acc.record(day, last) for acc in accounts.values()]
-    D = Day(day, at, hists, raw, digest, recs, already, missing, predictable, skipped, accounts, fills, scores,
-            account_lines)
+    D = Day(day, at, hists, raw, digest, recs, already, missing, predictable, skipped, accounts, fills, scores, [])
+    D.mode, D.brokers, D.quotes, D.problems = mode, brokers, quotes, problems
+    D.switched, D.switch_note, D.sync_lines, D.sync_warnings = switched, switch_note, sync_lines, sync_warnings
     D.pool, D.stock_skipped = pool, stock_skipped
     D.held = [a for a in held if a not in stock_skipped]
     D.stock_ok = [a for a in sorted(seen_stocks) if a not in stock_skipped and (a in buyable or a in held)]
     D.prices = {a: v for a, (_, v) in last.items()}
-    if ticker.get("KRW-BTC"):
-        D.prices["KRW-BTC"] = ticker["KRW-BTC"]["price"]  # 주문 수량은 판단 때 가격으로 잡는다(체결은 다음 공식 가격)
+    if mode == "broker":
+        # 평가·주문 수량의 가격: 받을 수 있는 가장 새 실제 값(비트코인은 판단 때 지금 가격), 값마다 그 시각
+        mine = set(C.ASSET_IDS) | {a for b in brokers.values() for a in b.expected_units()}
+        D.value_prices = value_prices(hists, quotes, at, ticker, brokers["live:hand"].market(at) == "now", mine)
+        D.prices = {a: v for a, (v, _) in D.value_prices.items()}
+        D.account_lines = [b.account_line(at, day, D.value_prices)[0] for b in brokers.values()]  # 미리 보기(record가 다시 만든다)
+        D.hand_units = brokers["live:hand"].expected_units()
+        D.hand_total = RB.total_value(brokers["live:hand"], D.prices)
+    elif accounts:
+        D.account_lines = [acc.record(day, last) for acc in accounts.values()]
+        if ticker.get("KRW-BTC"):
+            D.prices["KRW-BTC"] = ticker["KRW-BTC"]["price"]  # 주문 수량은 판단 때 가격으로 잡는다(체결은 다음 공식 가격)
+        units, cash = accounts["live:hand"].expected(D.prices)
+        D.hand_units = units
+        D.hand_total = cash + sum(n * D.prices[a] / C.ASSETS[a].unit for a, n in units.items() if a in D.prices)
 
     # 시세 대 보기·계산기·이전 버전·기준선 예측
     run = day.isoformat()
@@ -271,7 +463,7 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
         values, numbers = P.read(h.closes)
         D.calc_values[a] = values
         D.base[a] = fill_base(a, at)
-        D.prices[a] = h.last.close
+        D.prices.setdefault(a, h.last.close)
     D.focus = [a for a in D.stock_ok if a in set(D.held) | set(focus)]
     for a in D.focus:
         h = hists[a]
@@ -285,15 +477,23 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
             D.preds.append({"id": f"{run}:calc:{a}:{hz}", "predictor": "calc", **base, "readings": values,
                             "knowledge": digest, **f, "analog": ana[hz]})
             D.preds += baselines(run, a, hz, h, base)
-    if not already:
+    # 계산기 계좌·기준선의 목표: 계산기는 R_weights_v2, 셋 나눠 사 두기는 아직 못 산 대상만 1/3(문턱 0).
+    # 돈이 모자라 덜 산 대상(지난 plan 줄의 short)은 다음 실행에서 마저 산다.
+    D.calc_w, D.calc_reasons = calc_w, reasons
+    bought = {o["asset"] for o in D.recs["order"] if o["account"] == "baseline:equal_hold"}
+    if mode == "broker":
+        # 첫 사기가 돈이 잡혀(장 시작 사기는 한도만큼 잡아 둔다) 덜 된 대상은 남은 돈이 계좌의 문턱(2%) 이상일 때 마저 산다
+        eb = brokers["baseline:equal_hold"]
+        plans = eb.events("plan")
+        if plans and sum(eb.pockets().values()) >= RB.BAND * RB.total_value(eb, D.prices):
+            bought -= set(plans[-1]["data"].get("short", []))
+    D.equal_first = {a: 1 / 3 for a in predictable if a not in bought}
+    if not already and mode == "ledger" and accounts:   # 갈아타기 전(옛 장부로 도는 날): 옛 규칙 그대로
         D.calc_orders = [o.record() for o in accounts["live:calc"].plan(day, calc_w, D.prices, 0.02, reasons, at,
                                                                         C.FILL_RULE)]
-        bought = {o["asset"] for o in D.recs["order"] if o["account"] == "baseline:equal_hold"}
-        first = {a: 1 / 3 for a in predictable if a not in bought}
-        if first:
+        if D.equal_first:
             D.calc_orders += [o.record() for o in accounts["baseline:equal_hold"].plan(
-                day, first, D.prices, 0.0, {a: "기준선: 처음 살 수 있는 날 1/3씩 사서 그대로 둔다" for a in first}, at,
-                C.FILL_RULE)]
+                day, D.equal_first, D.prices, 0.0, {a: EQUAL_NOTE for a in D.equal_first}, at, C.FILL_RULE)]
 
     # 돌아볼 손 예측: 한 번만 세는 채점 중 아직 돌아보지 않은 것 (오늘 새로 채점된 것 포함)
     reviewed = {r["prediction"] for r in recs["review"]}
@@ -353,7 +553,9 @@ def prepare(root: Root, day: dt.date, at: dt.datetime, fetch: bool = True, ticke
                {a: {"status": "skipped"} for a in [*C.ASSET_IDS, *ST.codes(root.stocks)]})
     tick = ticker if ticker is not None else (fetch_ticker() if fetch else {})
     D = compute(root, day, at, fetched, tick)
-    late = late_note(at, C.PREPARE_BY, "준비(prepare)")
+    if D.problems:
+        return stop(D.problems)
+    late = late_note(at, C.PREPARE_BY, "준비(prepare)", D.mode == "broker")
     state = {"day": day.isoformat(), "prepared_at": at.isoformat(timespec="seconds"), "fetch": fetched,
              "decision_price": tick, "predictable": D.predictable, "skipped": D.skipped,
              "missing": [d.isoformat() for d in D.missing], "already": D.already, "warnings": [late] if late else []}
@@ -372,11 +574,23 @@ def prepare(root: Root, day: dt.date, at: dt.datetime, fetch: bool = True, ticke
     return 1 if D.already else 0
 
 
-def late_note(at: dt.datetime, by: dt.time, what: str) -> str:
-    """판단 마감 경고(결정 E1): 체결이 판단 뒤 첫 시가(09:00)라, 늦으면 그날 시가를 놓친다. 늦지 않았으면 ''."""
+def stop(problems: list[str]) -> int:
+    """증권사 기록이 어긋나 있으면 매일 실행은 아무것도 쓰지 않고 멈춘다(메인 결정, 2026-11-10)."""
+    print(f"가상 증권사 기록이 어긋나 있다({len(problems)}건) — 아무것도 쓰지 않고 멈춘다. `python -m market.broker status`로 본다:")
+    for e in problems[:30]:
+        print("  -", e)
+    return 1
+
+
+def late_note(at: dt.datetime, by: dt.time, what: str, broker: bool = True) -> str:
+    """판단 마감 경고: 장 시작 주문은 09:00 시가에 체결되고 예측 기준도 그 시가라, 늦으면 그날 시가를 놓친다. 늦지 않았으면 ''.
+    broker = 가상 증권사로 도는 날(늦어도 한국 거래소 주문이 장중이면 지금 가격으로 나간다), 아니면 옛 장부(다음 시가에 체결)."""
     now = at.astimezone(C.KST)
     if now.time() < by:
         return ""
+    if now.time() >= C.RECORD_BY and broker:
+        return (f"{what} 시각 {now:%H:%M}이 {C.RECORD_BY:%H:%M} 시가 뒤다 — 그날 시가를 놓쳐 한국 거래소 주문은 장중이면 지금 가격으로 "
+                f"나가고(장 마감 뒤면 다음 장 시작 주문), 예측 기준(체결 봉)은 다음 봉이라 계좌가 버는 구간과 어긋난다")
     if now.time() >= C.RECORD_BY:
         return (f"{what} 시각 {now:%H:%M}이 {C.RECORD_BY:%H:%M} 시가 뒤다 — 그날 시가를 놓쳐 주문은 다음 시가(ETF·종목 다음 거래일 "
                 f"09:00, 코인 다음 날 09:00)에 체결되고, 예측 기준(체결 봉)도 그 봉이다")
@@ -385,8 +599,17 @@ def late_note(at: dt.datetime, by: dt.time, what: str) -> str:
 
 def briefing(D: Day, fetched: dict, tick: dict, late: str = "") -> str:
     L_ = [f"# {D.day} 준비 (판단 시각 {D.at:%H:%M} KST)", ""]
-    L_.append(f"체결은 판단 뒤 첫 시가(ETF·종목 09:00 시가, 코인 09:00 일봉 시가)이고, 예측 기준도 그 체결가다 — "
-              f"**record를 {C.RECORD_BY:%H:%M} 전에** 돌린다.")
+    if D.mode == "broker":
+        L_.append(f"주문은 가상 증권사를 거친다: 비트코인은 판단 때 지금 가격에 바로, ETF·종목은 장이 열리는 09:00 가격에(팔기는 "
+                  f"그대로, 사기는 지금 계좌에 있는 돈만큼만 — 같은 09:00에 팔리는 돈은 아직 못 쓴다). 예측 기준은 판단 뒤 첫 "
+                  f"시가다 — **record를 {C.RECORD_BY:%H:%M} 전에** 돌린다(늦으면 ETF·종목 주문이 지금 가격으로 나간다).")
+        if D.switched and D.recs["account"]:
+            L_.append("**갈아타는 날: 옛 대기 주문을 옛 규칙 가격으로 모두 끝내고, 계좌 넷이 오늘부터 가상 증권사로 돈다"
+                      "(보유는 그대로, 현금은 은행에서 시작).**")
+    else:
+        L_.append(f"체결은 판단 뒤 첫 시가(ETF·종목 09:00 시가, 코인 09:00 일봉 시가)이고, 예측 기준도 그 체결가다 — "
+                  f"**record를 {C.RECORD_BY:%H:%M} 전에** 돌린다.")
+        L_.append(f"**오늘은 옛 장부로 돈다(가상 증권사로 갈아타지 못함): {D.switch_note} — 다음 실행에서 다시 시도한다.**")
     if late:
         L_.append(f"**경고: {late}**")
     if D.already:
@@ -430,11 +653,23 @@ def briefing(D: Day, fetched: dict, tick: dict, late: str = "") -> str:
         L_.append(f"- {a} {s['name']}{mark}: {h.last.date} 종가 {h.last.close:,.0f}원, 하루 {chg(1)}, 1주 {chg(5)}, 4주 {chg(20)}"
                   f", 평소 하루 움직임 {tm * 100:.1f}%" if tm else f"- {a} {s['name']}{mark}: {h.last.date} 종가 {h.last.close:,.0f}원")
         L_[-1] += f" / 켜진 시세 상태: {', '.join(on) or '없음'}" + (" / 처음 받음" if f.get("first") else "")
-    L_ += ["", "## 정산·계좌 (오늘 07:37 평가)"]
-    for f in D.fills:
+    L_ += ["", "## 체결·계좌 (지금 평가 — 비트코인은 판단 때 가격, ETF·종목은 마지막 장 마감 가격)"]
+    for f in D.fills + [d for k, d in D.sync_lines if k == "fill"]:
         L_.append(f"- 체결 {f['account']} {f['asset']} {f['side']} {f['qty_units']}단위 @ {f['price']:,} ({f['fill_date']})")
+    for k, d in D.sync_lines:
+        if k == "broker" and d["type"] in ("expire", "adjust"):
+            L_.append(f"- {'체결 못 하고 끝남' if d['type'] == 'expire' else '체결 값 바로잡음'} {d['account']}: {d['note']}")
+    for w in D.sync_warnings:
+        L_.append(f"- **경고: {w}**")
     for a in D.account_lines:
-        L_.append(f"- {a['account']}: {a['value']:,.0f}원 (현금 {a['cash']:,}원, 체결 안 된 주문 {len(a['pending'])})")
+        pk = a.get("pockets")
+        where = f" — 은행 {pk['bank']:,} · 증권 계좌 {pk['sec']:,} · 업비트 {pk['upbit']:,}" if pk else ""
+        L_.append(f"- {a['account']}: {a['value']:,.0f}원 (현금 {a['cash']:,}원{where}, 체결 안 된 주문 {len(a['pending'])})")
+    if D.mode == "broker":
+        hb = D.brokers["live:hand"]
+        L_.append(f"- 손 계좌에서 지금 살 수 있는 돈: 증권 계좌 {hb.orderable('sec', D.at) + hb.withdrawable('bank', D.at):,}원"
+                  f"(은행 돈 포함), 걸린 주문 {len(hb.pending())}건. ETF·종목을 팔아 다른 것을 사는 몫은 09:00에 팔린 뒤에 살 수 있다"
+                  f"(`python -m market.daily open` 또는 다음 날).")
     L_ += ["", f"## 채점 (새로 {len(D.scores)}건, 한 번만 세는 것 {sum(s['counted'] for s in D.scores)}건)"]
     for s in D.scores:
         if s["predictor"] in ("hand", "calc") and s["counted"]:
@@ -492,9 +727,7 @@ def template(D: Day) -> dict:
     per_asset = [s["id"] for s in research_states(D.raw, per_asset=True) if s["id"] not in seeds]
     answers = {s["id"]: s.get("answers") for s in D.raw.get("state", [])}
     calc = {(p["asset"], p["horizon"]): p for p in D.preds if p["predictor"] == "calc"}
-    hand_acc = D.accounts["live:hand"]
-    units, cash = hand_acc.expected(D.prices)
-    total = cash + sum(n * D.prices[a] / C.ASSETS[a].unit for a, n in units.items() if a in D.prices)
+    units, total = D.hand_units, D.hand_total   # 든 수량 + 걸린 주문(증권사 기준), 계좌 평가액
     pieces = {pid: info["state"] for pid, info in H._piece_index(D.raw).items()}
     assets = list(D.predictable) + list(D.held)
     names = {str(s["code"]): s["name"] for s in D.pool}
@@ -561,6 +794,8 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
     focus = {str(h.get("asset")) for h in inp.get("hand", []) if isinstance(h, dict)} | set(inp.get("weights") or {})
     focus |= set(inp.get("stock_readings") or {})
     D = compute(root, day, at, prep["fetch"], prep.get("decision_price") or {}, focus={a for a in focus if C.is_stock(a)})
+    if D.problems:
+        return stop(D.problems)
     if D.already:
         print(f"{day} 기록이 이미 있다 — 같은 날 두 번 쓰지 않는다(정정은 correction 기록으로)")
         return 1
@@ -570,7 +805,7 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
            "seed_states": sorted(RS.seed_states(D.raw)),
            "places": [p["id"] for p in D.places], "stale": D.stale, "predictable": D.predictable,
            "stocks": D.stock_ok, "held": D.held, "buyable": {str(s["code"]) for s in D.pool if s.get("buy", True)},
-           "hand_units": D.accounts["live:hand"].expected(D.prices)[0],
+           "hand_units": D.hand_units,
            "calc_values": D.calc_values, "due_reviews": D.due_reviews, "due_checks": D.due_checks,
            "open_next": D.open_next,
            "node_ids": {n.get("id") for k in ("goal", "state", "fact", "hypothesis", "rule") for n in D.raw.get(k, [])},
@@ -585,12 +820,28 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
     hand = H.lines(inp, ctx, D.digest, D.base)
     warns += RS.new_share_warnings(hand["research"], D.places, D.stale)
 
-    # 손 예측 계좌 주문 (판단 뒤 첫 시가에 체결, 결정 E1)
+    # 주문: 목표 비중 → 주문 계획 → 가상 증권사(계좌 넷 모두, 16절). 갈아타지 못한 날만 옛 장부(판단 뒤 첫 시가에 체결).
     targets = {a: float(w["target"]) for a, w in (inp.get("weights") or {}).items()}
-    hand_orders = [o.record() for o in D.accounts["live:hand"].plan(
-        day, targets, D.prices, 0.02, {a: str(w["reason"]) for a, w in (inp.get("weights") or {}).items()}, at,
-        C.FILL_RULE)]
-    late = late_note(at, C.RECORD_BY, "판단(record)")
+    why = {a: str(w["reason"]) for a, w in (inp.get("weights") or {}).items()}
+    plans: dict[str, RB.Plan] = {}
+    hand_orders: list[dict] = []
+    if D.mode == "broker":
+        clock = RB.Clock(at, root.live)
+        jobs = [("live:hand", targets, RB.BAND, why), ("live:calc", D.calc_w, RB.BAND, D.calc_reasons)]
+        if D.equal_first:
+            jobs.append(("baseline:equal_hold", D.equal_first, 0.0, {a: EQUAL_NOTE for a in D.equal_first}))
+        for aid, tg, band, rs in jobs:
+            plans[aid] = RB.rebalance(D.brokers[aid], tg, D.prices, clock, band, rs)
+        for aid, b in D.brokers.items():   # 계좌 줄: 판단 때의 상태(그날 낸 지금 주문과 이체까지 반영), 하루 한 줄
+            res = b.snapshot(clock.now(), day, D.value_prices)
+            warns += [f"{aid}: {w}" for w in res.warnings] + ([] if res.ok else [f"{aid}: {res.reason}"])
+        for aid, plan in plans.items():
+            warns += [f"{aid}: {w}" for w in plan.warnings]
+    else:
+        hand_orders = [o.record() for o in D.accounts["live:hand"].plan(day, targets, D.prices, 0.02, why, at, C.FILL_RULE)]
+        warns.append(f"오늘은 옛 장부로 돌았다(가상 증권사로 갈아타지 못함): {D.switch_note}")
+    warns += D.sync_warnings
+    late = late_note(at, C.RECORD_BY, "판단(record)", D.mode == "broker")
     if late:
         warns.append(late)
 
@@ -599,14 +850,18 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
     for d in D.missing:
         lines["run"].append({"id": f"missed:{d.isoformat()}", "run": d.isoformat(), "mode": "missed", "steps": {},
                              "notes": ["실행 없음 — 빈 날. 지난 날짜로 예측하지 않는다"]})
-    lines["fill"] = D.fills
+    lines["fill"] = list(D.fills)   # 옛 모양 체결 줄(갈아타기 전 정산·갈아타는 날 옛 주문 끝내기) — 옛 장부가 만든 것
     lines["score"] = D.scores
-    lines["account"] = D.account_lines
+    lines["account"] = [] if D.mode == "broker" else D.account_lines
     lines["reading"] = D.readings
     lines["research"] = hand["research"]
     lines["hand_reading"] = hand["hand_reading"]
     lines["prediction"] = D.preds + hand["prediction"]
     lines["order"] = D.calc_orders + hand_orders
+    for b in D.brokers.values() if D.mode == "broker" else ():   # 가상 증권사가 만든 줄(주문·체결·사건·계좌)
+        for k in B.KINDS:
+            lines[k] += b.new[k]
+    rejects = [x for x in lines["broker"] if x["type"] == "reject"]
     lines["review"] = hand["review"]
     lines["reading_check"] = hand["reading_check"]
     lines["correction"] = hand["correction"]
@@ -619,7 +874,10 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
                   "decision_price": prep.get("decision_price") or {}, "skipped": D.skipped,
                   "stocks": {"pool": len(D.pool), "usable": len(D.stock_ok), "held": D.held, "recorded": D.focus,
                              "skipped": {a: w for a, w in D.stock_skipped.items() if a in set(D.held) | focus}},
-                  "fills": len(D.fills), "scores": len(D.scores),
+                  "fills": len(lines["fill"]), "scores": len(D.scores),
+                  "broker": {"mode": D.mode, "switched": D.switched, "rejects": len(rejects),
+                             "transfers": sum(x["type"] == "transfer" for x in lines["broker"]),
+                             "expired": sum(x["type"] == "expire" for x in lines["broker"])},
                   "counted_scores": sum(s["counted"] for s in D.scores),
                   "predictions": len(lines["prediction"]), "orders": len(lines["order"]),
                   "research_questions": len(hand["research"]), "places_looked": len({lk["place"] for lk in looked}),
@@ -647,8 +905,109 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
         if lines[kind]:
             R.write(root.records, kind, lines[kind])
     print(f"{run} 기록: " + ", ".join(f"{k} {len(v)}" for k, v in lines.items() if v))
+    if D.switched and D.recs["account"]:
+        print("  갈아탐: 옛 대기 주문을 옛 규칙 가격으로 모두 끝내고 계좌 넷이 가상 증권사로 시작했다(start 줄 — 보유는 그대로, "
+              "현금은 은행에). 오늘 일지 '왜'나 조사 메모에 한 줄 적는다.")
+    for k, d in D.sync_lines:
+        if k == "fill":
+            print(f"  [{d['account']}] 지난 주문 체결: {C.ASSETS[d['asset']].name} {'사기' if d['side'] == 'buy' else '팔기'} "
+                  f"{d['qty_units']}단위 @ {d['price']:,.0f}원 ({d['at'][:16]})")
+        elif d.get("type") == "expire":
+            print(f"  [{d['account']}] 체결 못 하고 끝난 주문: {d['data'].get('order')} — {d['note']}")
+    for aid, plan in plans.items():
+        for line in RB.describe(plan, lambda a: C.ASSETS[a].name if a else ""):
+            if not line.startswith(("지난 주문 체결", "체결 못 하고")):
+                print(f"  [{aid}] {line}")
     for w in warns:
         print("  경고:", w)
+    return 0
+
+
+# ---------- open (장 시작 뒤 단계) ----------
+def open_phase(root: Root, day: dt.date, at: dt.datetime) -> int:
+    """09:00 뒤 아무 때나, 하루 한 번(16절 '장 시작 뒤'): 계좌마다 맞추기(오늘 시가 체결을 장부에) → 오늘 plan 줄의 목표 비중으로
+    계획을 다시 돌림(한국 거래소는 지금 주문 — 팔린 돈으로 바로 산다) → phase 줄. 계좌 줄은 새로 쓰지 않는다(하루 한 줄).
+    오늘 판단(run 줄)이 없거나, 이미 돌았거나, 아직 갈아타기 전이면 아무것도 하지 않는다."""
+    run = day.isoformat()
+    recs = {k: R.read(root.records, k) for k in ("run", *B.KINDS)}
+    if not any(r["run"] == run and r.get("mode") == "live" for r in recs["run"]):
+        print(f"{run} 판단 기록(run)이 없다 — 장 시작 뒤 단계는 판단이 돈 날에만 돈다. 아무것도 쓰지 않았다")
+        return 0
+    if not all(any(x["account"] == aid and x["type"] == "start" for x in recs["broker"]) for aid in C.LIVE_ACCOUNTS):
+        print("아직 가상 증권사로 갈아타기 전이다 — 아무것도 쓰지 않았다")
+        return 0
+    quotes = quotes_for(root)
+    ST.register(root.stocks)
+    rows = {p.stem: PR.load(p.stem, root.prices) for p in sorted(root.prices.glob("*.csv"))}
+    hists = {a: PR.view(a, r, at) for a, r in rows.items() if a in C.CORE or C.is_stock(a)}
+    bar_days = [r.date for r in hists["069500"].rows] if "069500" in hists else None
+    brokers = {aid: B.Broker(aid, quotes, recs, bar_days) for aid in C.LIVE_ACCOUNTS}
+    problems = [e for b in brokers.values() for e in b.problems]
+    if problems:
+        return stop(problems)
+    clock = RB.Clock(at, root.live)
+    said, live_prices = [], {}
+
+    def price(a: str, t: dt.datetime) -> float | None:
+        """지금 가격(실제로 받은 것만). 한국 거래소는 장이 열려 있을 때만."""
+        if a not in live_prices:
+            n = quotes.now(a, t)
+            ok = n is not None and n.price > 0 and (C.ASSETS[a].kind == "coin" or n.open)
+            live_prices[a] = n.price if ok else None
+        return live_prices[a]
+
+    for aid, b in brokers.items():
+        if any(x["data"].get("name") == "open" and x["run"] == run for x in b.events("phase")):
+            said.append(f"[{aid}] 오늘 장 시작 뒤 단계는 이미 돌았다 — 아무것도 하지 않는다")
+            continue
+        t = clock.now()
+        res = b.sync(t)
+        if not res.ok:
+            return stop([f"{aid}: {res.reason}"])
+        plan = RB.Plan(lines=list(res.lines), warnings=list(res.warnings))
+        todays = [x for x in b.events("plan") if x["run"] == run]
+        if todays:
+            data = todays[-1]["data"]
+            targets = dict(data.get("targets", {}))
+            prices, lost = {}, []
+            for a in sorted(set(targets) | set(b.holdings())):
+                got = price(a, t)
+                if got is None:   # 지금 가격을 못 받은 대상은 주문하지 않고, 계좌 크기를 재는 데만 마지막 종가를 쓴다
+                    lost += [a] if a in targets else []
+                    got = hists[a].last.close if a in hists and hists[a].last else None
+                if got is not None:
+                    prices[a] = got
+            more = RB.rebalance(b, {a: w for a, w in targets.items() if a not in lost}, prices, clock,
+                                float(data.get("band", RB.BAND)), data.get("reasons", {}), phase="open")
+            plan.lines += more.lines
+            plan.notes += more.notes + ([f"지금 가격을 못 받은 대상은 건너뜀: {', '.join(lost)}"] if lost else [])
+            plan.warnings += more.warnings
+        else:
+            plan.notes.append("오늘 목표 비중(plan 줄)이 없다 — 맞추기만 했다")
+        b.mark(clock.now(), "phase", {"name": "open", "orders": len(plan.of("order")),
+                                      "fills": len(plan.of("fill")), "rejects": len(plan.of("broker", "reject"))})
+        said += [f"[{aid}] {x}" for x in RB.describe(plan, lambda a: C.ASSETS[a].name if a else "")]
+
+    lines = {k: [x for b in brokers.values() for x in b.new[k]] for k in B.KINDS}
+    problems = []
+    for kind, items in lines.items():
+        ids = {x["id"] for x in recs.get(kind, [])}
+        for i, it in enumerate(items):
+            problems += R.line_errors(kind, {"kind": kind, **it}, f"{kind}+{i}")
+            if it["id"] in ids:
+                problems.append(f"{kind}: id '{it['id']}'가 이미 있음")
+            ids.add(it["id"])
+    if problems:
+        print(f"기록 칸 오류 {len(problems)}건 — 아무것도 쓰지 않았다:")
+        for e in problems[:50]:
+            print("  -", e)
+        return 1
+    for kind in KIND_ORDER:
+        if lines.get(kind):
+            R.write(root.records, kind, lines[kind])
+    print(f"{run} 장 시작 뒤 단계({at:%H:%M}): " + (", ".join(f"{k} {len(v)}" for k, v in lines.items() if v) or "쓴 줄 없음"))
+    for x in said:
+        print("  " + x)
     return 0
 
 
@@ -681,7 +1040,7 @@ def when(opt: dict, default_time: dt.time) -> tuple[Root, dt.date, dt.datetime]:
 
 def main(argv: list[str]) -> int:
     pos, opt = _args(argv)
-    if not pos or pos[0] not in ("prepare", "record", "report"):
+    if not pos or pos[0] not in ("prepare", "record", "report", "open"):
         print(__doc__)
         return 2
     if pos[0] == "prepare":
@@ -693,6 +1052,9 @@ def main(argv: list[str]) -> int:
             return 2
         root, day, at = when(opt, dt.time(8, 30))
         return record(root, day, at, Path(pos[1]))
+    if pos[0] == "open":
+        root, day, at = when(opt, dt.time(9, 5))
+        return open_phase(root, day, at)
     from . import report as RP
     root, day, _ = when(opt, dt.time(9, 0))
     if "--check" in opt:
