@@ -838,3 +838,53 @@ covers = ["S_q_earnings_beat"]
 official = false
 added = 2026-11-11
 note = "2026-11-11 공시·뉴스 조사가 새로 찾음. 키 없이 종목별 최근 기사 제목·시각이 나온다(주소의 코드를 바꿔 본다). 밤사이 새 소식이 있는지 빠르게 거르는 데 쓴다 — 실적 발표 날짜를 놓친 적이 있으니(POSCO·LG화학) 발표 여부는 지난 기록과 견줄 것"
+
+[[place]]
+id = "P_yahoo_usdkrw"
+name = "야후 차트 달러-원 (JSON)"
+url = "https://query1.finance.yahoo.com/v8/finance/chart/KRW%3DX?range=1y&interval=1d"
+angle = "간밤 반응"
+covers = ["S_q_home_currency_weak", "usdkrw_krw", "usdkrw_pct"]
+official = false
+added = 2026-11-16
+note = "2026-11-16 간밤 반응 조사가 새로 찾음. 키 없이 월요일 아침처럼 국내 장 전에도 지금에 가까운 달러-원이 나온다. 네이버 국내 종가와 수준이 몇 원 다를 수 있어 등락은 같은 출처끼리 견줄 것"
+
+[[place]]
+id = "P_theblock_rss"
+name = "The Block 기사 목록 (RSS)"
+url = "https://www.theblock.co/rss.xml"
+angle = "공시·뉴스"
+covers = ["S_q_exchange_hack"]
+official = false
+added = 2026-11-16
+note = "2026-11-16 공시·뉴스 조사가 새로 찾음. 디파이·거래소 해킹 소식(카바 렌드 11-14)이 빨리 나온다. 영어"
+
+[[place]]
+id = "P_cryptobriefing"
+name = "Crypto Briefing 현물 코인 상품 돈 흐름 기사"
+url = "https://cryptobriefing.com/"
+angle = "수급"
+covers = ["coin_fund_flow_usdm"]
+official = false
+added = 2026-11-16
+note = "2026-11-16 수급 조사가 새로 찾음. Farside가 403으로 막힐 때 그 숫자를 인용한 기사로 전일 순유입을 얻었다(11-13 −185.4백만 달러). 기사 주소는 날마다 다르다"
+
+[[place]]
+id = "P_coinmetrics_community"
+name = "Coin Metrics 무료 API 거래소 입출금 (JSON)"
+url = "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=btc&metrics=FlowInExNtv,FlowOutExNtv&frequency=1d"
+angle = "수급"
+covers = ["coin_exch_netflow_btc"]
+official = false
+added = 2026-11-16
+note = "2026-11-16 수급 조사가 새로 찾음. 키 없이 거래소 코인 들어옴·나감(개수)이 하루 단위로 나온다. 순입금 = 들어옴 − 나감. 마지막 날 값은 잠정(flash)"
+
+[[place]]
+id = "P_nasdaq_econ_api"
+name = "나스닥 경제 일정 (JSON)"
+url = "https://api.nasdaq.com/api/calendar/economicevents?date=2026-11-17"
+angle = "일정·예상치"
+covers = ["S_q_event_soon", "events_n"]
+official = false
+added = 2026-11-16
+note = "2026-11-16 일정·예상치 조사가 새로 찾음. 지표 예상치·이전치가 포리스트팩토리와 같았다. 날짜 칸이 하루 밀려 보이니 시각을 같이 볼 것"
