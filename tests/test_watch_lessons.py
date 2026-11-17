@@ -97,18 +97,30 @@ class Rotation(unittest.TestCase):
             day.recs = {"prediction": [{"predictor": "hand", "asset": "000001", "run": "2026-11-10"},
                                        {"predictor": "hand", "asset": "000003", "run": "2026-11-12"}]}
             # 물어본 000003 먼저(물어본 뒤 손 예측 없음), 그다음 손 예측이 없던 000002, 든 000009는 빠진다
-            self.assertEqual(D.watch_rotation(day, root), ["000003", "000002"])
+            self.assertEqual(D.watch_rotation(day, root), ["000003", "000002", "000001"])
             day.recs["prediction"].append({"predictor": "hand", "asset": "000003", "run": "2026-11-18"})
-            self.assertEqual(D.watch_rotation(day, root), ["000002", "000001"])
+            self.assertEqual(D.watch_rotation(day, root), ["000002", "000001", "000003"])
 
     def test_watch_today_must_be_predicted(self):
         ctx_base = {"day": "2026-11-18", "raw": {"state": [], "hypothesis": []}, "research_states": [], "places": [],
                     "stale": set(), "predictable": [], "stocks": ["000002"], "held": [], "calc_values": {},
                     "due_reviews": {}, "due_checks": {}, "node_ids": set()}
         errs, _ = H.validate({"day": "2026-11-18", "hand": [], "weights": {}}, {**ctx_base, "watch_today": ["000002"]})
-        self.assertTrue(any("지켜보는 종목" in e for e in errs))
+        self.assertTrue(any("오늘 차례 종목" in e for e in errs))
         errs, _ = H.validate({"day": "2026-11-18", "hand": [], "weights": {}}, ctx_base)
-        self.assertFalse(any("지켜보는 종목" in e for e in errs))
+        self.assertFalse(any("오늘 차례 종목" in e for e in errs))
+
+    def test_stock_total_cap(self):
+        """종목 수 상한 8·합 상한 0.45(2026-11-17): 넷을 0.12씩(합 0.48)이면 합 상한에 걸리고, 넷을 0.11씩(0.44)이면 안 걸린다."""
+        codes = ["000001", "000002", "000003", "000004"]
+        ctx = {"day": "2026-11-18", "raw": {"state": [], "hypothesis": []}, "research_states": [], "places": [],
+               "stale": set(), "predictable": [], "stocks": codes, "held": [], "calc_values": {}, "due_reviews": {},
+               "due_checks": {}, "node_ids": set(), "buyable": codes}
+        for w, bad in ((0.12, True), (0.11, False)):
+            inp = {"day": "2026-11-18", "hand": [], "weights": {a: {"target": w, "reason": "가짜"} for a in codes}}
+            errs, _ = H.validate(inp, ctx)
+            self.assertEqual(any("종목 비중 합" in e for e in errs), bad, w)
+            self.assertFalse(any("종목 4개 > 상한" in e for e in errs))
 
 
 class ChartName(unittest.TestCase):
@@ -123,13 +135,13 @@ class Ask(unittest.TestCase):
             self.assertEqual(AK.lookup("삼양식품"), ("003230", "삼양식품", "KOSPI"))
             self.assertEqual(AK.lookup("003230"), ("003230", "삼양식품", "KOSPI"))
 
-    def test_added_watch_stock_is_not_buyable_and_list_stays_valid(self):
+    def test_asked_stock_is_added_as_buyable(self):
+        """사는 목록과 지켜보는 목록을 나누지 않는다(2026-11-17 사용자): 더한 종목은 buy 칸 없이 — 살 수 있다."""
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "stocks.toml"
-            ST.add(p, "003230", "삼양식품", "사용자 질문", "KOSPI", dt.date(2026, 11, 17), watch_only=True)
+            ST.add(p, "003230", "삼양식품", "사용자 질문", "KOSPI", dt.date(2026, 11, 17))
             s = ST.load(p)[0]
-            self.assertIs(s["buy"], False)
-            self.assertIs(s["watch"], True)
+            self.assertNotIn("buy", s)
             self.assertEqual(ST.check(ST.load(p)), [])
 
 
@@ -141,7 +153,7 @@ class DailyWatch(unittest.TestCase):
             root = TD.make_root(tmp)
             (root.path / "stocks.toml").write_text(
                 '[[stock]]\ncode = "777770"\nname = "가짜지켜봄"\nmarket = "KOSPI"\nadded = "2025-01-01"\nwhy = "시험"\n'
-                'buy = false\nwatch = true\n', encoding="utf-8")
+                '', encoding="utf-8")
             from tests import fixtures
             PR.append("777770", list(fixtures.series("777770", dt.date(2024, 3, 1), dt.date(2025, 10, 31))), root.prices)
             d = dt.date(2025, 9, 2)
@@ -192,3 +204,22 @@ class SundayLessons(unittest.TestCase):
             p = root.day_dir(sun) / "ok.json"
             p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
             self.assertEqual(D.record(root, sun, TD.at(sun, 8, 30), p), 0)
+
+
+class Precheck(unittest.TestCase):
+    """판단 전 확인(2026-11-18 판단부터): 반대 검토 + 08:00 뒤 직전 확인이 없으면 거절."""
+
+    def test_precheck_required_and_timed(self):
+        day = dt.date(2026, 11, 18)
+        at = dt.datetime(2026, 11, 18, 8, 48, tzinfo=C.KST)
+        ok = {"precheck": {"roots": ["L04"], "by": "반대 검토-새 눈", "note": "종목 1봉을 0.5로 되돌림",
+                           "late_as_of": "2026-11-18T08:36+09:00", "late": "동시호가 예상 체결가 +0.4%"}}
+        self.assertEqual(LS.precheck_errors(ok, day, at, {"L04"}), [])
+        self.assertTrue(LS.precheck_errors({}, day, at, {"L04"}))
+        early = json.loads(json.dumps(ok))
+        early["precheck"]["late_as_of"] = "2026-11-18T07:40+09:00"
+        self.assertTrue(any("08:00" in e for e in LS.precheck_errors(early, day, at, {"L04"})))
+        unknown = json.loads(json.dumps(ok))
+        unknown["precheck"]["roots"] = ["L99"]
+        self.assertTrue(LS.precheck_errors(unknown, day, at, {"L04"}))
+        self.assertEqual(LS.precheck_errors({}, dt.date(2026, 11, 17), at, set()), [])   # 그 전 날은 묻지 않는다

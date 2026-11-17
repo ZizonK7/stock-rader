@@ -22,7 +22,7 @@
 - 목표 비중: 0~1, 합 1 이하, 대상마다 이유.
 - 종목(2026-10-29): 손 계좌가 든 종목은 매일 손 예측 셋과 비중을 낸다(팔려면 0). 목표 > 0이면 손 예측 셋이 있고, 1주
   오를 확률 > 0.5이고, 1주 예측에 결론 조각(decisive)이 있어야 한다(이유 없이 사지 않는다). 한 종목 상한
-  config.STOCK_MAX_WEIGHT, 종목 수 상한 config.STOCK_MAX_COUNT. 종목마다 대 보는 조사 상태(per_asset)는 stock_readings에
+  config.STOCK_MAX_WEIGHT, 종목 수 상한 config.STOCK_MAX_COUNT, 종목 비중 합 상한 config.STOCK_MAX_TOTAL. 종목마다 대 보는 조사 상태(per_asset)는 stock_readings에
   종목마다 값을 적고, 그 조각을 쓴 손 예측의 값은 그 종목의 값과 같아야 한다. 그 상태에 '예'인 종목이 있는 날은 '아니오'인
   종목(비교군)도 config.STOCK_CONTROL_MIN개 이상 (2026-11-03).
 - 돌아보기: 기한이 된 손 예측(한 번만 세는 것)마다. 까닭 낱말, 틀렸는데 '맞음' 금지, '잡음'은 코드가 잡음이라 본 것만,
@@ -392,7 +392,7 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
             if (a, hz) not in seen:
                 why = "모르면 p_up = null과 이유" if a in ctx["predictable"] else (
                     "든 종목은 매일 예측한다" if a in held else "사려는 종목은 기간 셋을 다 예측한다" if a in targeted
-                    else "오늘 차례인 지켜보는 종목(2026-11-17) — 기간 셋을 낸다")
+                    else "오늘 차례 종목(2026-11-17) — 기간 셋을 낸다")
                 errs.append(f"hand: {a}:{hz} 예측이 없음 ({why})")
 
     # 목표 비중
@@ -430,6 +430,10 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
                 errs.append(f"weights.{a}: 종목을 들려면 1주 예측에 결론 조각(decisive)이 있어야 함 — 조각에 묶인 판단만 채점·쪼개기가 된다")
     if len(targeted) > C.STOCK_MAX_COUNT:
         errs.append(f"weights: 종목 {len(targeted)}개 > 상한 {C.STOCK_MAX_COUNT}개")
+    total_stock = sum(weights[a]["target"] for a in targeted)
+    if total_stock > C.STOCK_MAX_TOTAL + 1e-9:
+        errs.append(f"weights: 종목 비중 합 {total_stock:.3f} > 상한 {C.STOCK_MAX_TOTAL} (한 회사 주식은 묶음의 2~3배 흔들린다 — "
+                    f"종목 몫 합이 묶음 1/3 기준선보다 크게 무거워지지 않게)")
 
     # 돌아보기
     got = set()

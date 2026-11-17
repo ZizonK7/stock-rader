@@ -7,8 +7,8 @@
 이 저장소가 그 종목에 대해 할 수 있는 말의 한계.
 
 기록:
-- 목록(stocks.toml)에 없으면 지켜보기만 하는 종목(buy = false, watch = true)으로 더한다 — 다음 매일 실행부터 시세 대 보기·계산기
-  ('모름')·기준선이 매일 기록·채점된다. 시세 파일은 만들지 않는다(첫 파일은 매일 실행의 prepare가 만든다 — 저장소 규칙).
+- 목록(stocks.toml)에 없으면 더한다 — 다음 매일 실행부터 시세 대 보기·계산기('모름')·기준선이 매일 기록·채점되고, 조각이
+  가리키면 살 수 있다(사는 목록과 지켜보는 목록을 나누지 않는다, 2026-11-17 사용자). 시세 파일은 만들지 않는다(첫 파일은 매일 실행의 prepare가 만든다 — 저장소 규칙).
 - 물어본 것을 asked.toml에 덧붙인다. 다음 아침 실행은 그 종목을 '오늘 손 예측 차례'의 맨 앞에 두어 손 예측(조사 포함)을 기록한다
   — 그 예측이 채점되어 물어본 것이 피드백 재료가 된다. 이 명령 자체는 records/에 쓰지 않는다(기록은 매일 실행만 쓴다).
 - --dry: 아무 파일도 쓰지 않고 보여 주기만.
@@ -113,9 +113,8 @@ def answer(query: str, now: dt.datetime | None = None, write: bool = True) -> st
     listed = code in {str(s["code"]) for s in ST.load()}
     notes = []
     if write and not listed:
-        ST.add(C.STOCKS, code, name, f"사용자 질문 {now.date().isoformat()} — 지켜보기(python -m market.ask)", market,
-               now.date(), watch_only=True)
-        notes.append("목록(stocks.toml)에 지켜보기만 하는 종목으로 더했다 — 다음 매일 실행부터 매일 기록·채점된다.")
+        ST.add(C.STOCKS, code, name, f"사용자 질문 {now.date().isoformat()} (python -m market.ask)", market, now.date())
+        notes.append("목록(stocks.toml)에 더했다 — 다음 매일 실행부터 매일 기록·채점되고, 조각이 가리키면 살 수 있다.")
     if write:
         add_asked(ASKED, code, name, now)
         notes.append("asked.toml에 적었다 — 다음 아침 실행이 이 종목의 손 예측(조사 포함)을 맨 먼저 기록한다.")

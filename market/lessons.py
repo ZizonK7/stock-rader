@@ -158,6 +158,37 @@ def check(seed: dict) -> list[str]:
     return errs
 
 
+PRECHECK_SINCE = "2026-11-18"   # 판단 전 확인(반대 검토 + 직전 확인)을 요구하는 첫 판단 날
+PRECHECK_FROM = dt.time(8, 0)   # 직전 확인의 정보 시각은 이 뒤 — 장 전 대체거래소 거래(08:00–08:50)·동시호가 예상 체결가(08:30–)가 보이는 때
+
+
+def precheck_errors(inp: dict, day: dt.date, at: dt.datetime, known: set[str]) -> list[str]:
+    """판단 전 확인(2026-11-17, 지시문 4-0): 입력 precheck = {roots: [밟은 뿌리 id…] 또는 [], by: 반대 검토를 한 에이전트,
+    note: 무엇을 고쳤나·안 고쳤나, late_as_of: 직전 확인 정보 시각(ISO, 그날 08:00 뒤·판단 시각 전), late: 직전 확인에서 본 것}."""
+    if day.isoformat() < PRECHECK_SINCE:
+        return []
+    pc = inp.get("precheck")
+    if not isinstance(pc, dict):
+        return ["precheck: 판단 전 확인이 없다 — 반대 검토(뿌리 목록에 대 봄)와 08:00 뒤 직전 확인을 적는다(지시문 4-0)"]
+    errs = []
+    roots = pc.get("roots")
+    if not isinstance(roots, list) or any(r not in known for r in roots):
+        errs.append(f"precheck.roots: 오늘 판단이 밟은 뿌리 id 목록(없으면 []) — 모르는 id {[r for r in roots or [] if r not in known]}")
+    for k in ("by", "note", "late"):
+        if not str(pc.get(k, "")).strip():
+            errs.append(f"precheck.{k}가 비었다")
+    try:
+        t = dt.datetime.fromisoformat(str(pc.get("late_as_of", "")))
+        if t.tzinfo is None:
+            raise ValueError
+        lo = dt.datetime.combine(day, PRECHECK_FROM, C.KST)
+        if not lo <= t <= at:
+            errs.append(f"precheck.late_as_of {t.isoformat()}는 {lo:%H:%M}–판단 시각({at:%H:%M}) 사이여야 한다 — 직전 확인은 장 전 정보가 보일 때 한다")
+    except ValueError:
+        errs.append("precheck.late_as_of: 직전 확인 정보 시각(시간대 붙은 ISO, 예: 2026-11-18T08:35+09:00)")
+    return errs
+
+
 def record_lines(day: dt.date, inp: dict) -> list[dict]:
     out = []
     for i, e in enumerate(inp.get("lessons") or []):

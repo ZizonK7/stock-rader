@@ -67,8 +67,6 @@ def check(items: list[dict]) -> list[str]:
             errs.append(f"[종목] {code}: market은 KOSPI/KOSDAQ")
         if "buy" in s and not isinstance(s["buy"], bool):
             errs.append(f"[종목] {code}: buy는 true/false")
-        if s.get("watch") and s.get("buy", True):
-            errs.append(f"[종목] {code}: watch = true(지켜보기만)는 buy = false와 같이 — 사는 후보는 이미 지켜본다")
     return errs
 
 
@@ -156,9 +154,9 @@ def update(code: str, folder: Path, now: dt.datetime, name: str | None = None) -
 
 
 # ---------- 더하기 ----------
-def add(path: Path, code: str, name: str, why: str, market: str = "KOSPI", day: dt.date | None = None,
-        watch_only: bool = False) -> str:
-    """목록 끝에 종목을 더한다(이미 있으면 거절). 지난 항목은 고치지 않는다. watch_only = 지켜보기만(buy = false, 2026-11-17)."""
+def add(path: Path, code: str, name: str, why: str, market: str = "KOSPI", day: dt.date | None = None) -> str:
+    """목록 끝에 종목을 더한다(이미 있으면 거절). 지난 항목은 고치지 않는다. 목록의 종목은 모두 살 수 있다(2026-11-17 사용자 —
+    지켜보기만 하는 목록을 따로 두지 않는다; 살지 말지는 조각으로 정한다)."""
     code = code.strip().upper()
     if not C.is_stock(code):
         raise SystemExit(f"'{code}'는 종목 코드 꼴이 아님(6자리, 세 대상 아님)")
@@ -169,7 +167,7 @@ def add(path: Path, code: str, name: str, why: str, market: str = "KOSPI", day: 
     day = day or C.now_kst().date()
     esc = lambda x: x.replace("\\", "\\\\").replace('"', '\\"')
     block = (f'\n[[stock]]\ncode = "{code}"\nname = "{esc(name)}"\nmarket = "{market}"\nadded = "{day.isoformat()}"\n'
-             f'why = "{esc(why)}"\n' + ("buy = false\nwatch = true\n" if watch_only else ""))
+             f'why = "{esc(why)}"\n')
     old = path.read_text(encoding="utf-8") if path.exists() else ""
     path.write_text(old.rstrip("\n") + "\n" + block, encoding="utf-8")
     errs = check(load(path))
