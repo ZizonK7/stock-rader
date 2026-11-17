@@ -37,7 +37,7 @@ FORM = {
     "opened": ["<실제로 연 주소>", "…"], "blocked": ["<못 연 호스트와 상태, 예 data.krx.co.kr 403>"],
     "found": [{"kind": "공시|뉴스|실적|수급|일정|간밤|기타", "text": "<한두 문장 요약 — 본문을 옮기지 않는다>",
                "url": "<그 주소>", "when": "<그 정보의 시각·날짜>", "numbers": {"<이름_단위>": 0.0}}],
-    "missing": ["<찾아봤지만 못 찾은 kind>"],
+    "missing": ["<찾아봤지만 못 찾은 kind — 까닭을 붙이려면 'kind: 까닭'처럼 kind 낱말로 시작>"],
 }
 
 SOURCES = {
@@ -87,6 +87,7 @@ def brief(day: dt.date, asset: str, name: str, path: Path, held: bool, turn: boo
 - 실제로 연 주소 {MIN_OPENED}곳 이상을 opened에. 못 연 곳(403·빈 응답·시간 초과)은 blocked에 '호스트 상태'만 적고 우회하거나
   추측하지 않는다. 검색 결과 목록만 보고 쓰지 않는다 — 연 페이지에서 본 것만.
 - {', '.join(req)}마다 found에 하나 이상 있거나 missing에 있어야 한다. 못 찾은 것을 지어내지 않는다.
+  missing 항목은 kind 낱말로 시작한다(까닭은 뒤에: '뉴스: 네이버 뉴스 페이지 403').
 - found는 {MAX_FOUND}개까지, text는 {TEXT_MAX}자 안의 요약(기사 본문을 옮기지 않는다), url은 그 정보를 본 주소, 숫자가 있으면
   numbers에 '이름_단위'(단위: pct·pp·krw·krw100m·usd·n 등, 예 op_profit_surprise_pct, foreign_net_krw100m).
 - as_of는 본 정보 가운데 가장 늦은 것의 시각(시간대 붙은 ISO). 지금 시각보다 늦을 수 없다.
@@ -123,6 +124,24 @@ def _time(x) -> dt.datetime | None:
     return t if t.tzinfo else None
 
 
+MISSING_SEP = " :(（—–-·,/;"
+
+
+def missing_kinds(missing: list[str]) -> set[str]:
+    """missing 항목이 가리키는 kind. kind 낱말 그대로이거나, kind로 시작하고 바로 뒤에 까닭이 붙은 꼴('뉴스: 네이버 막힘',
+    '수급 (전일 숫자 없음)', '뉴스(지난 24시간) — …')도 그 kind다. kind로 시작하지 않는 항목은 메모로 보고 kind로 세지 않는다.
+    까닭: 2026-11-17 예행연습에서 Haiku 조사 13개가 모두 까닭을 붙여 써 'kind 목록' 검사에 걸렸다 — 까닭은 버릴 것이 아니라
+    무엇을 못 찾았는지의 기록이다."""
+    out = set()
+    for m in missing:
+        s = m.strip()
+        for k in KINDS:
+            if s == k or (s.startswith(k) and s[len(k)] in MISSING_SEP):
+                out.add(k)
+                break
+    return out
+
+
 def check_one(data, asset: str, day: dt.date, at: dt.datetime) -> list[str]:
     """한 대상 결과의 오류(없으면 [])."""
     w = f"scan {asset}"
@@ -140,8 +159,8 @@ def check_one(data, asset: str, day: dt.date, at: dt.datetime) -> list[str]:
         errs.append(f"{w}: as_of는 시간대 붙은 ISO 시각")
     elif t > at:
         errs.append(f"{w}: as_of {t.isoformat()}가 판단 시각보다 늦다")
-    elif t.astimezone(C.KST).date() < day - dt.timedelta(days=4):
-        errs.append(f"{w}: as_of {t.isoformat()}가 너무 오래됐다(오늘 아침 조사인가)")
+    # 오래된 as_of는 막지 않는다(2026-11-17 예행연습): 지시가 as_of를 '본 정보 가운데 가장 늦은 것의 시각'으로 정하므로
+    # 새 소식이 없는 대상은 며칠 전 값이 맞다(실제 Haiku 13개 중 6개가 그랬다). 오늘 조사인지는 날짜 폴더가 가른다.
     opened, blocked = data.get("opened"), data.get("blocked", [])
     if not isinstance(opened, list) or not all(isinstance(u, str) and u.startswith("http") for u in opened):
         errs.append(f"{w}: opened는 연 주소(http…) 목록")
@@ -168,9 +187,10 @@ def check_one(data, asset: str, day: dt.date, at: dt.datetime) -> list[str]:
         if "numbers" in f:
             errs += R.number_errors(f["numbers"], f"{w}: found[{i}].numbers")
     missing = data.get("missing", [])
-    if not isinstance(missing, list) or any(m not in KINDS for m in missing):
-        errs.append(f"{w}: missing은 kind 목록")
+    if not isinstance(missing, list) or not all(isinstance(m, str) and m.strip() for m in missing):
+        errs.append(f"{w}: missing은 kind(또는 'kind: 까닭') 글 목록")
         missing = []
+    missing = missing_kinds(missing)
     left = [k for k in REQUIRED[kind_of(asset)] if k not in kinds and k not in missing]
     if left:
         errs.append(f"{w}: {', '.join(left)}를 찾음(found)이나 못 찾음(missing)으로 적지 않았다 — 놓치지 않게")

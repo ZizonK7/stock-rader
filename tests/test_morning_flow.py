@@ -52,6 +52,21 @@ class Scan(unittest.TestCase):
         self.assertEqual(SC.check_one({"asset": "005930", "by": "main", "failed": "두 번 시간 초과"}, "005930", DAY, AT), [])
         self.assertTrue(SC.check_one({"asset": "005930", "by": "", "failed": "x"}, "005930", DAY, AT))
 
+    def test_rehearsal_shapes_pass(self):
+        """2026-11-17 예행연습에서 실제 Haiku 조사 13개가 모두 걸린 꼴: missing에 까닭을 붙임, 새 소식이 없어 as_of가 며칠 전."""
+        d = good("005930")
+        d["missing"] = ["뉴스: 지난 24시간 기사 못 찾음 (네이버 뉴스 403)", "실적 (직전 10거래일 발표 없음)",
+                        "수급(전일 외국인·기관) — 네이버 막힘", "DART 공시 목록: 폼만 열림"]   # 마지막은 kind로 시작하지 않는 메모
+        d["as_of"] = "2026-10-28T13:05+09:00"
+        self.assertEqual(SC.check_one(d, "005930", DAY, AT), [])
+        self.assertEqual(SC.missing_kinds(["뉴스", "뉴스속보 없음", "기타: x", "공시"]), {"뉴스", "기타", "공시"})
+        d["missing"] = ["실적 (없음)", "수급: 막힘"]                                 # 공시·뉴스 가운데 하나 빠짐(found는 공시)
+        self.assertTrue(any("놓치지 않게" in e for e in SC.check_one(d, "005930", DAY, AT)))
+        d["missing"] = ["뉴스속보 못 찾음", "실적: x", "수급: y"]                     # '뉴스속보'는 뉴스로 세지 않는다
+        self.assertTrue(any("뉴스" in e and "놓치지 않게" in e for e in SC.check_one(d, "005930", DAY, AT)))
+        d["missing"] = [3, "실적"]
+        self.assertTrue(any("missing" in e for e in SC.check_one(d, "005930", DAY, AT)))
+
     def test_folder_briefs_table_and_lines(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = SC.write_briefs(DAY, Path(tmp), [("005930", "삼성전자", True, False), ("069500", "KODEX 200", False, False)])
