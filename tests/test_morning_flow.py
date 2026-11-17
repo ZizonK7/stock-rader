@@ -240,6 +240,21 @@ class FlowDay(unittest.TestCase):
             acc = [x for x in R.read(root.records, "account") if x["run"] == d.isoformat()]
             self.assertEqual(sorted(x["account"] for x in acc),
                              sorted([*C.LIVE_ACCOUNTS, *(C.period_id(a, 2) for a in C.LIVE_ACCOUNTS)]))
+            # 1기를 닫는 값 = 그 시각 1기 계좌를 평소 계좌 줄과 같은 방법으로 평가한 값(같은 가격에서):
+            # ① 현금 + 보유 × 그 줄의 평가 가격 ② 그 가격은 같은 시각 2기 줄이 쓴 가격과 같다(같은 value_prices)
+            # ③ 닫힌 1기 기록을 다시 돌린 증권사가 같은 시각·가격으로 만든 계좌 줄 값과 같다
+            by = {x["account"]: x for x in acc}
+            quotes = D.quotes_for(root)
+            recs = {k: R.read(root.records, k) for k in ("run", *D.B.KINDS)}
+            for role in C.LIVE_ACCOUNTS:
+                line, new = by[role], by[C.period_id(role, 2)]
+                worth = line["cash"] + sum(n * line["prices"][a][1] / C.ASSETS[a].unit for a, n in line["positions"].items() if n)
+                self.assertAlmostEqual(line["value"], worth, delta=1.0, msg=role)
+                for a in set(line["prices"]) & set(new["prices"]):
+                    self.assertEqual(line["prices"][a], new["prices"][a], msg=(role, a))
+                vp = {a: (v, dt.datetime.fromisoformat(line["priced_at"][a])) for a, (_, v) in line["prices"].items()}
+                again, _ = D.B.Broker(role, quotes, recs).account_line(dt.datetime.fromisoformat(line["at"]), d, vp)
+                self.assertAlmostEqual(again["value"], line["value"], delta=1.0, msg=role)
             self.assertEqual(R.check_folder(root.records), [])
 
             # 일지는 9시 뒤 피드백 정리가 끝난 뒤에만
