@@ -57,6 +57,7 @@ from . import pieces as P
 from . import prices as PR
 from . import quotes as Q
 from . import rebalance as RB
+from . import asks as A
 from . import records as R
 from . import research as RS
 from . import rules as RU
@@ -97,6 +98,10 @@ class Root:
     @property
     def versions(self) -> Path:
         return self.path / "versions"
+
+    @property
+    def asks(self) -> Path:
+        return self.path / "asks.toml"
 
     @property
     def stocks(self) -> Path:
@@ -228,6 +233,8 @@ class Day:
     calc_reasons: dict[str, str] = field(default_factory=dict)
     equal_first: dict[str, float] = field(default_factory=dict)
     carry: object = None                                 # 갈아타는 날 옛 주문을 그대로 넣은 계산(whatif.Carry)
+    root_asks: Path | None = None                        # 대화 세션 몫 목록(asks.toml, 2026-11-17)과 그 기록 폴더
+    root_records: Path | None = None
 
 
 def old_lines(recs: dict, kind: str) -> list[dict]:
@@ -365,6 +372,7 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     D.mode, D.brokers, D.quotes, D.problems = mode, brokers, quotes, problems
     D.switched, D.switch_note, D.sync_lines, D.sync_warnings = switched, switch_note, sync_lines, sync_warnings
     D.carry = carried
+    D.root_asks, D.root_records = root.asks, root.records
     D.pool, D.stock_skipped = pool, stock_skipped
     D.held = [a for a in held if a not in stock_skipped]
     D.stock_ok = [a for a in sorted(seen_stocks) if a not in stock_skipped and (a in buyable or a in held)]
@@ -401,6 +409,9 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
         D.readings.append({"id": f"reading:{run}:{a}", "run": run, "asset": a, "known_through": h.last.date.isoformat(),
                            "values": values, "numbers": numbers})
         ana = K.analog(h.closes, C.ASSETS[a].horizons, values, opens=[r.open for r in h.rows])
+        values, numbers = with_comove(a, values, numbers, hists)
+        D.calc_values[a] = values
+        D.readings[-1].update(values=values, numbers=numbers)
         for i, hz in enumerate(C.ASSETS[a].horizons):
             base = {"run": run, "asset": a, "horizon": hz, **D.base[a]}
             f = K.record_fields(K.predict(a, hz, values, pieces, numbers))
@@ -418,7 +429,7 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     # 계산기는 세 대상에만 맞춘 숫자라 종목에는 '모름'이다(기록은 남겨 손 예측과 나란히 보이게; 이전 버전은 같은 '모름'이라 뺀다).
     for a in D.stock_ok:
         h = hists[a]
-        values, numbers = P.read(h.closes)
+        values, numbers = with_comove(a, *P.read(h.closes), hists)
         D.calc_values[a] = values
         D.base[a] = fill_base(a, at)
         D.prices.setdefault(a, h.last.close)
@@ -429,6 +440,8 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
         D.readings.append({"id": f"reading:{run}:{a}", "run": run, "asset": a, "known_through": h.last.date.isoformat(),
                            "values": values, "numbers": numbers})
         ana = K.analog(h.closes, C.ASSETS[a].horizons, values, opens=[r.open for r in h.rows])
+        values, numbers = with_comove(a, values, numbers, hists)
+        D.readings[-1].update(values=values, numbers=numbers)
         for hz in C.ASSETS[a].horizons:
             base = {"run": run, "asset": a, "horizon": hz, **D.base[a]}
             f = K.record_fields(K.predict(a, hz, values, pieces, numbers))
@@ -467,6 +480,19 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     D.stale = RS.stale_places(root.records, day, D.places)
     D.questions = RS.questions(day, raw, D.places, RS.place_cards(root.records, D.places))
     return D
+
+
+def with_comove(a: str, values: dict, numbers: dict, hists: dict) -> tuple[dict, dict]:
+    """시세 대 보기 값에 '자기 시장 묶음과 같이 움직임'(pieces.comove, 2026-11-17)을 더한다. 참고 칸(analog)은 이것을 더하기 전의
+    일곱 값으로 부른다(일곱이 같은 날을 찾는다). 판단 때 끝난 봉만 담은 hists로 잰다 — 판단 뒤 시세는 쓰지 않는다."""
+    b = C.market_bundle(a)
+    if b not in hists:
+        return {**values, P.COMOVE_STATE: "모름"}, numbers
+    v, corr = P.comove(hists[a].rows, hists[b].rows)
+    nums = dict(numbers)
+    if corr is not None:
+        nums[f"comove{P.COMOVE_BARS}"] = corr
+    return {**values, P.COMOVE_STATE: v}, nums
 
 
 def equal_targets(orders: list[dict], eb: B.Broker | None, prices: dict[str, float], predictable) -> dict[str, float]:
@@ -612,6 +638,11 @@ def briefing(D: Day, fetched: dict, tick: dict, late: str = "") -> str:
         L_.append(f"**오늘은 옛 장부로 돈다(가상 증권사로 갈아타지 못함): {D.switch_note} — 다음 실행에서 다시 시도한다.**")
     if late:
         L_.append(f"**경고: {late}**")
+    asks = A.open_items(D.root_asks, D.root_records) if D.root_asks else []
+    if asks:   # 대화 세션 몫(2026-11-17): 맨 위에 — 묻히지 않게. 오늘 판단에서 이 일이 걸리면 그 사정대로 하고 notes에 적는다
+        L_ += ["", f"## 열린 대화 세션 몫 {len(asks)}건 (코드·문법이 필요해 매일 실행이 못 하는 것 — 닫는 것은 대화 세션)"]
+        L_ += A.lines(asks)
+        L_.append("새로 생기면 입력 `asks`에 {what, close}로 연다(notes에만 적지 않는다) — 지시문 '대화 세션 몫'.")
     if D.already:
         L_.append("**오늘 기록이 이미 있다 — record를 다시 돌리지 않는다.**")
     first = not D.recs["account"]
@@ -778,6 +809,8 @@ def template(D: Day) -> dict:
         "reviews": [{"prediction": pid, "why": "", "wrong": [], "reason": "", "_info": info}
                     for pid, info in D.due_reviews.items()],
         "corrections": [],
+        "_asks": "대화 세션 몫(코드·문법이 필요해 오늘 못 하는 것)은 asks에 {what, close}로 연다 — notes에만 적지 않는다(지시문 '대화 세션 몫')",
+        "asks": [],
         "reading_checks": [{"target": t, "state": st, "now": "", "hit": None, "late": [], "reason": "",
                             "_then": c["then"], "_why_then": c["why_then"]} for (t, st), c in D.due_checks.items()],
     }
@@ -812,6 +845,7 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
            "record_ids": {x["id"] for items in D.recs.values() for x in items}}
     ctx["at"] = at.isoformat(timespec="seconds")  # 조사 as_of가 판단 시각보다 늦으면 거절(2026-11-04, E4)
     errs, warns = H.validate(inp, ctx)
+    errs += A.input_errors(inp)
     if errs:
         print(f"입력 오류 {len(errs)}건 — 아무것도 쓰지 않았다:")
         for e in errs:
@@ -889,7 +923,8 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
                   "agents": int(inp.get("agents", 0) or 0), "reviews": len(hand["review"]),
                   "reading_checks": len(hand["reading_check"]), "knowledge": D.digest,
                   "known_through": {a: h.last.date.isoformat() if h.last else None for a, h in D.hists.items()}},
-        "notes": [str(n) for n in inp.get("notes", [])] + [f"경고: {w}" for w in warns]})
+        "notes": [str(n) for n in inp.get("notes", [])] + [f"경고: {w}" for w in warns],
+        **({"asks": A.run_field(run, inp)} if inp.get("asks") else {})})
 
     # 모두 검사한 뒤에 쓴다 (하나라도 틀리면 아무것도 안 쓴다)
     problems = []
@@ -1090,7 +1125,7 @@ def main(argv: list[str]) -> int:
 def copy_for_simulation(dst: Path, prices_from: Path | None = None) -> Root:
     """흉내 내기용 임시 저장소: 논리집·볼 곳·종목 목록·버전(그리고 시세)을 복사한다. 기록은 빈 채로."""
     dst.mkdir(parents=True, exist_ok=True)
-    for name in ("knowledge.toml", "places.toml", "stocks.toml"):
+    for name in ("knowledge.toml", "places.toml", "stocks.toml", "asks.toml"):
         if (C.ROOT / name).exists():
             shutil.copyfile(C.ROOT / name, dst / name)
     shutil.copytree(C.VERSIONS, dst / "versions", dirs_exist_ok=True)

@@ -110,6 +110,17 @@ def traits(asset: str) -> tuple[str, ...]:
     return TRAITS.get(asset) or (STOCK_TRAITS if is_stock(asset) else ())
 
 
+# 자기 시장 묶음 (2026-11-17): 대상의 값이 따라 움직이는 시장 전체 묶음. 종목(한국 상장 한 회사)은 한국 묶음, 묶음·코인은 자기 자신.
+# 쓰는 곳 둘 — ① 종목 채점의 '묶음 대비' 칸(scoring.relative: 같은 창의 묶음 수익률을 뺀 값) ② 시세 상태 '자기 시장 묶음과 같이
+# 움직임'(pieces.comove). 코스닥 종목도 한국 묶음(코스피 200을 따르는 묶음)에 견준다 — 코스닥 묶음을 따로 받지 않아서다(한계).
+HOME_BUNDLE = "069500"
+
+
+def market_bundle(asset: str) -> str:
+    """대상의 자기 시장 묶음 id. 종목이면 한국 묶음, 아니면 자기 자신(묶음은 시장 그 자체, 코인은 아래 묶음이 없다)."""
+    return HOME_BUNDLE if is_stock(asset) else asset
+
+
 def in_scope(asset: str, scope: str | list | tuple | None) -> bool:
     """조각 주장의 범위(성질 이름 하나나 목록, 'all')에 대상이 드는가."""
     if not scope or scope == "all":

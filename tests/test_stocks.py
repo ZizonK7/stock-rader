@@ -91,11 +91,11 @@ def buy_stock(inp: dict, code: str, target: float = 0.1, p_week: float = 0.6, de
         add_controls(inp, [c for c in CONTROLS if c != code] + ([S1] if code != S1 else []))
     for hz in C.ASSETS[code].horizons:
         inp["hand"] = [h for h in inp["hand"] if not (h["asset"] == code and h["horizon"] == hz)]
-        used = [f"Q_earnings_beat={beat}"] if hz != 1 else ["Q_rate_up_shift=" + inp["readings"]["S_q_rate_shift_up"]["value"]]
+        used = [f"Q_earnings_beat_rel={beat}"] if hz != 1 else ["Q_rate_up_shift_linked=" + inp["readings"]["S_q_rate_shift_up"]["value"]]
         inp["hand"].append({"asset": code, "horizon": hz, "p_up": p_week if hz == 5 else 0.55, "size_lo": 2.0,
                             "size_hi": 4.0, "used": used, "decisive": used[:1] if decisive else [],
                             "reason": "가짜 종목 예측", "confidence": "보통"})
-    inp["weights"][code] = {"target": target, "reason": "가짜: 한국 묶음 몫에서 덜어 냄 (Q_earnings_beat)"}
+    inp["weights"][code] = {"target": target, "reason": "가짜: 한국 묶음 몫에서 덜어 냄 (Q_earnings_beat_rel)"}
     inp["weights"]["069500"] = {"target": 0.3 - target, "reason": "가짜: 종목 몫만큼 덜어 냄"}
     return inp
 
@@ -336,11 +336,15 @@ class DailyStocks(unittest.TestCase):
                 self.assertEqual(run(root, d, lambda x, i=i: buy_stock(x, S1, beat="예" if i % 2 else "아니오"))[0], 0, d)
             with mock.patch.object(C, "RECORDS", root.records), mock.patch.object(C, "RESEARCH_SINCE", "2025-09-01"), \
                     mock.patch.object(CK, "_node", lambda nid: {**CK._raw_node(nid), "seen_until": "2025-09-01"}):
-                verdict, detail = CK.research_direction("Q_earnings_beat")
+                verdict, detail = CK.research_direction("Q_earnings_beat_rel")
             # 종목은 한 칸으로 묶어 '예' 종목과 '아니오' 종목(비교군)을 견준다(2026-11-03)
             self.assertIn(f"up_odds {CK.POOLED}:5", detail)
             self.assertNotIn(f"up_odds {S1}:5", detail)
             self.assertNotIn("069500", detail)  # scope single: 묶음에는 걸리지 않는다
+            # 2026-11-17: 종목 채점 줄에 묶음 대비 칸이 붙고, vs = "market" 주장은 그 값으로 센다(빠진 값 없음)
+            sc = [x for x in R.read(root.records, "score") if x["asset"] == S1]
+            self.assertTrue(sc and all(x["bench"] == "069500" and "rel_ret" in x for x in sc))
+            self.assertNotIn("묶음 대비 값 없음", detail)
 
     def test_stock_rules_are_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -352,7 +356,7 @@ class DailyStocks(unittest.TestCase):
                 "결론 조각 없음": lambda i: buy_stock(i, S1, decisive=False),
                 "종목 수": lambda i: buy_stock(buy_stock(buy_stock(buy_stock(i, S1, 0.05), S2, 0.05), S3, 0.05), S4, 0.05),
                 "목록에 없음": lambda i: buy_stock(i, "999990"),
-                "종목 조각을 묶음에": lambda i: (i["hand"][0]["used"].append("Q_earnings_beat=예"), i)[1],
+                "종목 조각을 묶음에": lambda i: (i["hand"][0]["used"].append("Q_earnings_beat_rel=예"), i)[1],
                 "종목 대 보기 빠짐": lambda i: (buy_stock(i, S1), i.pop("stock_readings"), i)[2],
                 "비교군 모자람": lambda i: add_controls(buy_stock(i, S1, controls=False), [S2, S3]),
             }

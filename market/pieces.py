@@ -77,3 +77,40 @@ def read_series(closes: list[float]) -> list[dict[str, str] | None]:
     for t in range(len(closes)):
         out.append(read(closes[t + 1 - NEED: t + 1])[0] if t + 1 >= NEED else None)
     return out
+
+
+# ---------- 두 시세로 계산하는 상태 (2026-11-17) ----------
+# 위 일곱은 대상 하나의 종가만 본다. 아래는 대상과 그 '자기 시장 묶음'(config.market_bundle)의 일봉을 같이 본다.
+# 계산 조각의 조건(STATES)에는 넣지 않는다: 참고 칸(calc.analog)이 '시세 상태 일곱이 같은 날'을 찾으므로 일곱 그대로 둔다.
+# 매일 실행(daily.compute)이 이 값을 그날 시세 대 보기 값(calc_values·reading·계산기 예측 줄 readings)에 더해 기록하고,
+# 조사 조각 주장의 더한 조건(also)으로 쓰인다(checks.research_direction이 계산기 예측 줄 readings에서 읽는다).
+COMOVE_STATE = "S_comove_market"
+# 60봉: 평소 움직임(60봉 하루 변동성)과 같은 창 — 약 석 달, 한 회사의 분기 하나. 상관계수 표본 60개면 0 근처 값의 표준오차가
+# 약 1/√59 ≈ 0.13이다.
+COMOVE_BARS = 60
+# 문턱 0.3: 표본 60개에서 상관이 0인데 우연히 나올 값의 약 두 표준오차(2 × 0.13 ≈ 0.26)를 올린 값 — '같이 움직인다'고 0과 가를 수
+# 있는 가장 낮은 선으로 미리 정했다. 2026-11-17 하나뿐인 나눠 본 표(종목 다섯의 11-10까지 60봉 상관 0.40·0.41·0.45 vs −0.05·0.01)를
+# 보고 정했으니, 그 다섯을 가르는 선이라는 것은 우연이 아니다 — 맞춘 숫자가 아니라 손으로 정한 값이고, 그 뒤의 기록으로만 시험한다.
+COMOVE_MIN = 0.3
+DERIVED = {COMOVE_STATE: f"최근 {COMOVE_BARS}봉 하루 수익률이 자기 시장 묶음의 하루 수익률과 같이 움직인 정도(상관계수)가 "
+                         f"{COMOVE_MIN} 이상이다(묶음 자신은 늘 예)"}
+
+
+def comove(rows, bundle_rows, n: int = COMOVE_BARS) -> tuple[str, float | None]:
+    """(값, 상관계수). rows·bundle_rows = 판단 때 끝난 일봉만(prices.view). 두 시세에 다 있는 날짜(종가 > 0)의 마지막 n + 1개로
+    하루 로그 수익률 n개씩을 만들어 상관계수를 잰다. 날짜가 모자라거나 한쪽이 전혀 안 움직였으면 '모름'.
+    대상이 곧 묶음이면(같은 줄) 상관 1 — 예."""
+    a = {r.date: r.close for r in rows if r.close > 0}
+    b = {r.date: r.close for r in bundle_rows if r.close > 0}
+    days = sorted(set(a) & set(b))[-(n + 1):]
+    if len(days) < n + 1:
+        return "모름", None
+    ra = [math.log(a[y] / a[x]) for x, y in zip(days, days[1:])]
+    rb = [math.log(b[y] / b[x]) for x, y in zip(days, days[1:])]
+    sa, sb = pstdev(ra), pstdev(rb)
+    if sa == 0 or sb == 0:
+        return "모름", None
+    ma, mb = fmean(ra), fmean(rb)
+    corr = fmean([(x - ma) * (y - mb) for x, y in zip(ra, rb)]) / (sa * sb)
+    corr = max(-1.0, min(1.0, corr))
+    return ("예" if corr >= COMOVE_MIN else "아니오"), round(corr, 4)

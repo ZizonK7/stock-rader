@@ -53,8 +53,12 @@ FIELDS: dict[str, dict[str, tuple]] = {
 }
 # 있을 때만 검사하는 칸 (1단계 재생 기록에는 없다)
 OPTIONAL: dict[str, dict[str, tuple]] = {
+    # 2026-11-17: 매일 실행이 연 대화 세션 몫(market/asks.py) — [{id, what, close}]
+    "run": {"asks": (list,)},
     # 2026-11-05~(결정 E2): 체결가 기준 예측 줄의 채점은 체결 봉 날짜·시가(fill_date·fill_price)를 적는다
-    "score": {"counted": OPT_BOOL, "fill_date": (str,), "fill_price": NUM},
+    # 묶음 대비(2026-11-17, scoring.relative): 종목 채점에만 — 같은 창의 자기 시장 묶음 수익률(bench_ret)과 뺀 값(rel_ret)·방향(rel_up)
+    "score": {"counted": OPT_BOOL, "fill_date": (str,), "fill_price": NUM, "bench": (str,), "bench_ret": NUM,
+              "rel_ret": NUM, "rel_up": (bool,)},
     # 2026-11-05~(결정 E1): fill_rule = "open"(판단 뒤 첫 시가에 체결). 없으면 옛 규칙(ETF·종목 종가, 코인 시가)
     # 가상 증권사(2026-11-10, broker.py가 만든 줄 — pocket이 있으면 증권사 주문): pocket(주머니), order_kind(open 장 시작 /
     # close 장 마감 / now 지금 — 기록 종류 칸 kind와 겹치지 않게 이름을 바꿈, fill_rule에도 같은 값), limit(한도 가격),

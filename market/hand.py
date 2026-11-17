@@ -42,6 +42,7 @@ import tomllib
 from pathlib import Path
 
 from . import config as C
+from . import pieces as P
 from . import records as R
 from . import research as RS
 
@@ -117,6 +118,9 @@ def _piece_index(raw: dict) -> dict[str, dict]:
                         "per_asset": bool(conds) and conds[0] in per_asset,
                         "scope": [c.get("scope", "all") for c in h.get("claims", [])],
                         "start": any(c.get("op") == "start" for c in h.get("claims", [])),
+                        # 주장의 더한 조건 중 코드가 시세로 정하는 상태(2026-11-17, pieces.DERIVED) — 대상마다 값이 다르다
+                        "derived": {k: v for c in h.get("claims", []) for k, v in (c.get("also") or {}).items()
+                                    if k in P.DERIVED},
                         "seed": bool(h.get("seed"))}
     return out
 
@@ -362,6 +366,11 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
                 errs.append(f"{w}: '{pid}={val}'인데 오늘 대 본 값은 '{today}' — 쓴 조각의 값은 그날 대 본 값과 같아야 한다")
             if info["research"] and not any(C.in_scope(a, s) for s in info["scope"]):
                 warns.append(f"{w}: 조사 조각 '{pid}'의 주장 범위에 {a}가 들지 않음")
+            for k, need in info.get("derived", {}).items():
+                got = ctx["calc_values"].get(a, {}).get(k)
+                if got != need:
+                    warns.append(f"{w}: '{pid}'의 더한 조건 {k}={need}인데 {a}는 오늘 '{got}'(코드가 시세로 정함) — 이 대상에서는 "
+                                 f"조각이 꺼져 있다. 그 몫으로 기울이지 않는다(지시문 '쪼개기')")
         for d in h.get("decisive", []):
             if str(d).partition("=")[0] not in used:
                 errs.append(f"{w}: decisive '{d}'는 used에 없음 (빼면 결론이 바뀌는 조각만, 쓴 조각 안에서)")

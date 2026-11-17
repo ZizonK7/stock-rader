@@ -154,7 +154,8 @@ class NumericAudit(unittest.TestCase):
         self.assertEqual(SCHEMA.validate(kn), [])
         errors, _ = CH.audit(kn, self.want())
         self.assertEqual(errors, [])
-        self.assertEqual(AUDIT.unsplit_revisions(kn), [])  # Q_overnight_lead → v2는 조건(숫자 상태)을 바꿨다
+        # Q_overnight_lead → v2는 조건(숫자 상태)을 바꿨다. 받아들이는 것은 잣대를 바꾼 개정뿐(2026-11-17 Q_earnings_beat → _rel)
+        self.assertEqual(AUDIT.unsplit_revisions(kn), CH.measure_revisions(kn))
         for nid in ("Q_overnight_lead_v2", "Q_surprise_follow", "Q_foreign_flow"):
             n = kn.nodes[nid]
             self.assertTrue(n.data["seed"] and n.data["strength"] == "낮음", nid)

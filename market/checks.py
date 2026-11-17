@@ -23,8 +23,10 @@ import re
 import tomllib
 from pathlib import Path
 
+from . import asks as A
 from . import config as C
 from . import fit as F
+from . import pieces as P
 from . import records as R
 from . import research as RS
 from . import scoring as S
@@ -260,6 +262,19 @@ def account_vs_equal(node_id: str | None = None):
 
 
 # ---------- 조사 조각과 손 예측 (진짜 계좌만) ----------
+_BENCH: dict = {}
+
+
+def _bench_hists(asset: str) -> dict:
+    """묶음 대비 값을 다시 잴 시세(채점 줄에 칸이 없던 2026-11-17 전 줄용): 대상의 자기 시장 묶음 일봉 전체(끝난 봉)."""
+    from . import prices as PR
+    b = C.market_bundle(asset)
+    key = (str(C.PRICES), b)   # 시험이 시세 폴더를 바꿔 끼우면 다시 읽는다
+    if key not in _BENCH:
+        _BENCH[key] = PR.History(b, PR.load(b, C.PRICES))
+    return {b: _BENCH[key]}
+
+
 POOLED = "종목 묶어 봄"  # 종목마다 대 보는 조각의 칸 이름 (대상 칸 대신)
 
 
@@ -291,7 +306,10 @@ def research_direction(node_id: str) -> tuple[str, str]:
             continue
         # 종목마다 대 본 값(by_asset)은 그 종목에만 (2026-10-29). 종목의 결과는 그날 종목 계산기('모름') 줄의 채점에서 온다
         by = (h.get("by_asset") or {}).get(p["asset"], {})
-        vals = {**h["values"], **{k: v["value"] if isinstance(v, dict) else v for k, v in by.items()}}
+        # 시세 상태(계산기 예측 줄의 readings — 그 대상의 그날 값, 예: 2026-11-17 '자기 시장 묶음과 같이 움직임')도 조건으로 본다.
+        # 조사로 대 본 값이 같은 id면 그쪽이 이긴다
+        vals = {**(p.get("readings") or {}), **h["values"],
+                **{k: v["value"] if isinstance(v, dict) else v for k, v in by.items()}}
         nums = (by.get(state) or {}).get("numbers") if isinstance(by.get(state), dict) else None
         nums = nums if isinstance(nums, dict) else (h.get("numbers") or {}).get(state, {})
         hz = C.ASSETS[p["asset"]].horizons.index(p["horizon"])
@@ -307,6 +325,12 @@ def research_direction(node_id: str) -> tuple[str, str]:
                     if v not in ("예", "아니오") and v not in known.get(k, ()):
                         skipped[f"{k}={v}"] = skipped.get(f"{k}={v}", 0) + 1
             ret = s["ret"]
+            if c.get("vs") == "market":  # 묶음 대비에 거는 주장(2026-11-17): 같은 창의 자기 시장 묶음 수익률을 뺀 값으로 센다
+                rel = S.relative_of(p, s, _bench_hists(p["asset"])).get("rel_ret")
+                if rel is None:
+                    skipped["묶음 대비 값 없음"] = skipped.get("묶음 대비 값 없음", 0) + 1
+                    continue
+                ret = rel
             if c.get("dir") == "sign":  # 숫자의 부호 쪽으로 갔나: 수익률 × 부호
                 x = RS.number_of(spec, nums) if spec else None
                 sign = (x > 0) - (x < 0) if x is not None else 0
@@ -483,6 +507,22 @@ def _names_in(text: str) -> list[str]:
     return [w for w in words if re.search(re.escape(w), text, re.IGNORECASE)]
 
 
+def measure_revisions(kn) -> list[str]:
+    """잣대를 바꾼 개정(2026-11-17): 새 버전의 주장이 옛 버전에 없던 vs(묶음 대비)로 센다 — 조건을 더한 쪼개기가 아니라 '이유 틀림
+    → 새 버전'이라, PROVISO 코어의 '쪼개지 않은 개정' 경고가 맞게 뜬다. 시험이 이 경고만은 받아들이게(다른 것은 막게) 같은 모양의
+    글로 낸다. 예: Q_earnings_beat → Q_earnings_beat_rel(실적 뒤 표류의 근거는 시장 대비 초과 수익)."""
+    out = []
+    for old in kn.nodes.values():
+        for new_id in old.refs("replaced_by"):
+            new = kn.nodes.get(new_id)
+            if new is None or set(new.refs("conditions")) - set(old.refs("conditions")):
+                continue
+            had = {c.get("vs") for c in old.data.get("claims", [])}
+            if any(c.get("vs") and c.get("vs") not in had for c in new.data.get("claims", [])):
+                out.append(f"쪼개지 않은 개정: {old.id} → {new_id} — 더한 조건 없음")
+    return out
+
+
 def is_research(node) -> bool:
     return node.data.get("read_by") == "조사"
 
@@ -560,6 +600,7 @@ def audit(kn, want: dict[str, list[dict]] | None = None) -> tuple[list[str], lis
     errors += ST.check(ST.load())
     errors += V.check()
     errors += RS.check_places(RS.load_places(), {s.id for s in kn.of("state")})
+    errors += A.check(A.load())   # 대화 세션 몫 목록 모양(2026-11-17)
     if want is None:
         try:
             want = F.expected()
@@ -625,6 +666,17 @@ def _research_errors(kn, research) -> list[str]:
                 errs.append(f"[조사 조각] {node.id}: scope의 {bad}는 config.TRAIT_LABEL에 없음")
             if any(x not in SPANS for x in c.get("span", [])):
                 errs.append(f"[조사 조각] {node.id}: span은 {list(SPANS)} 중에서")
+            # 묶음 대비 주장(2026-11-17): 자기 시장 묶음이 대상과 다른 것(한 회사 주식)에만 뜻이 있다 — 묶음 자신은 늘 0
+            if "vs" in c and (c["vs"] != "market" or names != ["single"]):
+                errs.append(f"[조사 조각] {node.id}: vs는 \"market\"(자기 시장 묶음 대비)만, 그리고 scope = \"single\"일 때만")
+            # 더한 조건(also)은 조사 상태이거나 코드가 시세로 매일 계산하는 상태(pieces.DERIVED)여야 성적표가 값을 본다
+            for k in (c.get("also") or {}):
+                o = kn.nodes.get(k)
+                if o is None or o.kind != "state":
+                    errs.append(f"[조사 조각] {node.id}: also의 '{k}'가 상태 노드가 아님")
+                elif o.data.get("read_by") != "조사" and k not in P.DERIVED:
+                    errs.append(f"[조사 조각] {node.id}: also의 '{k}'는 조사 상태도, 매일 계산하는 시세 상태(pieces.DERIVED)도 아님"
+                                f" — 성적표가 그 값을 못 본다")
     return errs
 
 

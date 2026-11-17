@@ -11,6 +11,7 @@ from market import checks as CH
 from market import config as C
 from market import fit as F
 from market import logic
+from market import pieces as P
 from market import records as R
 from market import research as RS
 from market import scoring as S
@@ -90,12 +91,14 @@ class ResearchRecords(unittest.TestCase):
         states = {s["id"] for s in RS.research_states(raw)}
         for h in raw["hypothesis"]:
             if h.get("read_by") == "조사" and h.get("status") != "retired":
-                self.assertLessEqual(set(h["conditions"]), states, h["id"])
+                self.assertLessEqual(set(h["conditions"]) - set(P.DERIVED), states, h["id"])
         self.assertIn("S_q_rate_up", states)
         q = next(q for q in RS.questions(dt.date(2026, 11, 4), raw, RS.load_places(), {}) if q["state"] == "S_q_rate_up")
-        self.assertIn("Q_rate_up_shift", q["pieces"])
-        shift = next(h for h in raw["hypothesis"] if h["id"] == "Q_rate_up_shift")
-        self.assertEqual(shift["claims"][0]["also"], {"S_q_rate_up": "예"})
+        self.assertIn("Q_rate_up_shift_linked", q["pieces"])
+        shift = next(h for h in raw["hypothesis"] if h["id"] == "Q_rate_up_shift_linked")
+        # 2026-11-17: 셋째 조건(자기 시장 묶음과 같이 움직임)은 코드가 시세로 정하는 상태라 묻지 않는다
+        self.assertEqual(shift["claims"][0]["also"], {"S_q_rate_up": "예", "S_comove_market": "예"})
+        self.assertNotIn("S_comove_market", states)
 
     def test_uncounted_values_are_shown(self):
         """예/아니오가 아니라 시험에서 빠진 값의 수가 성적표 세부에 보인다(2026-10-31~11-03은 S_q_rate_up을 묻지 않았다)."""
@@ -347,7 +350,11 @@ class Devices(unittest.TestCase):
 
     def test_split_piece_adds_a_condition(self):
         kn = SCHEMA.load(C.KNOWLEDGE)
-        self.assertEqual(AUDIT.unsplit_revisions(kn), [])
+        # 조건을 더하지 않은 개정은 잣대를 바꾼 것(묶음 대비 vs, 2026-11-17)만 — 숫자만 바꾸는 개정은 여전히 없다
+        self.assertEqual(AUDIT.unsplit_revisions(kn), CH.measure_revisions(kn))
+        self.assertEqual(CH.measure_revisions(kn), ["쪼개지 않은 개정: Q_earnings_beat → Q_earnings_beat_rel — 더한 조건 없음"])
+        self.assertEqual(set(kn.nodes["Q_rate_up_shift_linked"].refs("conditions"))
+                         - set(kn.nodes["Q_rate_up_shift"].refs("conditions")), {"S_comove_market"})
         old, new = kn.nodes["C_trend_20"], kn.nodes["C_trend_20_calm"]
         self.assertEqual(old.data["status"], "retired")
         self.assertEqual(set(new.refs("conditions")) - set(old.refs("conditions")), {"S_vol_high"})

@@ -19,6 +19,7 @@ import datetime as dt
 from collections import defaultdict
 from statistics import fmean
 
+from . import config as C
 from . import fit as F
 from .prices import History
 
@@ -55,6 +56,7 @@ def score_due(preds: list[dict], hists: dict[str, History], run: dt.date, done: 
                 continue
             target = h.rows[i + p["horizon"]]
             ret = target.close / p["base_close"] - 1
+        extra.update(relative(p, extra.get("fill_date"), target.date.isoformat(), ret, hists))
         up = ret > 0
         prob = p.get("p_up")
         hit = None if prob is None or prob == 0.5 else ((prob > 0.5) == up)
@@ -68,6 +70,37 @@ def score_due(preds: list[dict], hists: dict[str, History], run: dt.date, done: 
                     "brier": round((prob - up) ** 2, 6) if prob is not None else None, "size_hit": size})
         done.add(p["id"])
     return out
+
+
+def relative(p: dict, fill_date: str | None, target_date: str, ret: float, hists: dict) -> dict:
+    """묶음 대비 칸(2026-11-17): 자기 시장 묶음(config.market_bundle)이 대상과 다른 것(종목)에만, **같은 창**의 묶음 수익률을
+    뺀다. 체결가 기준 줄은 체결 봉 시가 → 목표 봉 종가, 옛 줄은 기준 날짜 종가 → 목표 봉 종가 — 날짜가 같은 묶음 봉으로 잰다.
+    {bench, bench_ret, rel_ret, rel_up}, 묶음에 그 날짜 봉이 없으면(시가 0 포함) {}. 절대 방향 칸(ret·up)은 그대로 두고 더한다.
+    지난 채점 줄(이 칸이 없음)은 고치지 않고, 읽는 쪽이 같은 함수로 다시 잰다(relative_of) — 끝난 봉만 쓰므로 같은 값이 나온다."""
+    b = C.market_bundle(p["asset"])
+    bh = hists.get(b)
+    if b == p["asset"] or bh is None:
+        return {}
+    by_date = {r.date.isoformat(): r for r in bh.rows}
+    t = by_date.get(target_date)
+    if p.get("base_kind") == "fill":
+        f = by_date.get(fill_date or "")
+        start = f.open if f else None
+    else:
+        f = by_date.get(p["base_date"])
+        start = f.close if f else None
+    if t is None or not start or start <= 0:
+        return {}
+    bret = t.close / start - 1
+    rel = ret - bret
+    return {"bench": b, "bench_ret": round(bret, 6), "rel_ret": round(rel, 6), "rel_up": rel > 0}
+
+
+def relative_of(p: dict, s: dict, hists: dict) -> dict:
+    """채점 줄 s의 묶음 대비 칸: 줄에 있으면 그대로, 없으면(2026-11-17 전 줄) 시세로 같은 계산을 한다."""
+    if "rel_ret" in s:
+        return {k: s[k] for k in ("bench", "bench_ret", "rel_ret", "rel_up") if k in s}
+    return relative(p, s.get("fill_date"), s["target_date"], s["ret"], hists)
 
 
 def h_returns(hist: History, h: int, ts, fill: bool = False) -> list[float]:
