@@ -888,3 +888,23 @@ covers = ["S_q_event_soon", "events_n"]
 official = false
 added = 2026-11-16
 note = "2026-11-16 일정·예상치 조사가 새로 찾음. 지표 예상치·이전치가 포리스트팩토리와 같았다. 날짜 칸이 하루 밀려 보이니 시각을 같이 볼 것"
+
+[[place]]
+id = "P_sse_scfi_current"
+name = "상하이해운거래소 컨테이너 운임 지수(SCFI) 현재 값"
+url = "https://en.sse.net.cn/currentIndex?indexName=scfi"
+angle = "간밤 반응"
+covers = ["scfi_pt", "scfi_wow_pct"]
+official = true
+added = 2026-11-18
+note = "2026-11-18 HMM 2차 조사가 새로 찾음. 키 없이 종합 값과 전주 값이 나온다(매주 금요일 발표, 11-13 3,572.33). 드류리 WCI 페이지는 본문에서 값을 못 읽었다(막힘)"
+
+[[place]]
+id = "P_naver_stock_integration_api"
+name = "네이버 증권 모바일 종목 통합 응답 (JSON)"
+url = "https://m.stock.naver.com/api/stock/011200/integration"
+angle = "수급"
+covers = []
+official = false
+added = 2026-11-18
+note = "2026-11-18 2차 조사가 새로 찾음(종목 코드를 바꿔 씀). 전일 종가·외국인 소진율·추정 PER과 투자자별 순매수가 한 번에 나온다. 전일 종가는 시간외를 친 값일 수 있어 수급 표의 종가와 다르다(2026-11-18 아침 조사 다수가 같은 어긋남을 보고) — 종가는 시세 파일을 쓴다"
