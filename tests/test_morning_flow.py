@@ -52,6 +52,24 @@ class Scan(unittest.TestCase):
         self.assertEqual(SC.check_one({"asset": "005930", "by": "main", "failed": "두 번 시간 초과"}, "005930", DAY, AT), [])
         self.assertTrue(SC.check_one({"asset": "005930", "by": "", "failed": "x"}, "005930", DAY, AT))
 
+    def test_rehearsal_p567_brief_and_by(self):
+        """2026-11-17 p567: by는 받지 않아도 되고(실패 표시만 by 필수), 지시 파일은 curl 주소·검색 몫·도구 금지를 담는다."""
+        d = good("005930")
+        d.pop("by")
+        self.assertEqual(SC.check_one(d, "005930", DAY, AT), [])
+        self.assertTrue(SC.check_one({"asset": "005930", "failed": "두 번 시간 초과"}, "005930", DAY, AT))
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = SC.write_briefs(DAY, Path(tmp), [("005930", "삼성전자", False, False), ("KRW-BTC", "비트코인", False, False),
+                                                     ("069500", "KODEX 200", False, False)])
+            for a in ("005930", "KRW-BTC", "069500"):
+                brief = (folder / "_brief" / f"{a}.md").read_text(encoding="utf-8")
+                self.assertIn("curl -s -m 20", brief)
+                self.assertIn(f"많아야 {SC.SEARCH_PER_TARGET}번", brief)
+                self.assertIn("원격 도구는 부르지 않는다", brief)
+                self.assertNotIn("finance.naver.com/item", brief)        # 하위 에이전트가 못 연 주소
+                self.assertNotIn('"by"', brief)
+            self.assertIn("m.stock.naver.com/api/stock/005930/disclosure", (folder / "_brief" / "005930.md").read_text(encoding="utf-8"))
+
     def test_rehearsal_shapes_pass(self):
         """2026-11-17 예행연습에서 실제 Haiku 조사 13개가 모두 걸린 꼴: missing에 까닭을 붙임, 새 소식이 없어 as_of가 며칠 전."""
         d = good("005930")

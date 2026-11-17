@@ -49,6 +49,9 @@ from . import research as RS
 CONF = ("낮음", "보통", "높음")
 INFO = ("조각", "출발점", "기타")   # 손 예측의 결론을 정한 것 (2026-11-04)
 MAX_RATIO = 2.0
+# 계산기 범위 글(_calc)은 %를 소수 둘째 자리로 반올림해 보인다. 그 값을 그대로 옮기면 폭이 2.01배쯤이 되어 거절됐다(2026-11-17
+# 예행연습, 세 줄). 두 끝의 반올림이 만들 수 있는 차이(0.005 + 2 × 0.005 = 0.015%p)까지는 받는다 — 폭을 넓히는 여유가 아니다.
+ROUND_SLACK = 0.015
 
 # 돌아보기의 '다음엔' (2026-11-07 사용자: 피드백은 "이런 문제가 있었다. 그러니 다음에는 이렇게 해 보겠다"의 연속)
 NEXT_SINCE = "2026-11-08"   # 이 판단 날짜부터 돌아보기 reason이 '다음엔:'으로 끝나야 한다
@@ -337,7 +340,7 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
         elif lo is not None:
             if not (isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and 0 < lo < hi):
                 errs.append(f"{w}: 크기 범위는 0 < size_lo < size_hi (%, 움직임 절댓값)")
-            elif hi / lo > MAX_RATIO + 1e-9:
+            elif hi / lo > MAX_RATIO + 1e-9 and hi - MAX_RATIO * lo > ROUND_SLACK:
                 errs.append(f"{w}: 크기 범위 폭 {hi / lo:.2f}배가 상한 {MAX_RATIO:g}배를 넘음 — 넓혀서 맞추지 않는다")
         if not str(h.get("reason", "")).strip():
             errs.append(f"{w}: 이유(reason)가 없음 — 이유 없는 숫자는 안 된다")
@@ -392,7 +395,7 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
             if (a, hz) not in seen:
                 why = "모르면 p_up = null과 이유" if a in ctx["predictable"] else (
                     "든 종목은 매일 예측한다" if a in held else "사려는 종목은 기간 셋을 다 예측한다" if a in targeted
-                    else "오늘 차례 종목(2026-11-17) — 기간 셋을 낸다")
+                    else "오늘 차례 종목 — 기간 셋을 낸다")
                 errs.append(f"hand: {a}:{hz} 예측이 없음 ({why})")
 
     # 목표 비중

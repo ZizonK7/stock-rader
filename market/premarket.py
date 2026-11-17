@@ -133,9 +133,13 @@ def record_lines(path: Path, day: dt.date) -> list[dict]:
 def main(argv: list[str]) -> int:
     from . import stocks as ST
     at = C.now_kst()
-    codes = argv or ["069500", "360750"] + [str(s["code"]) for s in ST.register(C.ROOT / "stocks.toml")]
+    base = C.ROOT   # --root <폴더>: 그 폴더의 종목 목록·out에(흉내 폴더, 2026-11-17 예행연습 — 그 전엔 늘 진짜 저장소 out에 썼다)
+    if "--root" in argv:
+        i = argv.index("--root")
+        base, argv = Path(argv[i + 1]).resolve(), argv[:i] + argv[i + 2:]
+    codes = argv or ["069500", "360750"] + [str(s["code"]) for s in ST.register(base / "stocks.toml")]
     snap = fetch(codes, at)
-    out = C.ROOT / "out" / "daily" / at.date().isoformat() / "premarket.json"
+    out = base / "out" / "daily" / at.date().isoformat() / "premarket.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(snap, ensure_ascii=False, indent=1), encoding="utf-8")
     y, n = filled(snap, at.date())

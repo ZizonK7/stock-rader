@@ -324,6 +324,16 @@ def late_diary(b: Book, day: dt.date, late: dict) -> str:
     return "\n".join(lines)
 
 
+def _root_sentences(folder: Path) -> dict[str, str]:
+    """뿌리 id → 지금 문장. '같음'으로 묶은 lesson 줄에는 문장이 없어 일지 참고 주석이 'L03 같음:  (…)'처럼 비었다
+    (2026-11-17 예행연습). folder = 그 폴더의 records, 씨앗은 그 옆 lessons.toml."""
+    from . import lessons as LS
+    try:
+        return {r["id"]: r.get("sentence", "") for r in LS._all(folder.parent / "lessons.toml", folder).values()}
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
 def period_on(folder: Path, run: str) -> int:
     """그 판단 날의 계좌 기수: 그날 이전(포함)에 start가 있는 가장 큰 기(2026-11-17)."""
     return max((C.period_of(x["account"]) for x in R.read(folder, "broker") if x.get("type") == "start"
@@ -413,7 +423,8 @@ def daily(folder: Path, day: dt.date) -> str:
     live = next((x for x in b.recs["run"] if x["id"] == f"live:{run}"), {})
     story = live.get("story") or {}
     fb = next((x for x in b.recs["run"] if x["id"] == f"feedback:{run}"), None)
-    learned = [f"{ln['root']} {ln.get('type', '')}: {ln.get('sentence') or ln.get('why') or ''}"
+    root_text = _root_sentences(folder)
+    learned = [f"{ln['root']} {ln.get('type', '')}: {ln.get('sentence') or ln.get('why') or root_text.get(ln['root'], '')}"
                + (f" (→ {ln['into']})" if ln.get("into") else "") + (f" — 가르는 조건: {ln['split']}" if ln.get("split") else "")
                + f" (묶은 '다음엔' {len(ln.get('reviews', []))}건)" for ln in b.recs["lesson"] if ln["run"] == run]
     lines += [f"**왜** [[채울 것: 근거 조각 1–3개(짧은 이름과 성적), 조사에서 나온 새 사실과 출처, 확신도]]",

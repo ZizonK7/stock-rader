@@ -33,34 +33,66 @@ REQUIRED = {"stock": ("공시", "뉴스", "실적", "수급"), "etf": ("간밤",
             "sector": ("간밤", "뉴스", "수급", "일정")}   # sector = 목록에 든 국내 상장 업종 ETF(config.LISTED_ETF, 2026-11-17)
 
 FORM = {
-    "asset": "<코드>", "by": "<에이전트: 예 haiku-5.5 high>", "as_of": "<본 정보 가운데 가장 늦은 것의 시각, 예 2026-11-18T07:55+09:00>",
+    "asset": "<코드>", "as_of": "<본 정보 가운데 가장 늦은 것의 시각, 예 2026-11-18T07:55+09:00>",
     "opened": ["<실제로 연 주소>", "…"], "blocked": ["<못 연 호스트와 상태, 예 data.krx.co.kr 403>"],
     "found": [{"kind": "공시|뉴스|실적|수급|일정|간밤|기타", "text": "<한두 문장 요약 — 본문을 옮기지 않는다>",
                "url": "<그 주소>", "when": "<그 정보의 시각·날짜>", "numbers": {"<이름_단위>": 0.0}}],
     "missing": ["<찾아봤지만 못 찾은 kind — 까닭을 붙이려면 'kind: 까닭'처럼 kind 낱말로 시작>"],
 }
 
-SOURCES = {
-    "stock": ["공시: DART 최근 공시 https://dart.fss.or.kr/dsab007/main.do (회사 이름으로), 네이버 공시 "
-              "https://finance.naver.com/item/news_notice.naver?code={code}",
-              "뉴스: https://finance.naver.com/item/news_news.naver?code={code} (지난 24시간), 필요하면 웹 검색 '{name} 공시' '{name} 실적'",
-              "실적: 직전 10 거래일 안에 실적 발표가 있었나 — 있으면 실제 영업이익·매출과 전망 평균(컨센서스)의 차이(%). 없으면 다음 발표 예정일",
-              "수급: 전일 외국인·기관 순매수 https://finance.naver.com/item/frgn.naver?code={code} (주 수 또는 억 원)"],
-    "etf": ["간밤: 간밤 미국 지수 마감(S&P 500·나스닥)과 지금 미국 지수 선물(https://query1.finance.yahoo.com/v8/finance/chart/ES=F), "
-            "원·달러 환율",
-            "뉴스: 이 묶음이 따르는 시장 전체를 움직일 지난 24시간 소식(금리·정책·큰 회사 실적)",
-            "수급: 전일 외국인·기관 순매수(코스피 현물, 가능하면 선물) https://finance.naver.com/sise/sise_trans_style.naver",
-            "일정: 오늘·내일 발표(경제 지표·중앙은행·큰 실적)와 예상치"],
-    "sector": ["간밤: 이 ETF가 담은 업종과 같은 업종의 해외 종목·지수의 간밤 움직임(등락 %), 원·달러 환율",
-               "뉴스: 이 ETF가 담은 업종의 지난 24시간 소식과 큰 구성 종목의 공시(구성 종목은 운용사 상품 페이지나 "
-               "https://finance.naver.com/item/main.naver?code={code} 에서)",
-               "수급: 전일 이 ETF와 큰 구성 종목의 외국인·기관 순매수 https://finance.naver.com/item/frgn.naver?code={code}",
-               "일정: 오늘·내일 그 업종에 걸린 발표(정책·수주·큰 구성 종목 실적)"],
-    "coin": ["간밤: 지난 24시간 가격 흐름(https://api.upbit.com/v1/candles/minutes/60?market=KRW-BTC&count=24), 해외 거래소 값과의 차이",
-             "뉴스: 지난 24시간 코인 시장 소식(규제·해킹·큰 보유자)",
-             "수급: 해외 현물 상장 상품 자금 흐름(전일), 거래소 입출금 — 못 찾으면 못 찾음",
-             "일정: 오늘·내일 미국 지표·규제 일정"],
-}
+# 볼 곳(2026-11-17 예행연습 뒤 바꿈): 하위 에이전트의 WebFetch는 finance.naver.com을 못 열었다(63개 중 62개) — 아래 주소는
+# 같은 날 이 환경에서 셸 curl로 열리는 것을 확인했다(200, 내용 있음). 웹 검색은 한 실행이 함께 쓰는 한도가 있어(실측 201번에서 막힘)
+# 대상 조사는 정해진 주소를 받는 것으로 채우고 검색은 SEARCH_PER_TARGET번까지만 — 08:40 다시 보기 몫을 남긴다.
+CURL = "curl -s -m 20 -A 'Mozilla/5.0' '{url}'"
+RSS_PICK = "| grep -o '<title>[^<]*</title>\\|<pubDate>[^<]*</pubDate>' | head -40"
+NAVER = "https://m.stock.naver.com/api"
+YAHOO = "https://query2.finance.yahoo.com/v8/finance/chart/{sym}?range=5d&interval=1d"
+GNEWS = "https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
+CALENDAR = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+SEARCH_PER_TARGET = 1
+
+
+def _gnews(words: str) -> str:
+    from urllib.parse import quote
+    return GNEWS.format(q=quote(f"{words} when:2d"))
+
+
+def sources(kind: str, code: str, name: str) -> list[str]:
+    """kind마다 '종류: 받는 명령 — 무엇이 나오나' 줄. 주소는 대상 코드를 채운 완성된 꼴(에이전트가 고치지 않고 그대로 받는다)."""
+    c = lambda url: "`" + CURL.format(url=url) + "`"
+    cr = lambda url: "`" + CURL.format(url=url) + " " + RSS_PICK + "`"   # RSS는 제목·시각만 골라 받는다
+    cal = f"일정: {c(CALENDAR)} — 이번 주 지표·중앙은행 일정과 예상치(forecast)·이전치(previous), 시각은 미국 동부라 KST로 바꿔 적는다"
+    night = (f"간밤: {c(YAHOO.format(sym='%5EGSPC'))}·{c(YAHOO.format(sym='%5EIXIC'))}·{c(YAHOO.format(sym='ES=F'))}·"
+             f"{c(YAHOO.format(sym='KRW=X'))} — 미국 대형주·기술주 지수, 미국 지수 선물, 원·달러(meta의 regularMarketPrice·"
+             f"chartPreviousClose와 마지막 봉으로 등락 %)")
+    if kind == "stock":
+        return [f"공시: {c(f'{NAVER}/stock/{code}/disclosure?pageSize=10&page=1')} — 공시 제목·datetime(최근 순)",
+                f"뉴스: {c(f'{NAVER}/news/stock/{code}?pageSize=10&page=1')} — 기사 제목·요약·datetime(YYYYMMDDHHMM). 더 보려면 "
+                f"Google 뉴스 RSS {cr(_gnews(name))}",
+                f"실적: {c(f'{NAVER}/stock/{code}/finance/quarter')} — 분기 매출·영업이익(isConsensus Y 칸 = 증권사 전망). 발표일은 공시 "
+                f"목록의 '잠정실적'·'영업(잠정)실적' 제목 날짜(직전 10 거래일 안인가). 같은 분기의 전망 칸이 있으면 "
+                f"op_profit_surprise_pct = (실제 − 전망) ÷ 전망 × 100, 없으면 '실적: 전망 평균 못 찾음'",
+                f"수급: {c(f'{NAVER}/stock/{code}/trend?pageSize=5')} — 날짜(bizdate)마다 외국인·기관·개인 순매수(주 수)",
+                f"그 밖(시세·업종): {c(f'{NAVER}/stock/{code}/integration')}"]
+    if kind == "coin":
+        return [f"간밤: {c('https://api.upbit.com/v1/candles/minutes/60?market=KRW-BTC&count=24')} — 지난 24시간 1시간 봉(원화)",
+                f"뉴스: {cr('https://cointelegraph.com/rss')} 와 Google 뉴스 RSS {cr(_gnews('비트코인'))}",
+                f"수급: {c('https://www.okx.com/api/v5/public/funding-rate?instId=BTC-USDT-SWAP')} — 무기한 선물 자금조달률, "
+                f"{c('https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=btc&metrics=FlowInExNtv,FlowOutExNtv&frequency=1d&page_size=3&paging_from=end')}"
+                f" — 거래소 들어온·나간 코인 수. 미국 현물 상품 자금 흐름은 이 환경에서 받을 곳 없음(farside 403) — '수급: 상품 흐름 받을 곳 없음'",
+                cal]
+    if kind == "sector":
+        return [night,
+                f"뉴스: {c(f'{NAVER}/news/stock/{code}?pageSize=10&page=1')} 와 Google 뉴스 RSS {cr(_gnews(name))} — "
+                f"이 ETF가 담은 업종 소식",
+                f"수급: {c(f'{NAVER}/stock/{code}/trend?pageSize=5')} — 이 ETF의 외국인·기관 순매수(주 수); 구성 종목은 "
+                f"{c(f'{NAVER}/stock/{code}/integration')}",
+                cal]
+    market = "코스피" if code == "069500" else "뉴욕증시"
+    return [night,
+            f"뉴스: Google 뉴스 RSS {cr(_gnews(market))} 와 {c(f'{NAVER}/news/stock/{code}?pageSize=10&page=1')}",
+            f"수급: {c(f'{NAVER}/index/KOSPI/integration')} — dealTrendInfo = 전일 유가증권시장 개인·외국인·기관 순매수(억 원)",
+            cal]
 
 
 def kind_of(asset: str) -> str:
@@ -72,12 +104,19 @@ def kind_of(asset: str) -> str:
 def brief(day: dt.date, asset: str, name: str, path: Path, held: bool, turn: bool) -> str:
     k = kind_of(asset)
     req = REQUIRED[k]
-    src = "\n".join(f"- {s.format(code=asset, name=name)}" for s in SOURCES[k])
+    src = "\n".join(f"- {line}" for line in sources(k, asset, name))
     tags = (" — 손 계좌가 들고 있다" if held else "") + (" — 오늘 손 예측 차례" if turn else "")
     return f"""# 아침 조사: {name} ({asset}) — {day.isoformat()}{tags}
 
 너는 stock-rader 아침 조사 에이전트 하나다. 이 대상 하나만 본다. 사라·팔라는 판단은 하지 않는다(메인이 한다).
 오늘 09:00 시가 전에 알 수 있는 것 가운데 이 대상의 오늘 값을 움직일 만한 것을 **놓치지 않게** 모은다. 시각은 한국 시간.
+
+## 받는 법
+- 아래 주소는 **Bash 도구의 curl로** 받는다(명령을 그대로 붙여 넣는다). WebFetch는 이 환경에서 네이버를 못 연다. 응답이 길면 뒤에
+  `| head -c 8000`. 받은 주소는 opened에 적는다(검색 결과 목록이 아니라 실제로 받은 것).
+- **웹 검색(WebSearch)은 많아야 {SEARCH_PER_TARGET}번** — 아래 주소로 그 kind를 못 채웠을 때만. 한 실행의 하위 에이전트가 모두 합쳐 약
+  200번을 나눠 쓰고(2026-11-17 실측), 08:40 다시 보기 몫을 남겨야 한다. '한도에 걸렸다'는 답이 오면 더 검색하지 않는다.
+- 세션 만들기·메시지 보내기·예약 같은 원격 도구는 부르지 않는다(이 일과 상관없다).
 
 ## 볼 것 (kind마다 찾음 또는 못 찾음 — {', '.join(req)} 넷은 빠짐없이)
 {src}
@@ -150,10 +189,12 @@ def check_one(data, asset: str, day: dt.date, at: dt.datetime) -> list[str]:
     errs = []
     if data.get("asset") != asset:
         errs.append(f"{w}: asset 칸이 '{data.get('asset')}'")
-    if not str(data.get("by", "")).strip():
-        errs.append(f"{w}: by(조사한 에이전트)가 비었다")
     if str(data.get("failed", "")).strip():   # 두 번 실패 — 메인이 까닭을 적는다(빈 채로 넘어가지 않게)
+        if not str(data.get("by", "")).strip():
+            errs.append(f"{w}: failed를 적은 이(by — 예 main)가 비었다")
         return errs
+    # by(조사한 에이전트)는 받지 않아도 된다(2026-11-17 예행연습: 에이전트는 자기 effort를 몰라 63개 중 20개가 '미확인' 등으로 적었다).
+    # 보낸 모델·effort는 지시문 4-0이 정하고, 적혀 있으면 기록에 그대로 남긴다.
     t = _time(data.get("as_of"))
     if t is None:
         errs.append(f"{w}: as_of는 시간대 붙은 ISO 시각")
@@ -273,8 +314,10 @@ def table(folder: Path, assets: list[tuple[str, str]], day: dt.date, at: dt.date
 
 def main(argv: list[str]) -> int:
     from . import daily as DY
+    from . import stocks as ST
     pos, opt = DY._args(argv)
     root, day, at = DY.when(opt, dt.time(8, 30))
+    ST.register(root.stocks)   # 목록에 든 국내 상장 ETF를 config.LISTED_ETF에(record와 같게 — 2026-11-17 예행연습의 거짓 오류)
     folder = root.day_dir(day) / "scan"
     tasks_p = folder / "_tasks.json"
     if not tasks_p.exists():

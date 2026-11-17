@@ -777,23 +777,23 @@ def briefing(D: Day, fetched: dict, tick: dict, late: str = "") -> str:
         L_.append("새로 생기면 입력 `asks`에 {what, close}로 연다(notes에만 적지 않는다) — 지시문 '대화 세션 몫'.")
     if D.root_lessons:   # 뿌리 목록(2026-11-17): 14일이 지나도 남는 교훈 — 판단 전에 읽는다
         roots = LS.current(D.root_lessons, D.root_records)
-        L_ += ["", f"## 뿌리 목록 {len(roots)}개 (묶은 교훈 — 판단·돌아보기 전에 읽는다; 일요일엔 그 주 '다음엔'을 여기에 묶는다)"]
+        L_ += ["", f"## 뿌리 목록 {len(roots)}개 (묶은 교훈 — 판단 전에 읽는다; 묶기·고치기는 09:13 피드백 정리 실행이 한다)"]
         L_ += LS.brief_lines(roots)
         fb = LS.feedback_lines()
         if fb:
             L_ += ["", "### 논리집 메인 피드백 (PROVISO-Nesy feedback/main common·stock_rader — 원문은 그쪽)"] + fb
         if LS.is_lesson_day(D.day):
             n = len(LS.due(D.recs["review"], D.recs["lesson"], D.day, []))
-            L_.append(f"**피드백 정리(매일, 따로 둔 에이전트 — 지시문 '피드백 정리'): 아직 묶지 않은 '다음엔' {n}건(+ 오늘 돌아보기의 "
-                      f"'다음엔')을 입력 `lessons`에 빠짐없이 묶고, 일반화할 뿌리는 고침·같은 뿌리는 합침·맞지 않게 된 뿌리는 내림. "
-                      f"빠지면 record가 거절한다.**")
+            L_.append(f"아직 묶지 않은 '다음엔' {n}건은 9시 뒤 피드백 정리 실행(routine-feedback-prompt.md)이 묶는다 — "
+                      f"**아침 입력에는 `lessons`·`reviews`·`reading_checks`를 넣지 않는다**(넣으면 record가 거절한다). "
+                      f"아침은 위 목록을 읽고 `precheck`에 밟은 뿌리를 적는다.")
     if FL.active(D.day) and not D.already:   # 아침 흐름(2026-11-17 p564, 지시문 4-0)
         n = len(scan_targets(D))
         L_ += ["", "## 아침 흐름 (지시문 4-0 — record가 검사한다)",
                f"- 대상마다 아침 조사 {n}개: 지시 `{D.day.isoformat()}/scan/_brief/<코드>.md`, 결과 `scan/<코드>.json` — 대상마다 에이전트 "
                f"하나(Haiku 5.5 high). 다 오면 `python -m market.scan`으로 짧은 표를 읽는다. 하나라도 없으면 record가 거절한다.",
-               "- 피드백 정리(Opus 5.5 high, 따로): 입력 `lessons`(아래 '피드백 정리')와 지난 선택 돌아보기 초안 — 메인은 그 결과를 읽고 "
-               "`precheck`에 밟은 뿌리를 적는다.",
+               "- 돌아보기·뿌리 묶기는 09:13 피드백 정리 실행(따로 도는 예약)이 한다 — 아침은 전날까지 정리된 뿌리 목록·최근 돌아보기를 "
+               "읽고 `precheck`에 밟은 뿌리를 적는다(아침 입력에 lessons·reviews·reading_checks를 넣으면 거절).",
                f"- {C.RECHECK_FROM:%H:%M} 다시 보기: 이슈 위주 에이전트(Haiku 5.5 medium) {FL.RECHECK_MIN_AGENTS}개 이상 + "
                "`python -m market.premarket` → 입력 `recheck`(바꾼 것은 처음 값과 바꾼 값을 둘 다).",
                f"- **record는 09:00 전**: 09:00이 넘으면 주문·예측을 하나도 넣지 않고 '못 넣음' 줄만 남는다(모든 대상)."]
@@ -823,7 +823,7 @@ def briefing(D: Day, fetched: dict, tick: dict, late: str = "") -> str:
               f"종목 대 보기에 '예'가 있으면 '아니오' 종목(비교군) {C.STOCK_CONTROL_MIN}개 이상도 stock_readings에 넣는다(틀의 _stock_control).")
     if D.watch_today or D.watch_auto:
         nm = {str(s["code"]): s["name"] for s in D.pool}
-        L_.append(f"**오늘 차례 종목(2026-11-17)**: {', '.join(f'{a} {nm.get(a, a)}' for a in D.watch_today) or '없음'}"
+        L_.append(f"**오늘 차례 종목**: {', '.join(f'{a} {nm.get(a, a)}' for a in D.watch_today) or '없음'}"
                   f" — 기간 셋을 낸다(물어본 종목이 먼저, 그다음 손 예측이 오래된 순; 조각이 가리키면 사도 된다). 손 예측 없이 시세 대 보기·계산기·"
                   f"기준선만 기록하는 종목 {len(D.watch_auto)}개. 목록 종목은 모두 살 수 있다(buy = false로 적힌 옛 종목만 빼고).")
     for s in D.pool:
@@ -864,15 +864,15 @@ def briefing(D: Day, fetched: dict, tick: dict, late: str = "") -> str:
     for s in D.scores:
         if s["predictor"] in ("hand", "calc") and s["counted"]:
             L_.append(f"- {s['prediction']}: 수익률 {s['ret'] * 100:+.2f}%, 방향 {s['direction_hit']}, 크기 {s['size_hit']}, 확률 점수 {s['brier']}")
-    L_ += ["", f"## 돌아볼 손 예측 ({len(D.due_reviews)}건) — 입력 reviews에"]
+    L_ += ["", f"## 돌아볼 손 예측 ({len(D.due_reviews)}건) — 참고: 9시 뒤 피드백 정리 실행이 돌아본다(아침 입력에 넣지 않는다)"]
     for pid, i in D.due_reviews.items():
         L_.append(f"- {pid}: {i['verdict']} (수익률 {i['ret_pct']:+.2f}%, 평소 {i['typical_pct']}%{', 잡음 가능' if i['noise'] else ''})"
                   f" / 그때 p_up {i['p_up']}, 크기 {i['size']}, 결론 조각 {i['decisive']}")
     L_ += ["", f"## 열린 '다음엔' ({len(D.open_next)}건, 지난 {H.NEXT_DAYS}일) — 오늘 해 볼 상황이 왔으면 해 보고,"
-                 " 관련 돌아보기 reason(없으면 notes)에 `지난 다음엔 <id> → 해 봄|안 해 봄 — …`"]
+                 " 아침은 입력 notes에 `지난 다음엔 <id> → 해 봄|안 해 봄 — …`(9시 뒤 피드백 정리가 이어 받는다)"]
     for rid, t in D.open_next.items():
         L_.append(f"- {rid}: {t}")
-    L_ += ["", f"## 다시 볼 손 대 보기 ({len(D.due_checks)}건) — 입력 reading_checks에"]
+    L_ += ["", f"## 다시 볼 손 대 보기 ({len(D.due_checks)}건) — 참고: 9시 뒤 피드백 정리 실행이 다시 본다(아침 입력에 넣지 않는다)"]
     for (t, st), c in D.due_checks.items():
         L_.append(f"- {t} {st} = {c['then']} (그때 이유: {c['why_then'][:80]})")
     L_ += ["", "## 계산기 (오늘, 시세 조각 — 방향 기본값은 동전, 기준은 체결가(다음 시가))"]

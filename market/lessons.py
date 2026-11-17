@@ -245,7 +245,12 @@ def feedback_lines() -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    roots, down = current(), gone()
+    """python -m market.lessons [--root <폴더>] — --root면 그 폴더의 lessons.toml·records(흉내 폴더에서 새 뿌리가 보이게, 2026-11-17)."""
+    if "--root" in argv:
+        base = Path(argv[argv.index("--root") + 1]).resolve()
+        roots, down = current(base / "lessons.toml", base / "records"), gone(base / "lessons.toml", base / "records")
+    else:
+        roots, down = current(), gone()
     print(f"# 뿌리 {len(roots)}개 (씨앗 {LESSONS.name} + records/lesson.jsonl)\n")
     print("\n".join(brief_lines(roots)))
     if down:

@@ -231,6 +231,19 @@ class DailyLoop(unittest.TestCase):
             self.assertEqual(D.record(root, d, at(d, 8, 30), p), 1)
             self.assertFalse(list(root.records.glob("*.jsonl")))
 
+    def test_size_width_takes_display_rounding_only(self):
+        """계산기 범위 글(소수 둘째 자리)을 그대로 옮긴 1.69–3.39(2.006배)는 받고, 그보다 넓으면 거절(2026-11-17 예행연습)."""
+        for hi, code in ((3.39, 0), (3.41, 1)):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = make_root(tmp)
+                d = dt.date(2025, 9, 2)
+                D.prepare(root, d, at(d, 7, 37), fetch=False, ticker=TICK, echo=False)
+                inp = fill(json.loads((root.day_dir(d) / "input.json").read_text(encoding="utf-8")))
+                inp["hand"][1]["size_lo"], inp["hand"][1]["size_hi"] = 1.69, hi
+                p = root.day_dir(d) / "w.json"
+                p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+                self.assertEqual(D.record(root, d, at(d, 8, 30), p), code, hi)
+
     def test_value_based_state_refuses_partial(self):
         """값 기준으로 대 보는 상태(answers)는 '일부'를 쓰지 못한다 — 검사가 '일부'를 셀 수 없다 (2026-11-03)."""
         with tempfile.TemporaryDirectory() as tmp:
