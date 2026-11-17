@@ -190,6 +190,11 @@ FILL_RULES = (FILL_RULE,)
 # '그날 시가를 놓쳐 다음 시가에 체결' 경고. 08:50 = 시가 10분 전 — record(검사·쓰기 1분 안쪽)와 여유를 둔 미리 정한 값이다
 PREPARE_BY = dt.time(8, 50)
 RECORD_BY = OPEN_TIME
+# 아침 흐름(2026-11-17 사용자 결정, 잼민이 지시서 p564 — market/flow.py): 이 날 판단부터 record는 09:00(RECORD_BY) 뒤면 주문·예측을
+# 하나도 넣지 않고 '못 넣음' run 줄만 남긴다(모든 대상; 그 전 날은 위 경고만). 대상마다 아침 조사 파일(market/scan.py), 피드백
+# 정리(lessons 매일), 08:40 다시 보기(RECHECK_FROM 뒤에 보낸 에이전트)가 없으면 record가 거절한다.
+FLOW_SINCE = "2026-11-18"
+RECHECK_FROM = dt.time(8, 40)
 
 
 def fill_rule(asset_id: str, rule: str | None) -> tuple[str, dt.time]:

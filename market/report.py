@@ -295,11 +295,33 @@ def priced_text(me: dict) -> str:
 
 
 # ---------- 매일 일지 ----------
+def late_diary(b: Book, day: dt.date, late: dict) -> str:
+    """판단이 09:00을 넘겨 주문·예측을 하나도 넣지 못한 날(2026-11-17 사용자 결정 '9시 이후 체결은 막는다')의 짧은 일지."""
+    run = day.isoformat()
+    at = dt.datetime.fromisoformat(late["steps"]["decided_at"]).astimezone(C.KST)
+    prev = b.prev_run("live:hand", run)
+    val = b.value("live:hand", prev) if prev else None
+    tried = late["steps"].get("rejected") or {}
+    want = ", ".join(f"{asset_label(a)} {float(w) * 100:.0f}%" for a, w in (tried.get("weights") or {}).items()
+                     if isinstance(w, (int, float)) and w > 0)
+    lines = [f"# {day.month}월 {day.day}일 — [[채울 것: 오늘의 한 줄 결론]]", "",
+             f"오늘은 판단이 {at:%H:%M}에야 끝나 주문을 하나도 넣지 못했다. 9시에 장이 열린 뒤에 정하면 열린 값을 보고 사는 셈이라, "
+             f"9시가 넘으면 아무것도 사고팔지 않기로 정해 두었다. 계좌는 전날 그대로"
+             + (f"(마지막 기록 {prev} {won_about(val)})" if val else "") + "다.", "",
+             "## 왜 늦었나", "[[채울 것: 어느 단계에서 시간이 걸렸나, 다음엔 무엇을 바꾸나]]", "",
+             "## 하려던 것", f"- 목표 비중: {want or '없음'}",
+             f"- 손 예측 {tried.get('hand', 0)}개 — 기록하지 않았다(지난 날짜로 다시 넣지 않는다).", ""]
+    return "\n".join(lines)
+
+
 def daily(folder: Path, day: dt.date) -> str:
     b = Book(folder)
     run = day.isoformat()
     me, eq = b.acc["live:hand"].get(run), b.acc["baseline:equal_hold"].get(run)
     if me is None:
+        late = next((x for x in b.recs["run"] if x["id"] == f"late:{run}"), None)
+        if late is not None:
+            return late_diary(b, day, late)
         raise SystemExit(f"{run} 계좌 기록이 없다 — record를 먼저 돌린다")
     prev = b.prev_run("live:hand", run)
     pa = b.acc["live:hand"].get(prev) if prev else None

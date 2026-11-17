@@ -48,7 +48,11 @@ FIELDS: dict[str, dict[str, tuple]] = {
     "reading_check": {"target": (str,), "state": (str,), "then": (str,), "now": (str,), "hit": OPT_BOOL,
                       "late": (list,), "reason": (str,)},
     # 뿌리 묶기(2026-11-17, market/lessons.py): 일요일 주간 결산이 그 주의 '다음엔'을 뿌리에 묶은 한 줄씩
-    "lesson": {"root": (str,), "kind": (str,), "reviews": (list,), "tried": (dict,)},
+    "lesson": {"root": (str,), "type": (str,), "reviews": (list,), "tried": (dict,)},
+    # 아침 흐름(2026-11-17 p564): 대상마다 아침 조사 한 줄(market/scan.py), 장전 값 원문 한 줄(market/premarket.py)
+    "scan": {"asset": (str,), "by": (str,), "as_of": (str,), "opened": (list,), "blocked": (list,), "found": (list,),
+             "missing": (list,)},
+    "premarket": {"asset": (str,), "fetched_at": (str,), "status": (int,), "raw": (dict,)},
     # 가상 증권사(2026-11-10, market/broker.py): 주문·체결 밖의 증권사 사건 한 줄씩 — type은 BROKER_TYPES, seq = 계좌 안에서
     # 증권사가 줄을 만든 순서(order·fill·account 줄의 seq와 한 줄로 이어진다)
     "broker": {"account": (str,), "at": (str,), "type": (str,), "data": (dict,), "note": (str,), "seq": (int,)},
@@ -57,6 +61,7 @@ FIELDS: dict[str, dict[str, tuple]] = {
 OPTIONAL: dict[str, dict[str, tuple]] = {
     # 2026-11-17: 매일 실행이 연 대화 세션 몫(market/asks.py) — [{id, what, close}]
     "run": {"asks": (list,)},
+    "scan": {"failed": (str,)},
     # 2026-11-05~(결정 E2): 체결가 기준 예측 줄의 채점은 체결 봉 날짜·시가(fill_date·fill_price)를 적는다
     # 묶음 대비(2026-11-17, scoring.relative): 종목 채점에만 — 같은 창의 자기 시장 묶음 수익률(bench_ret)과 뺀 값(rel_ret)·방향(rel_up)
     "score": {"counted": OPT_BOOL, "fill_date": (str,), "fill_price": NUM, "bench": (str,), "bench_ret": NUM,
@@ -115,7 +120,9 @@ DESCRIBE = {
     "correction": "정정: 고칠 기록 id(target)와 설명. 지난 줄은 고치지 않는다",
     "research": "조사(질문 하나): 대 볼 상태 id(각도 질문·2차 조사면 ''), 각도, 질문, 답 요약, 본 곳마다 결과(찾음/없음/늦음/막힘)·새 곳 여부·링크·날짜, 맡은 에이전트, (2026-11-05~) numbers = 숫자 이름_단위 → 값, as_of = 정보 시각",
     "hand_reading": "손 대 보기(하루 하나): 조사로 대 본 상태 값(예/아니오/일부/모름 또는 값), 상태마다 이유와 쓴 볼 곳, 근거 조사 id, (있으면) by_asset = 종목마다 대 본 상태, numbers = 숫자 상태가 쓴 숫자(상태 → 이름 → 값)",
-    "lesson": "뿌리 묶기(2026-11-17, 일요일): 그 주의 '다음엔'을 묶은 뿌리 id, kind(같음/새 뿌리/충돌), 묶은 돌아보기 id, 해 본 결과 tried(나아짐/모름/나빠짐 수), (새 뿌리·충돌) sentence, (충돌) against·split",
+    "lesson": "뿌리 묶기(2026-11-17; 2026-11-18부터 매일 피드백 정리): 묶지 않은 '다음엔'을 묶은 뿌리 id, type(묶는 방식 — 입력의 kind: 같음/새 뿌리/충돌/고침/합침/내림; 기록 줄의 kind 칸은 기록 종류라 이름을 바꿈), 묶은 돌아보기 id, 해 본 결과 tried(나아짐/모름/나빠짐 수), (새 뿌리·충돌·고침) sentence, (충돌) against·split, (합침) into, (고침·합침·내림) why",
+    "scan": "대상마다 아침 조사(2026-11-18~, market/scan.py): 대상, 조사한 에이전트 by, 정보 시각 as_of, 실제로 연 주소 opened·못 연 곳 blocked, 찾은 것 found[{kind, text, url, when, numbers}], 못 찾은 kind missing, (두 번 실패) failed",
+    "premarket": "장전 값 원문(2026-11-18~, market/premarket.py): 대상(코드 또는 ES=F), 받은 시각, 응답 상태, 응답 가운데 남긴 칸 그대로(raw — 장 상태·장외 값 묶음; 칸의 뜻은 확인 전)",
     "reading_check": "대 보기 다시 보기: 지난 손 대 보기의 상태 값을 나중에 알게 된 것으로 다시 봄(맞음/틀림/모름), 판단 뒤에야 정보가 나온 볼 곳(late)",
 }
 

@@ -47,15 +47,18 @@ def review(rid, run, reason):
 
 
 class Lessons(unittest.TestCase):
+    """매일 피드백 정리(2026-11-17 p564 — 처음엔 일요일만): 아직 묶지 않은 '다음엔'(BIND_FROM 뒤)을 빠짐없이."""
     sunday = dt.date(2026, 11, 22)
 
     def due(self):
         reviews = [review("review:a", "2026-11-17", "x. 다음엔: 종목 1봉 크기를 1.0배로"),
                    review("review:b", "2026-11-19", "지난 다음엔 review:z → 해 봄 — 됐다. 다음엔: 계속"),
                    review("review:c", "2026-11-20", "y. 다음엔: 그대로 — 맞음"),          # 그대로는 묶지 않는다
-                   review("review:old", "2026-11-10", "옛. 다음엔: 무엇")]                  # 이 주가 아니다
+                   review("review:old", "2026-11-10", "옛. 다음엔: 무엇"),                  # BIND_FROM 전(씨앗에 들어 있다)
+                   review("review:done", "2026-11-18", "w. 다음엔: 묶임")]                  # 이미 묶었다
         today = [{"prediction": "p1", "reason": "z. 다음엔: 금리 조각을 같이 안 움직이는 종목엔 안 쓴다"}]
-        return LS.week_due(reviews, self.sunday, today)
+        bound = [{"reviews": ["review:done"]}]
+        return LS.due(reviews, bound, self.sunday, today)
 
     def test_week_due_and_all_must_be_grouped(self):
         due = self.due()
@@ -75,8 +78,44 @@ class Lessons(unittest.TestCase):
         conflict["lessons"][0] = {"root": "L13", "kind": "충돌", "sentence": "s", "reviews": ["review:p1"], "tried": {},
                                   "against": "L01"}
         self.assertTrue(any("split" in e for e in LS.input_errors(conflict, self.sunday, due, known)))
-        self.assertTrue(LS.input_errors({}, self.sunday, due, known))                 # 일요일엔 비면 거절
-        self.assertEqual(LS.input_errors({}, dt.date(2026, 11, 18), due, known), [])  # 다른 날은 없다
+        self.assertTrue(LS.input_errors({}, self.sunday, due, known))                 # 비면 거절(매일)
+        self.assertTrue(LS.input_errors({}, dt.date(2026, 11, 19), due, known))      # 일요일이 아니어도
+        self.assertEqual(LS.input_errors({}, dt.date(2026, 11, 17), {}, known), [])  # 그 전 날은 묻지 않는다
+        self.assertEqual(LS.input_errors({"lessons": []}, dt.date(2026, 11, 19), {}, known), [])  # 묶을 것이 없으면 []
+
+    def test_generalize_merge_retire(self):
+        """고침(일반화)·합침·내림 — 지난 기록은 그대로, 목록에서만 내리고 까닭을 남긴다."""
+        due = self.due()
+        known = {"L01", "L04", "L05"}
+        base = [{"root": "L04", "kind": "같음", "reviews": ["review:p1"], "tried": {}},
+                {"root": "L12", "kind": "새 뿌리", "sentence": "s", "reviews": ["review:a", "review:b"], "tried": {"모름": 1}}]
+        ok = {"lessons": base + [
+            {"root": "L01", "kind": "고침", "sentence": "더 넓은 문장", "why": "세 곳에서 같은 말"},
+            {"root": "L05", "kind": "합침", "into": "L04", "why": "같은 말"}]}
+        self.assertEqual(LS.input_errors(ok, self.sunday, due, known), [])
+        for bad in ({"root": "L01", "kind": "고침", "why": "x"},                       # 고친 문장 없음
+                    {"root": "L05", "kind": "합침", "into": "L05", "why": "x"},        # 자기에게
+                    {"root": "L05", "kind": "내림"},                                   # 까닭 없음
+                    {"root": "L09", "kind": "내림", "why": "x"}):                      # 없는 뿌리
+            self.assertTrue(LS.input_errors({"lessons": base + [bad]}, self.sunday, due, known), bad)
+        reused = {"lessons": base[:1] + [{**base[1], "root": "L07"}]}
+        self.assertTrue(any("이미 있다" in e for e in LS.input_errors(reused, self.sunday, due, known, {"L07"})))
+        with tempfile.TemporaryDirectory() as tmp:
+            seed = Path(tmp) / "lessons.toml"
+            seed.write_text('[[root]]\nid = "L01"\nsentence = "a"\n[[root]]\nid = "L04"\nsentence = "b"\n'
+                            '[[root]]\nid = "L05"\nsentence = "c"\n', encoding="utf-8")
+            recs = Path(tmp) / "records"
+            R.write(recs, "lesson", [dict(x, id=f"lesson:2026-11-22:{i}", run="2026-11-22", reviews=x.get("reviews", []),
+                                          tried={k: 0 for k in LS.TRIED})
+                                     for i, x in enumerate(LS.record_lines(self.sunday, {"lessons": [
+                                         {"root": "L05", "kind": "같음", "reviews": ["r1", "r2"], "tried": {}},
+                                         {"root": "L01", "kind": "고침", "sentence": "더 넓은 문장", "why": "w"},
+                                         {"root": "L05", "kind": "합침", "into": "L04", "why": "같은 말"}]}))])
+            now = {r["id"]: r for r in LS.current(seed, recs)}
+            self.assertEqual(set(now), {"L01", "L04"})
+            self.assertEqual(now["L01"]["sentence"], "더 넓은 문장")
+            self.assertEqual(now["L04"]["reviews"], 2)          # 합친 뿌리의 건수가 옮겨 감
+            self.assertIn("L04에 합침", LS.gone(seed, recs)[0]["gone"])
 
     def test_seed_file_and_current_view(self):
         self.assertEqual(LS.check(LS.load()), [])
@@ -180,46 +219,18 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class SundayLessons(unittest.TestCase):
-    """흉내 낸 일주일: 일요일 record는 lessons 칸이 없으면 거절하고(아무것도 안 씀), 있으면 쓴다."""
-
-    def test_sunday_requires_lessons(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(LS, "LESSONS_SINCE", "2025-09-01"):
-            root = TD.make_root(tmp)
-            for i in range(5):
-                self.assertEqual(TD.run_day(root, dt.date(2025, 9, 2) + dt.timedelta(days=i))[0], 0)
-            sun = dt.date(2025, 9, 7)
-            assert D.prepare(root, sun, TD.at(sun, 7, 37), fetch=False, ticker=TD.TICK, echo=False) == 0
-            brief = (root.day_dir(sun) / "briefing.md").read_text(encoding="utf-8")
-            self.assertIn("뿌리 목록", brief)
-            self.assertIn("오늘은 일요일", brief)
-            inp = TD.fill(json.loads((root.day_dir(sun) / "input.json").read_text(encoding="utf-8")))
-            self.assertIn("lessons", inp)
-            bad = {k: v for k, v in inp.items() if k != "lessons"}
-            p = root.day_dir(sun) / "bad.json"
-            p.write_text(json.dumps(bad, ensure_ascii=False), encoding="utf-8")
-            n = len(R.read(root.records, "run"))
-            self.assertEqual(D.record(root, sun, TD.at(sun, 8, 30), p), 1)
-            self.assertEqual(len(R.read(root.records, "run")), n)
-            p = root.day_dir(sun) / "ok.json"
-            p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
-            self.assertEqual(D.record(root, sun, TD.at(sun, 8, 30), p), 0)
-
-
 class Precheck(unittest.TestCase):
-    """판단 전 확인(2026-11-18 판단부터): 반대 검토 + 08:00 뒤 직전 확인이 없으면 거절."""
+    """피드백 정리를 읽었나(2026-11-18 판단부터, market/flow.py): 밟은 뿌리·고친 것·정리한 에이전트가 없으면 거절."""
 
-    def test_precheck_required_and_timed(self):
+    def test_precheck_required(self):
+        from market import flow as FL
         day = dt.date(2026, 11, 18)
-        at = dt.datetime(2026, 11, 18, 8, 48, tzinfo=C.KST)
-        ok = {"precheck": {"roots": ["L04"], "by": "반대 검토-새 눈", "note": "종목 1봉을 0.5로 되돌림",
-                           "late_as_of": "2026-11-18T08:36+09:00", "late": "동시호가 예상 체결가 +0.4%"}}
-        self.assertEqual(LS.precheck_errors(ok, day, at, {"L04"}), [])
-        self.assertTrue(LS.precheck_errors({}, day, at, {"L04"}))
-        early = json.loads(json.dumps(ok))
-        early["precheck"]["late_as_of"] = "2026-11-18T07:40+09:00"
-        self.assertTrue(any("08:00" in e for e in LS.precheck_errors(early, day, at, {"L04"})))
+        ok = {"precheck": {"roots": ["L04"], "note": "종목 1봉을 0.5로 되돌림", "lessons_by": "opus-5.5 high"}}
+        self.assertEqual(FL.precheck_errors(ok, day, {"L04"}), [])
+        self.assertTrue(FL.precheck_errors({}, day, {"L04"}))
+        for k in ("note", "lessons_by"):
+            self.assertTrue(FL.precheck_errors({"precheck": {**ok["precheck"], k: ""}}, day, {"L04"}))
         unknown = json.loads(json.dumps(ok))
         unknown["precheck"]["roots"] = ["L99"]
-        self.assertTrue(LS.precheck_errors(unknown, day, at, {"L04"}))
-        self.assertEqual(LS.precheck_errors({}, dt.date(2026, 11, 17), at, set()), [])   # 그 전 날은 묻지 않는다
+        self.assertTrue(FL.precheck_errors(unknown, day, {"L04"}))
+        self.assertEqual(FL.precheck_errors({}, dt.date(2026, 11, 17), set()), [])   # 그 전 날은 묻지 않는다
