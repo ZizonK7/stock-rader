@@ -23,7 +23,7 @@
 - 숫자에는 이유를 붙인다. 숫자만 넓히는 고침은 하지 않는다. 계산 조각의 숫자는 `python -m market.fit --write`로만 바뀐다.
 - 조각 이름·문장에 상품·코인·**종목 이름과 코드**를 쓰지 않는다(대상은 성질로: config.TRAITS — 종목은 equity·home·single). 일지·reason에는 종목 이름을 써도 된다.
 - 판단 때 알 수 있었던 정보만 쓴다. 조사에서 판단 시각 뒤에 나온 정보를 봤으면 그 사실을 적고 대 보기에 쓰지 않는다.
-- 사용자 의도와 결정은 `CLAUDE.md`, 설계는 `docs/design.md`, 일지 문체는 `docs/report-style.md`에 있다. 막히면 그 셋을 기준으로 정한다. 사용자는 목표만 준다(2026-11-04: "논리들을 써가면서 계속해서 수정하는 게 목표") — 판단은 네가 하고 까닭을 적는다.
+- 사용자 의도와 결정은 `CLAUDE.md`(지금 기준 요지 — 원문·까닭은 `docs/decisions.md`), 설계는 `docs/design.md`, 일지 문체는 `docs/report-style.md`에 있다. 막히면 그 셋을 기준으로 정한다. 사용자는 목표만 준다(2026-11-04: "논리들을 써가면서 계속해서 수정하는 게 목표") — 판단은 네가 하고 까닭을 적는다.
 
 ## 1. 준비 (저장소 찾기)
 1. 작업 폴더가 stock-rader 저장소인지 본다: `git remote -v`, `git status`. main 브랜치에서 `git pull --ff-only origin main`.
