@@ -131,6 +131,24 @@ def in_scope(asset: str, scope: str | list | tuple | None) -> bool:
 
 # 진짜 계좌 (2단계, 매일 예약 실행): 손 예측이 비중을 정하는 계좌와 계산기(R_weights) 계좌, 기준선 둘
 LIVE_ACCOUNTS = ("live:hand", "live:calc", "baseline:equal_hold", "baseline:cash")
+# 계좌 기수(2026-11-17 사용자 결정, 잼민이 지시서 p564 보완 4 "다시 천 만원으로 출발하는 게 좋지 않을까" → "하자"): 새 아침 흐름이
+# 처음 도는 날(FLOW_SINCE 뒤 첫 판단) 계좌 넷 모두 같은 시각에 1기를 닫고(마지막 평가 줄 + phase 'close') 2기를 은행 1,000만 원에서 연다.
+# 2기의 계좌 id = 역할 이름 + "@2"(예: live:hand@2) — 같은 id에 두 번째 start를 두면 가상 증권사의 다시 계산·검산이 두 기를 섞는다.
+# 1기 줄은 지우지 않고 비교용으로 남는다. 코드 안에서는 역할 이름(LIVE_ACCOUNTS)으로 부르고 기록에는 그 기의 id를 쓴다.
+PERIOD_MARK = "@"
+
+
+def period_id(role: str, period: int) -> str:
+    return role if period <= 1 else f"{role}{PERIOD_MARK}{period}"
+
+
+def role_of(account: str) -> str:
+    return str(account).split(PERIOD_MARK)[0]
+
+
+def period_of(account: str) -> int:
+    parts = str(account).split(PERIOD_MARK)
+    return int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
 # 손 계좌의 종목 장치(2026-10-29): 한 종목 목표 비중 상한, 동시에 들 수 있는 종목 수 상한.
 # 까닭: 한 회사 주식의 하루 흔들림은 한국 묶음의 2~3배다. 15%를 한 종목에 두면 묶음 30~45%만큼의 흔들림을 진다.
 # 세 종목까지면 종목 몫이 많아야 45%로, 묶음 1/3 기준선과 비슷한 무게에서 멈춘다. 숫자는 기록에서 맞춘 값이 아니라 미리 정한 모양이다.

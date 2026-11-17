@@ -60,7 +60,7 @@ FIELDS: dict[str, dict[str, tuple]] = {
 # 있을 때만 검사하는 칸 (1단계 재생 기록에는 없다)
 OPTIONAL: dict[str, dict[str, tuple]] = {
     # 2026-11-17: 매일 실행이 연 대화 세션 몫(market/asks.py) — [{id, what, close}]
-    "run": {"asks": (list,)},
+    "run": {"asks": (list,), "story": (dict,)},
     "scan": {"failed": (str,)},
     # 2026-11-05~(결정 E2): 체결가 기준 예측 줄의 채점은 체결 봉 날짜·시가(fill_date·fill_price)를 적는다
     # 묶음 대비(2026-11-17, scoring.relative): 종목 채점에만 — 같은 창의 자기 시장 묶음 수익률(bench_ret)과 뺀 값(rel_ret)·방향(rel_up)

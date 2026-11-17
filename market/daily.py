@@ -8,6 +8,8 @@
                                                    오늘 목표 비중으로 남은 주문을 지금 가격에 낸다(팔린 돈으로 사기)
   python -m market.daily report [--force]          reports/<날짜>.md 뼈대(숫자는 기록에서). 일요일엔 주간 결산도
   python -m market.daily report --check            일지에 채우지 않은 자리([[채울 것: …]])가 남았나
+  python -m market.daily feedback [<feedback.json>] 9시 뒤 피드백 정리: 파일 없이 부르면 틀(out/daily/<날짜>/feedback.json),
+                                                   채운 파일을 주면 돌아보기·다시 보기·정정·뿌리 묶기를 덧붙이고 run 줄 feedback:<날짜>
   python -m market.daily wait [HH:MM]              한국 시간 HH:MM(기본 08:40 다시 보기)까지 기다린다 — 한 번에 9분, 남으면 종료 3
 흉내 내기·시험용 (기본 저장소에서는 못 씀): --root <폴더> --day YYYY-MM-DD --at HH:MM
 
@@ -253,9 +255,43 @@ class Day:
     calc_reasons: dict[str, str] = field(default_factory=dict)
     equal_first: dict[str, float] = field(default_factory=dict)
     carry: object = None                                 # 갈아타는 날 옛 주문을 그대로 넣은 계산(whatif.Carry)
+    period: int = 1                                      # 계좌 기수(2026-11-17: 2기 = 새 아침 흐름에서 1,000만 원부터)
+    opening: bool = False                                # 오늘 그 기를 여는가(1기를 닫는가)
+    closing: dict = field(default_factory=dict)          # 오늘 닫을 1기 증권사(역할 → Broker)
     root_asks: Path | None = None                        # 대화 세션 몫 목록(asks.toml, 2026-11-17)과 그 기록 폴더
     root_records: Path | None = None
     root_lessons: Path | None = None                     # 뿌리 목록 씨앗(lessons.toml, 2026-11-17)
+
+
+def review_due(scores: list[dict], by_id: dict, reviews: list[dict], hists: dict) -> dict[str, dict]:
+    """돌아볼 손 예측: 한 번만 세는 채점 중 아직 돌아보지 않은 것 → 예측 id → 정보(아침 prepare와 9시 뒤 피드백 정리가 같이 쓴다)."""
+    reviewed = {r["prediction"] for r in reviews}
+    out = {}
+    for s in scores:
+        p = by_id.get(s["prediction"])
+        if not p or p["predictor"] != "hand" or not s.get("counted", True) or s["prediction"] in reviewed:
+            continue
+        tm = S.typical_move(hists[p["asset"]], p["horizon"]) if p["asset"] in hists else None
+        out[p["id"]] = {
+            "verdict": S.verdict_of(s), "direction_hit": s["direction_hit"], "size_hit": s["size_hit"],
+            "ret_pct": round(s["ret"] * 100, 3), "typical_pct": round(tm * 100, 3) if tm else None,
+            "noise": bool(tm) and abs(s["ret"]) < C.NOISE_SHARE * tm,
+            "asset": p["asset"], "horizon": p["horizon"], "run": p["run"], "p_up": p["p_up"],
+            "size": [p["size_lo"], p["size_hi"]], "used": p["used"], "decisive": p["decisive"], "reason": p["reason"],
+            "target_date": s["target_date"]}
+    return out
+
+
+def account_period(recs: dict, day: dt.date) -> tuple[int, bool]:
+    """(이 판단의 계좌 기수, 오늘 그 기를 여는가). 2기 start가 있으면 2기. 없고 판단 날이 C.FLOW_SINCE 뒤면 오늘 2기를 연다
+    (날짜를 못박지 않는다 — 새 흐름이 main에 들어간 뒤 첫 판단이 연다, 두 번 열리지 않는다). 그 전이면 1기."""
+    opened = {C.period_of(x["account"]) for x in recs["broker"] if x.get("type") == "start"
+              and C.role_of(x["account"]) in C.LIVE_ACCOUNTS}
+    if 2 in opened:
+        return 2, False
+    if day.isoformat() >= C.FLOW_SINCE:
+        return 2, True
+    return 1, False
 
 
 def old_lines(recs: dict, kind: str) -> list[dict]:
@@ -338,14 +374,45 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     quotes = quotes_for(root)
     bar_days = [r.date for r in hists["069500"].rows]
     started = {aid: any(x["account"] == aid and x["type"] == "start" for x in recs["broker"]) for aid in C.LIVE_ACCOUNTS}
-    brokers: dict[str, B.Broker] = {}
+    period, opening = account_period(recs, day)
+    brokers: dict[str, B.Broker] = {}   # 역할 이름(C.LIVE_ACCOUNTS) → 그 기의 증권사
+    closing: dict[str, B.Broker] = {}   # 2기를 여는 날 닫을 1기 증권사
     problems: list[str] = []
     sync_lines: list[tuple[str, dict]] = []
     sync_warnings: list[str] = []
     accounts: dict[str, L.Account] = {}
     fills: list[dict] = []
     switched, switch_note, carried = False, "", None
-    if all(started.values()):
+    if period >= 2:
+        # 2기(2026-11-17 사용자 결정 p564 보완 4): 이미 열렸으면 맞추고, 오늘 여는 날이면 1기를 맞춘 뒤 닫을 준비 + 2기를 1,000만 원에서
+        try:
+            if opening and all(started.values()):
+                for aid in C.LIVE_ACCOUNTS:
+                    b = closing[aid] = B.Broker(aid, quotes, recs, bar_days)
+                    problems += b.problems
+                    if not b.problems:
+                        res = b.sync(at)
+                        problems += [] if res.ok else [f"{aid}(1기): {res.reason}"]
+                        sync_warnings += res.warnings
+            elif opening and any(started.values()):
+                problems.append(f"1기 계좌 일부만 있다({[a for a, v in started.items() if v]}) — 닫지 못한다")
+            for aid in C.LIVE_ACCOUNTS:
+                b = brokers[aid] = B.Broker(C.period_id(aid, period), quotes, recs, bar_days)
+                problems += b.problems
+                if b.problems:
+                    continue
+                if opening:
+                    res = b.start(at, bank=C.START_CASH, note=f"{period}기 시작: 새 아침 흐름 첫날 은행 1,000만 원에서 다시 출발"
+                                                            f"(2026-11-17 사용자 결정)")
+                else:
+                    res = b.sync(at)
+                    sync_lines += res.lines
+                    sync_warnings += res.warnings
+                if not res.ok:
+                    problems.append(f"{C.period_id(aid, period)}: {res.reason}")
+        except Exception as exc:
+            problems.append(crash(f"{period}기 계좌", exc))
+    elif all(started.values()):
         for aid in C.LIVE_ACCOUNTS:
             try:
                 b = brokers[aid] = B.Broker(aid, quotes, recs, bar_days)
@@ -393,6 +460,7 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
     D.mode, D.brokers, D.quotes, D.problems = mode, brokers, quotes, problems
     D.switched, D.switch_note, D.sync_lines, D.sync_warnings = switched, switch_note, sync_lines, sync_warnings
     D.carry = carried
+    D.period, D.opening, D.closing = period, opening, closing
     D.root_asks, D.root_records, D.root_lessons = root.asks, root.records, root.lessons
     D.pool, D.stock_skipped = pool, stock_skipped
     D.held = [a for a in held if a not in stock_skipped]
@@ -502,19 +570,7 @@ def compute(root: Root, day: dt.date, at: dt.datetime, fetch: dict, ticker: dict
                 day, D.equal_first, D.prices, 0.0, {a: EQUAL_NOTE for a in D.equal_first}, at, C.FILL_RULE)]
 
     # 돌아볼 손 예측: 한 번만 세는 채점 중 아직 돌아보지 않은 것 (오늘 새로 채점된 것 포함)
-    reviewed = {r["prediction"] for r in recs["review"]}
-    for s in recs["score"] + scores:
-        p = by_id.get(s["prediction"])
-        if not p or p["predictor"] != "hand" or not s.get("counted", True) or s["prediction"] in reviewed:
-            continue
-        tm = S.typical_move(hists[p["asset"]], p["horizon"])
-        D.due_reviews[p["id"]] = {
-            "verdict": S.verdict_of(s), "direction_hit": s["direction_hit"], "size_hit": s["size_hit"],
-            "ret_pct": round(s["ret"] * 100, 3), "typical_pct": round(tm * 100, 3) if tm else None,
-            "noise": bool(tm) and abs(s["ret"]) < C.NOISE_SHARE * tm,
-            "asset": p["asset"], "horizon": p["horizon"], "run": p["run"], "p_up": p["p_up"],
-            "size": [p["size_lo"], p["size_hi"]], "used": p["used"], "decisive": p["decisive"], "reason": p["reason"],
-            "target_date": s["target_date"]}
+    D.due_reviews = review_due(recs["score"] + scores, by_id, recs["review"], hists)
     D.due_checks = {(c["target"], c["state"]): c for c in RS.due_checks(root.records, day)}
     D.open_next = H.open_next(recs["review"], recs["run"], day)
     D.places = RS.load_places(root.places)
@@ -572,7 +628,8 @@ def equal_targets(orders: list[dict], eb: B.Broker | None, prices: dict[str, flo
     고른다), eb = 그 계좌의 증권사(갈아타기 전이면 None). 첫 사기가 돈이 잡혀(장 시작 사기는 한도만큼 잡아 둔다) 덜 된 대상(지난
     plan 줄의 short)은 남은 돈이 계좌의 문턱(2%) 이상일 때 마저 산다. compute에서 떼어 냈다(2026-11-10, 동작 같음 —
     market/whatif.py가 같은 규칙을 부른다)."""
-    bought = {o["asset"] for o in orders if o["account"] == "baseline:equal_hold"}
+    acct = eb.account if eb is not None else "baseline:equal_hold"   # 2기(2026-11-17)면 baseline:equal_hold@2 — 그 기의 주문만
+    bought = {o["asset"] for o in orders if o["account"] == acct}
     if eb is not None:
         # 덜 산 대상: 마지막 plan 줄의 short. plan 줄이 아직 없으면(갈아타는 날) 옛 주문을 다시 넣은 끝 줄(phase carry)의 short —
         # 기준선은 다시 넣을 때 돈이 모자란 사기를 살 수 있는 만큼만 샀다(2026-11-10 3회 2회차)
@@ -910,17 +967,18 @@ def template(D: Day) -> dict:
                  for a in hand_assets for hz in C.ASSETS[a].horizons],
         "weights": {a: {"target": round(units.get(a, 0) * D.prices[a] / C.ASSETS[a].unit / total, 4) if total else 0.0,
                         "reason": ""} for a in assets},
-        "reviews": [{"prediction": pid, "why": "", "wrong": [], "reason": "", "_info": info}
-                    for pid, info in D.due_reviews.items()],
+        **({"reviews": [{"prediction": pid, "why": "", "wrong": [], "reason": "", "_info": info}
+                        for pid, info in D.due_reviews.items()]} if not FL.active(D.day) else
+           {"_reviews": f"돌아보기 {len(D.due_reviews)}건은 9시 뒤 피드백 정리 실행이 한다(python -m market.daily feedback) — 아침에는 넣지 않는다"}),
         "corrections": [],
-        **({"_lessons_due": LS.due(D.recs["review"], D.recs["lesson"], D.day, []), "lessons": [],
-            "_lessons_form": "{root: 'L01'|새 id, kind: 같음|새 뿌리|충돌|고침|합침|내림, reviews: [review id…](고침·합침·내림은 [] 가능), "
-                             "tried: {나아짐, 모름, 나빠짐}, (새 뿌리·충돌·고침) sentence, (충돌) against: 있는 뿌리 id, split: 가르는 조건, "
-                             "(합침) into: 남길 뿌리 id, (고침·합침·내림) why} — 오늘 돌아보기의 '다음엔'도 'review:<예측 id>'로 넣는다"}
-           if LS.is_lesson_day(D.day) else {}),
-        **({"precheck": {"roots": [], "note": "", "lessons_by": ""},
-            "_precheck": "피드백 정리 결과(뿌리 목록·lessons)를 다 읽고 오늘 판단이 밟은 뿌리(roots)와 그래서 고친 것·안 고친 것(note), "
-                         "정리한 에이전트(lessons_by, 예 'opus-5.5 high')를 적는다 — 비면 record가 거절한다(지시문 4-0)",
+        **({"precheck": {"roots": [], "note": "", "read": ""},
+            "_precheck": "판단 전에 뿌리 목록(전날까지 피드백 정리 실행이 정리)·논리집 메인 피드백·최근 돌아보기 원문을 읽고 오늘 판단이 "
+                         "밟은 뿌리(roots)와 그래서 고친 것·안 고친 것(note), 읽은 것(read)을 적는다 — 비면 record가 거절한다(지시문 4-0)",
+            "story": {k: "" for k in FL.STORY_KEYS},
+            "_story": "글 쓰는 에이전트(9시 뒤, 판단한 본인이 아님)가 기록만 보고 일지를 쓴다 — conclusion: 오늘의 한 줄 결론, why: 무엇을 "
+                      "왜 샀나·팔았나(조각 id·사실·링크), tomorrow: 내일 볼 것(숫자 조건 + 확신도). 비면 record가 거절한다",
+            "timeline": {"started": ""},
+            "_timeline": "단계 시각(시간대 붙은 ISO): started(필수 — 이 실행 시작), 더 적으면 좋은 것 scan_sent·scan_done·draft·recheck_sent",
             "recheck": {"sent_at": "", "agents": [], "found": [], "premarket": "", "changed": []},
             "_recheck": f"{C.RECHECK_FROM:%H:%M} 다시 보기(지시문 4-0): 초안이 선 뒤 {C.RECHECK_FROM:%H:%M}에 이슈 위주 에이전트 "
                         f"{FL.RECHECK_MIN_AGENTS}개 이상을 보내고 보낸 시각(sent_at), 저마다 {{focus, model, effort, returned}}, 찾은 이슈 "
@@ -929,8 +987,9 @@ def template(D: Day) -> dict:
                         "비면 record가 거절한다. 09:00이 넘으면 record는 주문·예측을 하나도 넣지 않는다"} if FL.active(D.day) else {}),
         "_asks": "대화 세션 몫(코드·문법이 필요해 오늘 못 하는 것)은 asks에 {what, close}로 연다 — notes에만 적지 않는다(지시문 '대화 세션 몫')",
         "asks": [],
-        "reading_checks": [{"target": t, "state": st, "now": "", "hit": None, "late": [], "reason": "",
-                            "_then": c["then"], "_why_then": c["why_then"]} for (t, st), c in D.due_checks.items()],
+        **({"reading_checks": [{"target": t, "state": st, "now": "", "hit": None, "late": [], "reason": "",
+                                "_then": c["then"], "_why_then": c["why_then"]} for (t, st), c in D.due_checks.items()]}
+           if not FL.active(D.day) else {}),
     }
 
 
@@ -968,12 +1027,14 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
            "record_ids": {x["id"] for items in D.recs.values() for x in items}}
     ctx["at"] = at.isoformat(timespec="seconds")  # 조사 as_of가 판단 시각보다 늦으면 거절(2026-11-04, E4)
     errs, warns = H.validate(inp, ctx)
+    if FL.active(day):   # 돌아보기·다시 보기는 9시 뒤 피드백 정리 실행 몫(2026-11-17 p564) — 아침 경고에서 뺀다
+        warns = [w for w in warns if not w.startswith(("돌아보지 않은 손 예측", "다시 보지 않은 손 대 보기"))]
     errs += A.input_errors(inp)
     # 일요일 주간 결산: 그 주의 '다음엔'을 뿌리에 묶는다(2026-11-17, market/lessons.py) — 빠지면 거절
     known_roots = {r["id"] for r in LS.current(root.lessons, root.records)}
-    due = LS.due(D.recs["review"], D.recs["lesson"], day, [rv for rv in inp.get("reviews", []) if isinstance(rv, dict)])
-    errs += LS.input_errors(inp, day, due, known_roots, LS.all_ids(root.lessons, root.records))
-    # 아침 흐름(2026-11-17 p564, market/flow.py·scan.py): 피드백 정리를 읽었나, 08:40 다시 보기, 대상마다 아침 조사 파일
+    # 아침 흐름(2026-11-17 p564, market/flow.py·scan.py): 뿌리 목록을 읽었나, 08:40 다시 보기, 대상마다 아침 조사 파일, 판단의 요지.
+    # 돌아보기·뿌리 묶기는 9시 뒤 피드백 정리 실행(feedback) 몫이라 아침에는 넣지 않는다(보완 1·3)
+    errs += FL.morning_errors(inp, day, at)
     errs += FL.precheck_errors(inp, day, known_roots)
     errs += FL.recheck_errors(inp, day, at)
     scan_dir, scan_assets = input_path.parent / "scan", list(D.predictable) + [a for a in D.stock_ok if a not in D.predictable]
@@ -999,6 +1060,12 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
         try:
             for aid, tg, band, rs in jobs:
                 plans[aid] = RB.rebalance(D.brokers[aid], tg, D.prices, clock, band, rs)
+            for aid, b in D.closing.items():   # 1기 닫기(2026-11-17): 마지막 평가 줄 + phase 'close' — 팔지 않고 2기로 옮기지 않는다
+                res = b.snapshot(clock.now(), day, D.value_prices)
+                warns += [f"{aid}(1기): {w}" for w in res.warnings] + ([] if res.ok else [f"{aid}(1기): {res.reason}"])
+                res = b.mark(clock.now(), "phase", {"name": "close", "next": C.period_id(aid, D.period)},
+                             f"1기 닫음: 새 아침 흐름 첫날 {D.period}기를 1,000만 원에서 연다(2026-11-17 사용자 결정) — 이 계좌에는 더 쓰지 않는다")
+                warns += [] if res.ok else [f"{aid}(1기) 닫기: {res.reason}"]
             for aid, b in D.brokers.items():   # 계좌 줄: 판단 때의 상태(그날 낸 지금 주문과 이체까지 반영), 하루 한 줄
                 res = b.snapshot(clock.now(), day, D.value_prices)
                 warns += [f"{aid}: {w}" for w in res.warnings] + ([] if res.ok else [f"{aid}: {res.reason}"])
@@ -1027,10 +1094,9 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
     lines["hand_reading"] = hand["hand_reading"]
     lines["prediction"] = D.preds + hand["prediction"]
     lines["order"] = D.calc_orders + hand_orders
-    lines["lesson"] = LS.record_lines(day, inp) if LS.is_lesson_day(day) else []
     lines["scan"] = SC.record_lines(scan_dir, scan_assets, day) if FL.active(day) else []
     lines["premarket"] = PM.record_lines(input_path.parent / "premarket.json", day)
-    for b in D.brokers.values() if D.mode == "broker" else ():   # 가상 증권사가 만든 줄(주문·체결·사건·계좌)
+    for b in [*D.closing.values(), *D.brokers.values()] if D.mode == "broker" else ():   # 가상 증권사가 만든 줄(주문·체결·사건·계좌)
         for k in B.KINDS:
             lines[k] += b.new[k]
     rejects = [x for x in lines["broker"] if x["type"] == "reject"]
@@ -1047,7 +1113,8 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
                   "stocks": {"pool": len(D.pool), "usable": len(D.stock_ok), "held": D.held, "recorded": D.focus,
                              "skipped": {a: w for a, w in D.stock_skipped.items() if a in set(D.held) | focus}},
                   "fills": len(lines["fill"]), "scores": len(D.scores),
-                  "broker": {"mode": D.mode, "switched": D.switched, "rejects": len(rejects),
+                  "broker": {"mode": D.mode, "switched": D.switched, "rejects": len(rejects), "period": D.period,
+                             **({"opened": D.period, "closed": {aid: b.account for aid, b in D.closing.items()}} if D.opening else {}),
                              "transfers": sum(x["type"] == "transfer" for x in lines["broker"]),
                              "cancels": sum(x["type"] == "cancel" for x in lines["broker"]),
                              "expired": sum(x["type"] == "expire" for x in lines["broker"])},
@@ -1062,9 +1129,11 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
                   **({"recheck": inp["recheck"]} if isinstance(inp.get("recheck"), dict) else {}),
                   **({"scan": {"assets": len(lines["scan"]), "failed": sum(bool(x.get("failed")) for x in lines["scan"]),
                                "found": sum(len(x["found"]) for x in lines["scan"])}} if lines["scan"] else {}),
-                  **({"lessons": len(lines["lesson"])} if LS.is_lesson_day(day) else {})},
+                  **({"timeline": inp["timeline"]} if isinstance(inp.get("timeline"), dict) else {})},
         "notes": [str(n) for n in inp.get("notes", [])] + [f"경고: {w}" for w in warns],
-        **({"asks": A.run_field(run, inp)} if inp.get("asks") else {})})
+        **({"asks": A.run_field(run, inp)} if inp.get("asks") else {}),
+        **({"story": {k: str(inp["story"][k]) for k in FL.STORY_KEYS}} if isinstance(inp.get("story"), dict)
+           and all(k in inp["story"] for k in FL.STORY_KEYS) else {})})
 
     # 모두 검사한 뒤에 쓴다 (하나라도 틀리면 아무것도 안 쓴다)
     problems = []
@@ -1102,6 +1171,118 @@ def record(root: Root, day: dt.date, at: dt.datetime, input_path: Path) -> int:
     return 0
 
 
+# ---------- feedback (9시 뒤 피드백 정리) ----------
+def feedback_context(root: Root, day: dt.date) -> tuple[dict, dict]:
+    """(recs, ctx): 9시 뒤 피드백 정리 실행이 돌아볼 것 — 아침 record가 쓴 채점 가운데 아직 돌아보지 않은 손 예측, 다시 볼 손 대 보기,
+    열린 '다음엔', 아직 묶지 않은 '다음엔'."""
+    recs = {k: R.read(root.records, k) for k in R.FIELDS}
+    ST.register(root.stocks)
+    by_id = {p["id"]: p for p in recs["prediction"]}
+    assets = {by_id[s["prediction"]]["asset"] for s in recs["score"] if s["prediction"] in by_id}
+    hists = {a: PR.History(a, PR.load(a, root.prices)) for a in assets if (root.prices / f"{a}.csv").exists()}
+    raw = tomllib.loads(root.knowledge.read_text(encoding="utf-8"))
+    ctx = {"day": day.isoformat(), "due_reviews": review_due(recs["score"], by_id, recs["review"], hists),
+           "due_checks": {(c["target"], c["state"]): c for c in RS.due_checks(root.records, day)},
+           "open_next": H.open_next(recs["review"], recs["run"], day),
+           "places": [p["id"] for p in RS.load_places(root.places)],
+           "node_ids": {n.get("id") for k in ("goal", "state", "fact", "hypothesis", "rule") for n in raw.get(k, [])},
+           "record_ids": {x["id"] for items in recs.values() for x in items}}
+    return recs, ctx
+
+
+def feedback_template(root: Root, day: dt.date) -> dict:
+    recs, ctx = feedback_context(root, day)
+    return {
+        "day": day.isoformat(), "by": "", "summary": "", "notes": [],
+        "_by": "정리한 에이전트(예: opus-5.5 xhigh — 예약 설정에 지정한 값)", "_summary": "글 쓰는 에이전트가 읽을 정리 요약: 어제·그 전 "
+        "선택이 어땠고 무엇을 배웠고 무엇을 고치·합치·내렸나(쉬운 말 두세 문장)",
+        "reviews": [{"prediction": pid, "why": "", "wrong": [], "reason": "", "_info": info}
+                    for pid, info in ctx["due_reviews"].items()],
+        "reading_checks": [{"target": t, "state": st, "now": "", "hit": None, "late": [], "reason": "",
+                            "_then": c["then"], "_why_then": c["why_then"]} for (t, st), c in ctx["due_checks"].items()],
+        "corrections": [],
+        "_open_next": ctx["open_next"],
+        "_lessons_due": LS.due(recs["review"], recs["lesson"], day, []), "lessons": [],
+        "_lessons_form": "{root: 'L01'|새 id, kind: 같음|새 뿌리|충돌|고침|합침|내림, reviews: [review id…](고침·합침·내림은 [] 가능), "
+                         "tried: {나아짐, 모름, 나빠짐}, (새 뿌리·충돌·고침) sentence, (충돌) against: 있는 뿌리 id, split: 가르는 조건, "
+                         "(합침) into: 남길 뿌리 id, (고침·합침·내림) why} — 오늘 돌아보기의 '다음엔'도 'review:<예측 id>'로 넣는다",
+    }
+
+
+def feedback(root: Root, day: dt.date, at: dt.datetime, input_path: Path | None) -> int:
+    """9시 뒤 피드백 정리(2026-11-17 p564 보완 1·3 — 사용자 "피드백 정리 … 9시 뒤", 정리는 Opus xhigh 예약): 아침 판단(run 줄 live·late)이
+    있는 날 한 번. 입력의 돌아보기(돌아볼 차례 전부 — 빠지면 거절)·다시 보기·정정·뿌리 묶기를 검사하고 한 번에 덧붙인 뒤
+    run 줄 feedback:<날짜>를 남긴다(글 쓰는 실행이 이 줄을 기다린다). 새 투자 판단(비중·예측)은 하지 않는다.
+    input_path가 없으면 틀(out/daily/<날짜>/feedback.json)만 만든다."""
+    run = day.isoformat()
+    if input_path is None:
+        out = root.day_dir(day) / "feedback.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if out.exists():
+            print(f"{out}가 이미 있다 — 덮지 않는다")
+        else:
+            out.write_text(json.dumps(feedback_template(root, day), ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"틀: {out}  (채운 뒤: python -m market.daily feedback {out})")
+        return 0
+    recs, ctx = feedback_context(root, day)
+    if not any(r["run"] == run and r.get("mode") in ("live", "late") for r in recs["run"]):
+        print(f"{run} 아침 판단 기록(run)이 아직 없다 — 피드백 정리는 그 뒤에 한다. 아무것도 쓰지 않았다")
+        return 1
+    if any(r["id"] == f"feedback:{run}" for r in recs["run"]):
+        print(f"{run} 피드백 정리 기록이 이미 있다 — 같은 날 두 번 쓰지 않는다")
+        return 1
+    inp = H.load_input(input_path)
+    errs, warns = H.feedback_errors(inp, ctx)
+    if inp.get("day") != run:
+        errs.append(f"입력의 day '{inp.get('day')}'가 오늘 '{run}'와 다름")
+    missing = sorted(set(ctx["due_reviews"]) - {rv.get("prediction") for rv in inp.get("reviews", []) if isinstance(rv, dict)})
+    if missing:   # 꼭 할 단계 — 아침에서 옮겨 온 돌아보기를 빠뜨리지 않게
+        errs.append(f"reviews: 돌아볼 손 예측 {len(missing)}건이 빠졌다 — {', '.join(missing[:5])}{' …' if len(missing) > 5 else ''}")
+    for k in ("by", "summary"):
+        if not str(inp.get(k, "")).strip():
+            errs.append(f"{k}가 비었다")
+    errs += A.input_errors(inp)
+    known = {r["id"] for r in LS.current(root.lessons, root.records)}
+    due = LS.due(recs["review"], recs["lesson"], day, [rv for rv in inp.get("reviews", []) if isinstance(rv, dict)])
+    errs += LS.input_errors(inp, day, due, known, LS.all_ids(root.lessons, root.records)) if LS.is_lesson_day(day) else []
+    if errs:
+        print(f"입력 오류 {len(errs)}건 — 아무것도 쓰지 않았다:")
+        for e in errs:
+            print("  -", e)
+        return 1
+    lines = H.feedback_lines(inp, ctx)
+    lines["lesson"] = LS.record_lines(day, inp) if LS.is_lesson_day(day) else []
+    kinds = {}
+    for e in inp.get("lessons") or []:
+        kinds[e.get("kind")] = kinds.get(e.get("kind"), 0) + 1
+    lines["run"] = [{"id": f"feedback:{run}", "run": run, "mode": "feedback",
+                     "steps": {"at": at.isoformat(timespec="seconds"), "by": str(inp["by"]), "reviews": len(lines["review"]),
+                               "reading_checks": len(lines["reading_check"]), "corrections": len(lines["correction"]),
+                               "lessons": kinds, "summary": str(inp["summary"])},
+                     "notes": [str(n) for n in inp.get("notes", [])] + [f"경고: {w}" for w in warns],
+                     **({"asks": [dict(x, id=x["id"].replace(f"ask:{run}:", f"ask:{run}:f"))   # 아침 것과 겹치지 않게
+                                  for x in A.run_field(run, inp)]} if inp.get("asks") else {})}]
+    problems = []
+    for kind, items in lines.items():
+        ids = {x["id"] for x in recs.get(kind, [])}
+        for i, it in enumerate(items):
+            problems += R.line_errors(kind, {"kind": kind, **it}, f"{kind}+{i}")
+            problems += [f"{kind}: id '{it['id']}'가 이미 있음"] if it["id"] in ids else []
+            ids.add(it["id"])
+    if problems:
+        print(f"기록 칸 오류 {len(problems)}건 — 아무것도 쓰지 않았다:")
+        for e in problems[:30]:
+            print("  -", e)
+        return 1
+    for kind in ("review", "reading_check", "correction", "lesson", "run"):
+        if lines[kind]:
+            R.write(root.records, kind, lines[kind])
+    print(f"{run} 피드백 정리 기록: " + ", ".join(f"{k} {len(v)}" for k, v in lines.items() if v))
+    for w in warns:
+        print("  경고:", w)
+    return 0
+
+
 # ---------- open (장 시작 뒤 단계) ----------
 def open_phase(root: Root, day: dt.date, at: dt.datetime) -> int:
     """09:00 뒤 아무 때나, 하루 한 번(16절 '장 시작 뒤'): 계좌마다 맞추기(오늘 시가 체결을 장부에) → 오늘 plan 줄의 목표 비중으로
@@ -1112,7 +1293,10 @@ def open_phase(root: Root, day: dt.date, at: dt.datetime) -> int:
     if not any(r["run"] == run and r.get("mode") == "live" for r in recs["run"]):
         print(f"{run} 판단 기록(run)이 없다 — 장 시작 뒤 단계는 판단이 돈 날에만 돈다. 아무것도 쓰지 않았다")
         return 0
-    if not all(any(x["account"] == aid and x["type"] == "start" for x in recs["broker"]) for aid in C.LIVE_ACCOUNTS):
+    period = max((C.period_of(x["account"]) for x in recs["broker"] if x.get("type") == "start"
+                   and C.role_of(x["account"]) in C.LIVE_ACCOUNTS), default=1)   # 지금 열린 기(2026-11-17) — 닫힌 1기는 건드리지 않는다
+    ids = {aid: C.period_id(aid, period) for aid in C.LIVE_ACCOUNTS}
+    if not all(any(x["account"] == i and x["type"] == "start" for x in recs["broker"]) for i in ids.values()):
         print("아직 가상 증권사로 갈아타기 전이다 — 아무것도 쓰지 않았다")
         return 0
     quotes = quotes_for(root)
@@ -1121,7 +1305,7 @@ def open_phase(root: Root, day: dt.date, at: dt.datetime) -> int:
     hists = {a: PR.view(a, r, at) for a, r in rows.items() if a in C.CORE or C.is_stock(a)}
     bar_days = [r.date for r in hists["069500"].rows] if "069500" in hists else None
     try:
-        brokers = {aid: B.Broker(aid, quotes, recs, bar_days) for aid in C.LIVE_ACCOUNTS}
+        brokers = {aid: B.Broker(ids[aid], quotes, recs, bar_days) for aid in C.LIVE_ACCOUNTS}
     except Exception as exc:
         return stop([crash("기록 다시 돌리기", exc)])
     problems = [e for b in brokers.values() for e in b.problems]
@@ -1186,7 +1370,11 @@ def open_accounts(brokers: dict, run: str, at: dt.datetime, quotes: Q.Quotes, hi
                                                          lambda a: C.ASSETS[a].name if a else "")]
             continue
         plan = RB.Plan(lines=list(res.lines), warnings=list(res.warnings))
-        todays = [x for x in b.events("plan") if x["run"] == run]
+        # 아침에 09:00 전에 정한 목표만(2026-11-17 두 사용자 결정을 가르는 조건 — '9시 뒤 체결은 막는다'는 9시 뒤 새 판단에,
+        # 2026-11-10 '그건 두는 걸로'는 9시 전 목표를 마저 채우는 이 단계에): 이 단계는 입력을 받지 않고 그날 plan 줄만 읽는다
+        nine = dt.datetime.combine(dt.date.fromisoformat(run), C.RECORD_BY, C.KST)
+        todays = [x for x in b.events("plan") if x["run"] == run
+                  and (not FL.active(dt.date.fromisoformat(run)) or dt.datetime.fromisoformat(x["at"]) < nine)]
         if todays:
             data = todays[-1]["data"]
             targets = dict(data.get("targets", {}))
@@ -1242,6 +1430,9 @@ def main(argv: list[str]) -> int:
     pos, opt = _args(argv)
     if pos and pos[0] == "wait":   # 08:40 다시 보기까지 기다리기(지시문 4-0) — 한 번에 9분까지, 남았으면 다시 부른다
         return wait_until(dt.time.fromisoformat(pos[1]) if len(pos) > 1 else C.RECHECK_FROM)
+    if pos and pos[0] == "feedback":
+        root, day, at = when(opt, dt.time(9, 15))
+        return feedback(root, day, at, Path(pos[1]) if len(pos) > 1 else None)
     if not pos or pos[0] not in ("prepare", "record", "report", "open"):
         print(__doc__)
         return 2

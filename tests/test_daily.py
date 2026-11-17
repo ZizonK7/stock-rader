@@ -47,7 +47,7 @@ def fill(tpl: dict, value: str = "예", review_why=None) -> dict:
                  reason="가짜 손 예측", confidence="보통")
     for a in inp["weights"]:
         inp["weights"][a] = {"target": 0.3, "reason": "가짜 비중"}
-    for rv in inp["reviews"]:
+    for rv in inp.get("reviews", []):
         why = review_why or ("맞음" if rv["_info"]["verdict"] == "맞음" else "조건 흐림")
         rv.update(why=why, wrong=[] if why == "맞음" else ["Q_rate_up_shift_linked"], reason="가짜 돌아보기")
     inp["agents"] = 4

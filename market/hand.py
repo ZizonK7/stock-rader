@@ -435,6 +435,16 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
         errs.append(f"weights: 종목 비중 합 {total_stock:.3f} > 상한 {C.STOCK_MAX_TOTAL} (한 회사 주식은 묶음의 2~3배 흔들린다 — "
                     f"종목 몫 합이 묶음 1/3 기준선보다 크게 무거워지지 않게)")
 
+    e2, w2 = feedback_errors(inp, ctx)
+    return errs + e2, warns + w2
+
+
+def feedback_errors(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
+    """돌아보기·대 보기 다시 보기·정정(그리고 notes의 '지난 다음엔') 검사. 2026-11-17 p564부터 9시 뒤 피드백 정리 실행
+    (`daily feedback`)도 이것을 부른다. ctx: day, due_reviews, due_checks, node_ids, places, record_ids, (있으면) open_next."""
+    errs, warns = [], []
+    day = ctx["day"]
+    places = set(ctx["places"])
     # 돌아보기
     got = set()
     for i, rv in enumerate(inp.get("reviews", [])):
@@ -498,6 +508,25 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
     if set(ctx["due_checks"]) - gotc:
         warns.append(f"다시 보지 않은 손 대 보기 {len(set(ctx['due_checks']) - gotc)}건")
     return errs, warns
+
+
+def feedback_lines(inp: dict, ctx: dict) -> dict[str, list[dict]]:
+    """검사를 통과한 입력의 돌아보기·다시 보기·정정 → 기록 줄(lines와 같은 모양)."""
+    day = ctx["day"]
+    out: dict[str, list[dict]] = {"review": [], "reading_check": [], "correction": []}
+    for i, c in enumerate(inp.get("corrections", [])):
+        out["correction"].append({"id": f"correction:{day}:{i + 1}", "run": day, "target": c["target"],
+                                  "note": str(c["note"])})
+    for rv in inp.get("reviews", []):
+        out["review"].append({"id": f"review:{rv['prediction']}", "run": day, "prediction": rv["prediction"],
+                              "wrong": list(rv.get("wrong", [])), "why": rv["why"], "reason": str(rv["reason"])})
+    for ck in inp.get("reading_checks", []):
+        info = ctx["due_checks"][(ck["target"], ck["state"])]
+        out["reading_check"].append({"id": f"reading_check:{ck['target']}:{ck['state']}", "run": day,
+                                     "target": ck["target"], "state": ck["state"], "then": info["then"],
+                                     "now": str(ck["now"]), "hit": ck.get("hit"), "late": list(ck.get("late", [])),
+                                     "reason": str(ck["reason"])})
+    return out
 
 
 # ---------- 기록 줄 만들기 ----------

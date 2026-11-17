@@ -54,9 +54,16 @@ def asset_label(asset: str) -> str:
 class Book:
     """한 기록 폴더를 읽어 날짜별 계좌·체결·주문·채점을 꺼내는 도우미."""
 
-    def __init__(self, folder: Path):
+    def __init__(self, folder: Path, period: int | None = None):
         ST.register(folder.parent / "stocks.toml")  # 종목 이름 (기록 폴더의 저장소 루트)
         self.recs = {k: R.read(folder, k) for k in R.FIELDS}
+        self.period = period
+        if period is not None:
+            # 계좌 기수(2026-11-17): 그 기의 계좌 줄만 남기고 id를 역할 이름으로(live:hand@2 → live:hand) — 아래 코드는 그대로 돈다
+            self.closed = {C.role_of(x["account"]): x for x in self.recs["account"]
+                           if C.period_of(x["account"]) == period - 1}   # 바로 앞 기의 마지막 계좌 줄(닫은 값)
+            self.recs = {k: [dict(x, account=C.role_of(x["account"])) if "account" in x else x for x in v
+                             if "account" not in x or C.period_of(x["account"]) == period] for k, v in self.recs.items()}
         self.acc = defaultdict(dict)  # 계좌 → 날짜 → 기록
         # 가상 증권사로 갈아탄 계좌(start 줄)는 start 실행 날짜부터 seq 있는 계좌 줄만 읽는다 — 증권사가 만들지 않은 줄(손으로 덧붙인
         # 옛 모양 줄)이 그날 평가액이 되지 않게(검토 발견 2c; records check도 그 줄을 오류로 잡는다)
@@ -71,7 +78,7 @@ class Book:
         self.replayed = {o["id"] for o in self.recs["order"] if o.get("replay_of")}
         self.carry_at = {x["account"]: x["at"] for x in self.recs.get("broker", [])
                          if x.get("type") == "phase" and (x.get("data") or {}).get("name") == "carry"}
-        self.switch_run = started
+        self.switch_run = started if (period or 1) == 1 else {}   # 갈아타는 날(옛 장부 → 증권사)은 1기에만 있었다
 
     def replay(self, x: dict, kind: str) -> bool:
         """그대로 다시 넣은 줄인가(주문·체결·증권사 사건)."""
@@ -314,9 +321,15 @@ def late_diary(b: Book, day: dt.date, late: dict) -> str:
     return "\n".join(lines)
 
 
+def period_on(folder: Path, run: str) -> int:
+    """그 판단 날의 계좌 기수: 그날 이전(포함)에 start가 있는 가장 큰 기(2026-11-17)."""
+    return max((C.period_of(x["account"]) for x in R.read(folder, "broker") if x.get("type") == "start"
+                and C.role_of(x["account"]) in C.LIVE_ACCOUNTS and x.get("run", "") <= run), default=1)
+
+
 def daily(folder: Path, day: dt.date) -> str:
-    b = Book(folder)
     run = day.isoformat()
+    b = Book(folder, period_on(folder, run))
     me, eq = b.acc["live:hand"].get(run), b.acc["baseline:equal_hold"].get(run)
     if me is None:
         late = next((x for x in b.recs["run"] if x["id"] == f"late:{run}"), None)
@@ -327,6 +340,9 @@ def daily(folder: Path, day: dt.date) -> str:
     pa = b.acc["live:hand"].get(prev) if prev else None
     start = C.START_CASH
     lines = [f"# {day.month}월 {day.day}일 — [[채울 것: 오늘의 한 줄 결론]]", ""]
+    conclusion = (next((x for x in b.recs["run"] if x["id"] == f"live:{run}"), {}).get("story") or {}).get("conclusion")
+    if conclusion:
+        lines.insert(1, f"<!-- 참고: 아침 판단의 한 줄 결론(기록) — {str(conclusion).replace('--', '—')} -->")
 
     # 첫 두 문장 (고정 꼴)
     brk = "pockets" in me   # 가상 증권사 계좌 줄(2026-11-10~)인가 — 옛 날짜 일지는 아래 옛 길로 예전처럼 나온다
@@ -356,6 +372,12 @@ def daily(folder: Path, day: dt.date) -> str:
     switch = brk and pa is not None and "seq" not in pa
     if switch:
         second = carry_sentence(b, me, pa, run)
+    elif pa is None and b.period >= 2:
+        hand0, eq0 = (b.closed.get("live:hand") or {}).get("value"), (b.closed.get("baseline:equal_hold") or {}).get("value")
+        second = (f"오늘부터 아침 흐름을 새로 바꾸면서(종목마다 조사, 9시 전에만 사고팔기) 계좌를 가상 1,000만 원에서 다시 출발했다({b.period}기). "
+                  + (f"지금까지의 계좌(1기)는 {won_about(hand0)}으로 닫아 비교용으로 남겼다"
+                     + (f"(같은 날 셋을 나눠 사 둔 기준선은 {won_about(eq0)})" if eq0 else "") + ". " if hand0 else "")
+                  + "비교용 기준선 계좌도 같은 시각에 1,000만 원에서 같이 출발했다.")
     elif pa is None:
         second = "오늘 가상 1,000만 원으로 계좌를 시작했다."
     else:
@@ -384,14 +406,26 @@ def daily(folder: Path, day: dt.date) -> str:
     none = sorted({lk["place"] for r in research for lk in r["looked"] if lk["result"] in ("없음", "막힘")})
     late = sorted({lk["place"] for r in research for lk in r["looked"] if lk["result"] == "늦음"})
     new = sorted({lk["place"] for r in research for lk in r["looked"] if lk.get("new")})
+    # 아침 판단의 요지(2026-11-17 p564: 글은 판단한 본인이 아니라 9시 뒤 다른 에이전트가 기록만 보고 쓴다)와 9시 뒤 피드백 정리
+    live = next((x for x in b.recs["run"] if x["id"] == f"live:{run}"), {})
+    story = live.get("story") or {}
+    fb = next((x for x in b.recs["run"] if x["id"] == f"feedback:{run}"), None)
+    learned = [f"{ln['root']} {ln.get('type', '')}: {ln.get('sentence') or ln.get('why') or ''}"
+               + (f" (→ {ln['into']})" if ln.get("into") else "") + (f" — 가르는 조건: {ln['split']}" if ln.get("split") else "")
+               + f" (묶은 '다음엔' {len(ln.get('reviews', []))}건)" for ln in b.recs["lesson"] if ln["run"] == run]
     lines += [f"**왜** [[채울 것: 근거 조각 1–3개(짧은 이름과 성적), 조사에서 나온 새 사실과 출처, 확신도]]",
-              _ref(ref_why + ref_orders),
+              _ref(([f"아침 판단의 요지(기록): {story['why']}"] if story.get("why") else []) + ref_why + ref_orders),
               f"**잘된 것** [[채울 것: 없으면 '없음']]", _ref(good),
-              f"**잘못된 것** [[채울 것: 틀린 예측 → 틀린 조각 → 까닭 → 바꾼 것. 없으면 '없음']]", _ref(bad),
+              f"**잘못된 것** [[채울 것: 틀린 예측 → 틀린 조각 → 까닭 → 바꾼 것. 없으면 '없음']]", _ref(bad)]
+    if fb is not None:
+        lines += [f"**배운 것** [[채울 것: 어제·그 전 선택이 어땠고, 무엇을 배워 어떤 교훈을 새로 세우거나 고치거나 합치거나 내렸는지 — 쉬운 말로]]",
+                  _ref([f"피드백 정리 요약: {fb['steps'].get('summary', '')}"] + learned)]
+    lines += [
               f"**조사 메모** [[채울 것: 한두 줄. 오늘 판단에 쓸모 있던 곳과 끝내 못 찾은 것(막힌 곳 목록은 기록에만)]]",
               _ref([f"찾음: {', '.join(found) or '없음'}", f"없음·막힘: {', '.join(none) or '없음'}",
                     f"늦음(판단 뒤에 나옴): {', '.join(late) or '없음'}", f"새로 시도: {', '.join(new) or '없음'}"]),
-              f"**내일 볼 것** [[채울 것: 숫자 조건 + 확신도]]", ""]
+              f"**내일 볼 것** [[채울 것: 숫자 조건 + 확신도]]",
+              _ref([f"아침 판단의 요지(기록): {story['tomorrow']}"] if story.get("tomorrow") else []), ""]
 
     # 계좌 표
     lines += ["| 대상 | 보유 | 평가액 | 오늘 | 누적 |", "|---|--:|--:|--:|--:|"]
@@ -474,8 +508,8 @@ def _ref(items: list[str]) -> str:
 
 # ---------- 주간 결산 ----------
 def weekly(folder: Path, day: dt.date, places_path: Path | None = None) -> str:
-    b = Book(folder)
     run = day.isoformat()
+    b = Book(folder, period_on(folder, run))
     mon = (day - dt.timedelta(days=day.weekday())).isoformat()
     start = C.START_CASH
     lines = [f"# {day.month}월 {day.day}일 주간 결산 ({mon} ~ {run}) — [[채울 것: 이번 주 한 줄 요약]]", "",
@@ -567,6 +601,11 @@ def knowledge_log(repo: Path, since: str, until: str) -> list[str]:
 
 # ---------- 파일 ----------
 def write(root, day: dt.date, force: bool = False) -> int:
+    from . import flow as FL
+    if FL.active(day) and not any(x["id"] == f"feedback:{day.isoformat()}" for x in R.read(root.records, "run")):
+        # 2026-11-17 p564: 글은 9시 뒤 피드백 정리 실행이 끝난 뒤에 쓴다 — '어제 선택이 어땠고 무엇을 배웠나'가 글에 들어간다
+        print(f"{day} 피드백 정리 기록(run feedback:{day})이 아직 없다 — 일지는 그 뒤에 만든다. 아무것도 쓰지 않았다")
+        return 1
     root.reports.mkdir(parents=True, exist_ok=True)
     made = []
     targets = [(root.reports / f"{day.isoformat()}.md", lambda: daily(root.records, day))]

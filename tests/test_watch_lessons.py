@@ -225,10 +225,10 @@ class Precheck(unittest.TestCase):
     def test_precheck_required(self):
         from market import flow as FL
         day = dt.date(2026, 11, 18)
-        ok = {"precheck": {"roots": ["L04"], "note": "종목 1봉을 0.5로 되돌림", "lessons_by": "opus-5.5 high"}}
+        ok = {"precheck": {"roots": ["L04"], "note": "종목 1봉을 0.5로 되돌림", "read": "뿌리 목록 11개, 최근 돌아보기 6건"}}
         self.assertEqual(FL.precheck_errors(ok, day, {"L04"}), [])
         self.assertTrue(FL.precheck_errors({}, day, {"L04"}))
-        for k in ("note", "lessons_by"):
+        for k in ("note", "read"):
             self.assertTrue(FL.precheck_errors({"precheck": {**ok["precheck"], k: ""}}, day, {"L04"}))
         unknown = json.loads(json.dumps(ok))
         unknown["precheck"]["roots"] = ["L99"]

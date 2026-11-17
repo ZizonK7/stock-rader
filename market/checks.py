@@ -245,15 +245,22 @@ def account_vs_equal(node_id: str | None = None):
     out = []
     for (src, folder), mine_id in zip(_folders(), ("replay:calc", "live:calc")):
         accs = [a for a in R.read(folder, "account") if a["run"] > cut]
-        mine = [a for a in accs if a["account"] == mine_id]
-        eq = [a for a in accs if a["account"] == "baseline:equal_hold"]
+        # 계좌 기수(2026-11-17): 1기와 2기를 섞어 세지 않는다 — 기마다 늘어난 비율을 따로 재고 곱한다(두 계좌가 같은 시각에 닫고 연다)
+        periods = sorted({C.period_of(a["account"]) for a in accs if C.role_of(a["account"]) == mine_id})
+        mine = [a for a in accs if C.role_of(a["account"]) == mine_id]
+        eq = [a for a in accs if C.role_of(a["account"]) == "baseline:equal_hold"]
         # 판정할 수 있나: 두 계좌 모두 세운 뒤 기록이 둘 이상이거나, 첫 기록이 둘 다 시작 금액(계좌 시작일 — 예전 셈과 같다)
         ready = bool(mine and eq) and ((len(mine) > 1 and len(eq) > 1)
                                        or mine[0]["value"] == eq[0]["value"] == C.START_CASH)
         if ready:
-            m, e = mine[-1]["value"] / mine[0]["value"], eq[-1]["value"] / eq[0]["value"]
-            detail = (f"  {mine[0]['run']}~{mine[-1]['run']}: 계산기 계좌 {mine[-1]['value']:,.0f}원({m - 1:+.2%}) vs "
-                      f"나눠 사 두기 {eq[-1]['value']:,.0f}원({e - 1:+.2%})")
+            m = e = 1.0
+            for p in periods:
+                mp = [a for a in mine if C.period_of(a["account"]) == p]
+                ep = [a for a in eq if C.period_of(a["account"]) == p]
+                if mp and ep:
+                    m, e = m * mp[-1]["value"] / mp[0]["value"], e * ep[-1]["value"] / ep[0]["value"]
+            detail = (f"  {mine[0]['run']}~{mine[-1]['run']}{f' ({len(periods)}기 이어 곱함)' if len(periods) > 1 else ''}: "
+                      f"계산기 계좌 {mine[-1]['value']:,.0f}원({m - 1:+.2%}) vs 나눠 사 두기 {eq[-1]['value']:,.0f}원({e - 1:+.2%})")
             out.append((src, f"{'지지됨' if m >= e else '반박됨'} (시험 1건 중 {1 if m >= e else 0}건 맞음)", detail))
         elif src == "replay" and not mine:
             continue  # 세운 날이 재생 뒤면 재생 줄은 없다

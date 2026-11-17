@@ -148,44 +148,66 @@ class Premarket(unittest.TestCase):
 
 
 def flow_input(root: D.Root, day: dt.date, recheck_at: str = "08:41") -> dict:
-    """틀을 채우고, 대상마다 조사 파일·precheck·recheck·lessons를 더한다."""
+    """틀을 채우고, 대상마다 조사 파일·precheck·recheck·story·timeline을 더한다(돌아보기·뿌리 묶기는 9시 뒤 feedback 몫)."""
     tpl = json.loads((root.day_dir(day) / "input.json").read_text(encoding="utf-8"))
     inp = TD.fill(tpl)
     for t in json.loads((root.day_dir(day) / "scan" / "_tasks.json").read_text(encoding="utf-8")):
         Path(t["out"]).write_text(json.dumps(good(t["asset"], day), ensure_ascii=False), encoding="utf-8")
-    inp["precheck"] = {"roots": [], "note": "밟은 뿌리 없음", "lessons_by": "opus-5.5 high"}
+    inp["precheck"] = {"roots": [], "note": "밟은 뿌리 없음", "read": "뿌리 목록·최근 돌아보기"}
+    inp["story"] = {"conclusion": "가짜 결론", "why": "가짜 까닭", "tomorrow": "가짜 내일"}
+    inp["timeline"] = {"started": f"{day.isoformat()}T07:17:00+09:00", "draft": f"{day.isoformat()}T08:30:00+09:00"}
     a = next(iter(inp["weights"]))
     old = inp["weights"][a]["target"]
-    inp["weights"][a]["target"] = round(old - 0.05, 4)
+    inp["weights"][a]["target"] = round(old - 0.05, 4) if old >= 0.05 else round(old + 0.05, 4)   # 2기 첫날 틀은 0(현금)
     inp["recheck"] = {"sent_at": f"{day.isoformat()}T{recheck_at}:00+09:00",
                       "agents": [{"focus": "속보", "model": "haiku", "effort": "medium", "returned": True},
                                  {"focus": "종목", "model": "haiku", "effort": "medium", "returned": True}],
                       "found": [], "premarket": "비어 있음",
                       "changed": [{"asset": a, "what": "weight", "from": old, "to": inp["weights"][a]["target"], "why": "가짜"}]}
-    inp["lessons"] = [{"root": "L04", "kind": "같음", "reviews": [rid], "tried": {}} for rid in inp.get("_lessons_due", {})]
     return inp
 
 
+def feedback_input(root: D.Root, day: dt.date) -> Path:
+    """9시 뒤 피드백 정리 틀을 채운다: 돌아볼 차례 전부 + 아직 묶지 않은 '다음엔'을 L04에."""
+    p = root.day_dir(day) / "feedback.json"
+    p.unlink(missing_ok=True)   # 틀은 덮지 않으니 지난 틀을 지운다(아침 판단 뒤에 다시 만든다)
+    assert D.feedback(root, day, TD.at(day, 9, 15), None) == 0
+    fb = json.loads(p.read_text(encoding="utf-8"))
+    for rv in fb["reviews"]:
+        why = "맞음" if rv["_info"]["verdict"] == "맞음" else "조건 흐림"
+        rv.update(why=why, wrong=[] if why == "맞음" else ["Q_rate_up_shift_linked"], reason="가짜 돌아보기. 다음엔: 가짜 행동")
+    for ck in fb["reading_checks"]:
+        ck.update(now=ck["_then"], hit=True, reason="가짜")
+    due = list(fb["_lessons_due"]) + [f"review:{rv['prediction']}" for rv in fb["reviews"]]
+    fb["lessons"] = [{"root": "L04", "kind": "같음", "reviews": due, "tried": {}}] if due else []
+    fb.update(by="opus-5.5 xhigh", summary="가짜 정리 요약")
+    p.write_text(json.dumps(fb, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
 class FlowDay(unittest.TestCase):
-    """흉내 낸 날들(FLOW_SINCE를 당김): 꼭 할 단계가 빠지면 거절, 다 있으면 기록, 09:00 뒤면 '못 넣음' 줄만."""
+    """흉내 낸 날들(FLOW_SINCE를 당김): 꼭 할 단계가 빠지면 거절, 다 있으면 기록, 09:00 뒤면 '못 넣음' 줄만.
+    첫 흐름 날 1기를 닫고 2기를 1,000만 원에서 연다(한 번만). 9시 뒤 피드백 정리 → 그 뒤에 일지."""
 
     def test_days(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(C, "FLOW_SINCE", "2025-09-03"):
             root = TD.make_root(tmp)
-            self.assertEqual(TD.run_day(root, dt.date(2025, 9, 2))[0], 0)          # 그 전 날: 예전처럼
+            self.assertEqual(TD.run_day(root, dt.date(2025, 9, 2))[0], 0)          # 그 전 날: 예전처럼(1기)
             d = dt.date(2025, 9, 3)
             assert D.prepare(root, d, TD.at(d, 7, 37), fetch=False, ticker=TD.TICK, echo=False) == 0
             brief = (root.day_dir(d) / "briefing.md").read_text(encoding="utf-8")
             self.assertIn("아침 흐름", brief)
-            self.assertIn("피드백 정리", brief)
             inp = flow_input(root, d)
             p = root.day_dir(d) / "flow.json"
             n_run = len(R.read(root.records, "run"))
-            for drop in ("precheck", "recheck", "lessons"):                         # 하나라도 빠지면 아무것도 안 씀
+            for drop in ("precheck", "recheck", "story", "timeline"):               # 하나라도 빠지면 아무것도 안 씀
                 bad = {k: v for k, v in inp.items() if k != drop}
                 p.write_text(json.dumps(bad, ensure_ascii=False), encoding="utf-8")
                 self.assertEqual(D.record(root, d, TD.at(d, 8, 50), p), 1, drop)
                 self.assertEqual(len(R.read(root.records, "run")), n_run)
+            extra = dict(inp, reviews=[{"prediction": "x", "why": "맞음", "wrong": [], "reason": "r"}])   # 돌아보기는 아침에 안 됨
+            p.write_text(json.dumps(extra, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d, TD.at(d, 8, 50), p), 1)
             gone = Path(json.loads((root.day_dir(d) / "scan" / "_tasks.json").read_text(encoding="utf-8"))[0]["out"])
             keep = gone.read_text(encoding="utf-8")
             gone.unlink()                                                           # 조사 파일 하나가 없으면 거절
@@ -195,6 +217,7 @@ class FlowDay(unittest.TestCase):
             early = flow_input(root, d, recheck_at="08:35")                          # 08:40 전에 보낸 다시 보기
             p.write_text(json.dumps(early, ensure_ascii=False), encoding="utf-8")
             self.assertEqual(D.record(root, d, TD.at(d, 8, 50), p), 1)
+            self.assertEqual(D.feedback(root, d, TD.at(d, 9, 15), feedback_input(root, d)), 1)   # 아침 판단 전엔 정리 못 함
             p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
             self.assertEqual(D.record(root, d, TD.at(d, 8, 50), p), 0)
             scans = [x for x in R.read(root.records, "scan") if x["run"] == d.isoformat()]
@@ -203,6 +226,36 @@ class FlowDay(unittest.TestCase):
             run = [x for x in R.read(root.records, "run") if x["run"] == d.isoformat()][0]
             self.assertEqual(run["steps"]["recheck"]["changed"][0]["to"], inp["recheck"]["changed"][0]["to"])
             self.assertEqual(run["steps"]["scan"]["assets"], len(tasks))
+            self.assertEqual(run["story"]["conclusion"], "가짜 결론")
+            self.assertEqual(run["steps"]["timeline"]["started"], "2025-09-03T07:17:00+09:00")
+
+            # 2기: 1기 계좌 넷은 같은 시각에 닫히고(마지막 평가 줄 + phase close), 2기 넷이 은행 1,000만 원에서 열린다
+            brk = R.read(root.records, "broker")
+            starts2 = [x for x in brk if x["type"] == "start" and x["account"].endswith("@2")]
+            closes = [x for x in brk if x["type"] == "phase" and (x.get("data") or {}).get("name") == "close"]
+            self.assertEqual(sorted(x["account"] for x in starts2), sorted(C.period_id(a, 2) for a in C.LIVE_ACCOUNTS))
+            self.assertEqual(sorted(x["account"] for x in closes), sorted(C.LIVE_ACCOUNTS))
+            self.assertTrue(all(x["data"]["pockets"] == {"bank": C.START_CASH, "sec": 0, "upbit": 0} for x in starts2))
+            self.assertEqual(len({x["at"] for x in starts2}), 1)
+            acc = [x for x in R.read(root.records, "account") if x["run"] == d.isoformat()]
+            self.assertEqual(sorted(x["account"] for x in acc),
+                             sorted([*C.LIVE_ACCOUNTS, *(C.period_id(a, 2) for a in C.LIVE_ACCOUNTS)]))
+            self.assertEqual(R.check_folder(root.records), [])
+
+            # 일지는 9시 뒤 피드백 정리가 끝난 뒤에만
+            self.assertEqual(RP.write(root, d), 1)
+            self.assertFalse((root.reports / f"{d.isoformat()}.md").exists())
+            fbp = feedback_input(root, d)
+            self.assertEqual(D.feedback(root, d, TD.at(d, 9, 15), fbp), 0)
+            self.assertEqual(D.feedback(root, d, TD.at(d, 9, 20), fbp), 1)               # 하루 한 번
+            fb_run = [x for x in R.read(root.records, "run") if x["id"] == f"feedback:{d.isoformat()}"]
+            self.assertEqual(len(fb_run), 1)
+            self.assertEqual(RP.write(root, d), 0)
+            diary = (root.reports / f"{d.isoformat()}.md").read_text(encoding="utf-8")
+            self.assertIn("1,000만 원에서 다시 출발", diary)
+            self.assertIn("1기", diary)
+            self.assertIn("가짜 결론", diary)
+            self.assertIn("가짜 정리 요약", diary)
             self.assertEqual(R.check_folder(root.records), [])
 
             # 09:00:00에 판단하면 '못 넣음' 줄만 — 주문·예측·체결·채점 없음(모든 대상)
@@ -222,19 +275,72 @@ class FlowDay(unittest.TestCase):
             self.assertEqual(D.record(root, late, TD.at(late, 8, 0), p), 1)        # 같은 날 다시 못 함
             self.assertEqual(D.open_phase(root, late, TD.at(late, 9, 5)), 0)      # 장 시작 뒤 단계는 아무것도 안 함
             self.assertEqual(after["order"], len(R.read(root.records, "order")))
+            self.assertEqual(D.feedback(root, late, TD.at(late, 9, 15), feedback_input(root, late)), 0)   # 늦은 날도 정리는 한다
             self.assertEqual(RP.write(root, late), 0)
             diary = (root.reports / f"{late.isoformat()}.md").read_text(encoding="utf-8")
             self.assertIn("주문을 하나도 넣지 못했다", diary)
             self.assertEqual(R.check_folder(root.records), [])
 
-            # 다음 날은 빈 날 없이 이어 간다(어제 체결·채점이 오늘 들어옴)
+            # 다음 날은 빈 날 없이 2기로 이어 간다(2기를 다시 열지 않고, 닫은 1기에는 줄이 더 붙지 않는다)
             nxt = dt.date(2025, 9, 5)
             assert D.prepare(root, nxt, TD.at(nxt, 7, 37), fetch=False, ticker=TD.TICK, echo=False) == 0
             self.assertNotIn("빠진 날", (root.day_dir(nxt) / "briefing.md").read_text(encoding="utf-8"))
             inp = flow_input(root, nxt)
             p = root.day_dir(nxt) / "flow.json"
             p.write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+            n1 = {k: len([x for x in R.read(root.records, k) if x.get("account") in C.LIVE_ACCOUNTS]) for k in ("order", "fill", "broker", "account")}
             self.assertEqual(D.record(root, nxt, TD.at(nxt, 8, 55), p), 0)
+            self.assertEqual(D.open_phase(root, nxt, TD.at(nxt, 9, 5)), 0)
+            n2 = {k: len([x for x in R.read(root.records, k) if x.get("account") in C.LIVE_ACCOUNTS]) for k in ("order", "fill", "broker", "account")}
+            self.assertEqual(n1, n2)
+            self.assertEqual(len([x for x in R.read(root.records, "broker") if x["type"] == "start" and x["account"].endswith("@2")]), 4)
+            self.assertEqual(R.check_folder(root.records), [])
+
+
+class OpenUsesMorningPlan(unittest.TestCase):
+    """09:05 장 시작 뒤 단계는 아침에 09:00 전에 정한 목표(plan 줄)만 마저 채운다 — 입력을 받지 않고, 09:00 뒤 시각의 plan 줄은
+    읽지 않는다(2026-11-17 '9시 뒤 체결은 막는다'와 2026-11-10 '그건 두는 걸로'를 가르는 조건)."""
+
+    def test_signature_and_late_plan_ignored(self):
+        import inspect
+        self.assertEqual(list(inspect.signature(D.open_phase).parameters), ["root", "day", "at"])
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(C, "FLOW_SINCE", "2025-09-02"):
+            root = TD.make_root(tmp)
+            d = dt.date(2025, 9, 2)
+            assert D.prepare(root, d, TD.at(d, 7, 37), fetch=False, ticker=TD.TICK, echo=False) == 0
+            p = root.day_dir(d) / "flow.json"
+            p.write_text(json.dumps(flow_input(root, d), ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d, TD.at(d, 8, 50), p), 0)
+            plans = [x for x in R.read(root.records, "broker") if x["type"] == "plan" and x["run"] == d.isoformat()]
+            self.assertTrue(plans and all(x["at"] < f"{d.isoformat()}T09:00" for x in plans))
+            # 누가 09:00 뒤 시각의 plan 줄을 덧붙여도(새 판단) 장 시작 뒤 단계는 그것을 쓰지 않는다
+            fake = dict(plans[-1], id=plans[-1]["id"] + ":late", at=f"{d.isoformat()}T09:01:00+09:00",
+                        seq=max(x["seq"] for x in R.read(root.records, "broker") if x["account"] == plans[-1]["account"]) + 1000,
+                        data=dict(plans[-1]["data"], targets={a: 0.0 for a in plans[-1]["data"].get("targets", {})}))
+            b = D.B.Broker(plans[-1]["account"], D.quotes_for(root), {k: R.read(root.records, k) for k in ("run", *D.B.KINDS)})
+            todays = [x for x in [*b.events("plan"), fake] if x["run"] == d.isoformat()]
+            nine = dt.datetime.combine(d, C.RECORD_BY, C.KST)
+            used = [x for x in todays if dt.datetime.fromisoformat(x["at"]) < nine]
+            self.assertNotIn(fake, used)
+            self.assertEqual(D.open_phase(root, d, TD.at(d, 9, 5)), 0)
+            self.assertEqual(R.check_folder(root.records), [])
+
+
+class StartsFresh(unittest.TestCase):
+    """기록이 없는 폴더의 첫 흐름 날: 1기 없이 2기를 1,000만 원에서 바로 연다(닫을 것 없음)."""
+
+    def test_empty_folder(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(C, "FLOW_SINCE", "2025-09-02"):
+            root = TD.make_root(tmp)
+            d = dt.date(2025, 9, 2)
+            assert D.prepare(root, d, TD.at(d, 7, 37), fetch=False, ticker=TD.TICK, echo=False) == 0
+            p = root.day_dir(d) / "flow.json"
+            p.write_text(json.dumps(flow_input(root, d), ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(D.record(root, d, TD.at(d, 8, 50), p), 0)
+            brk = R.read(root.records, "broker")
+            self.assertEqual(sorted(x["account"] for x in brk if x["type"] == "start"),
+                             sorted(C.period_id(a, 2) for a in C.LIVE_ACCOUNTS))
+            self.assertFalse([x for x in brk if (x.get("data") or {}).get("name") == "close"])
             self.assertEqual(R.check_folder(root.records), [])
 
 

@@ -1310,6 +1310,7 @@ def check(lines: dict[str, list[dict]], bars: dict[str, Iterable] | None = None)
         start = next((d for k, d in items if k == "broker" and d.get("type") == "start"), None)
         if start is not None:
             errs += _start_errors(lines, acc, start, items, rows)
+        errs += _period_errors(acc, start, items)
         for kind, d in items:
             if kind == "fill":
                 e, w = _fill_price_errors(d, rows)
@@ -1321,6 +1322,23 @@ def check(lines: dict[str, list[dict]], bars: dict[str, Iterable] | None = None)
             if _bar(rows, f["asset"], dt.date.fromisoformat(f["fill_date"])) is None:
                 warns.append(f"{acc} fill {fid}: 진행 중인 봉의 시가로 넣었고 아직 끝난 봉과 견주지 않음")
     return errs, warns
+
+
+def _period_errors(acc: str, start: dict | None, items: list[tuple[str, dict]]) -> list[str]:
+    """계좌 기수(2026-11-17 사용자 결정 — 새 아침 흐름 첫날 1,000만 원에서 다시 출발): ① 2기 이상 진짜 계좌의 start는 은행 1,000만 원,
+    보유·산 값 없음(1기 보유를 옮기지 않는다) ② 닫은 계좌(phase 'close')에는 그 뒤 줄이 없다."""
+    errs = []
+    if C.role_of(acc) in C.LIVE_ACCOUNTS and C.period_of(acc) >= 2 and start is not None:
+        data = start.get("data") or {}
+        if data.get("pockets") != {"bank": C.START_CASH, "sec": 0, "upbit": 0} or data.get("units") or data.get("cost"):
+            errs.append(f"{acc} broker {start.get('id')}: {C.period_of(acc)}기 시작 잔고가 은행 {C.START_CASH:,}원(보유 없음)이 아님")
+    close = next((d.get("seq") for k, d in items if k == "broker" and d.get("type") == "phase"
+                  and (d.get("data") or {}).get("name") == "close"), None)
+    if close is not None:
+        after = [d.get("id") for _, d in items if isinstance(d.get("seq"), int) and d["seq"] > close]
+        if after:
+            errs.append(f"{acc}: 닫은 계좌(phase close, seq {close}) 뒤에 줄 {len(after)}개 — {after[:3]}")
+    return errs
 
 
 def check_folder(folder: Path, prices_folder: Path | None = None) -> tuple[list[str], list[str]]:

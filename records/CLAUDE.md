@@ -11,7 +11,7 @@
 
 | 종류 | 무엇 | 칸 |
 |---|---|---|
-| `run` | 실행 한 번 | mode(replay / replay-score-only / live / missed = 빠진 날 / late = 2026-11-18~ 판단이 09:00 뒤라 주문·예측을 하나도 넣지 않은 날, id `late:<날짜>`, steps.rejected에 하려던 것), steps(받기 결과, 판단 때 가격, 판단 시각, 건너뛴 대상, 수, 에이전트 수, 볼 곳 수, 2026-11-18~ precheck·recheck(08:40 다시 보기 — 바꾼 것의 처음 값과 바꾼 값)·scan(대상 수·실패·찾은 수)·lessons 수 등), notes(메모·경고), (2026-11-17~, 있을 때만) asks = 매일 실행이 연 대화 세션 몫 [{id `ask:<날짜>:<번호>`, what, close}] — 닫는 것은 루트 `asks.toml`(market/asks.py) |
+| `run` | 실행 한 번 | mode(replay / replay-score-only / live / missed = 빠진 날 / late = 2026-11-18~ 판단이 09:00 뒤라 주문·예측을 하나도 넣지 않은 날, id `late:<날짜>`, steps.rejected에 하려던 것 / feedback = 9시 뒤 피드백 정리 실행(id `feedback:<날짜>`, steps.by·summary·돌아본 수·뿌리 kind 수, 연 대화 세션 몫 asks `ask:<날짜>:f<n>`)), (2026-11-18~ 아침 live 줄에) story = {conclusion, why, tomorrow} 판단의 요지(글 쓰는 실행이 읽는다), steps(받기 결과, 판단 때 가격, 판단 시각, 건너뛴 대상, 수, 에이전트 수, 볼 곳 수, 2026-11-18~ precheck(roots·note·read)·recheck·timeline(단계 시각)(08:40 다시 보기 — 바꾼 것의 처음 값과 바꾼 값)·scan(대상 수·실패·찾은 수)·lessons 수 등), notes(메모·경고), (2026-11-17~, 있을 때만) asks = 매일 실행이 연 대화 세션 몫 [{id `ask:<날짜>:<번호>`, what, close}] — 닫는 것은 루트 `asks.toml`(market/asks.py) |
 | `reading` | 시세 대 보기: 대상 하나의 조각 값 | asset, known_through(본 마지막 일봉 날짜), values(상태 id → 예/아니오/모름), numbers(계산에 쓴 숫자). 2026-11-17~ values에 `S_comove_market`(자기 시장 묶음과 같이 움직임, pieces.comove)과 numbers에 `comove60`(그 상관)이 더해진다 — 계산기 예측 줄의 readings에도 |
 | `research` | 조사: 질문 하나 | question, state(대 볼 상태 id, 각도 질문·2차 조사면 ''), angle(2026-11-04부터 간밤 반응/일정·예상치/수급/공시·뉴스, 2차는 `<대상>-2차`; 그 전 줄은 금리·환율·정책/한국 시장/미국 시장/코인), asked, answer(300자 이내 요약), looked(본 곳마다 place·result 찾음/없음/늦음/막힘·new·url·date·note), agent. 있으면(2026-11-05 판단부터 매일 실행 입력에 필수): **numbers**(숫자 이름 → 값; 이름은 소문자·숫자·밑줄이고 끝 낱말이 단위 — pct·pp·bp·x·z·krw·krw100m·usd·usdm·usdbn·pt·btc·n, `records.NUMBER_KEY`; 값은 유한한 수), **as_of**(답의 숫자가 가리키는 시각, 시간대가 붙은 ISO — 판단 시각보다 늦으면 입력이 거절된다) |
 | `hand_reading` | 손 대 보기(하루 하나) | values(조사 상태 → 예/아니오/일부/모름 또는 값; 상태에 answers가 있으면 그 안에서, 예: 오름/내림/아니오/모름), why(상태 → 이유), places(상태 → 쓴 볼 곳), research(근거 조사 id), (있으면) by_asset(종목 코드 → 종목마다 대 보는 상태 → {value, why, places[, numbers]}, 2026-10-29~; 2026-11-03부터 '예' 종목이 있는 날은 비교군 '아니오' 종목 3개 이상도). **씨앗 조각의 상태**(2026-11-04~)는 관련 있는 날만 들어 있다 — 값이 없으면 그날은 '안 물음'(성적표가 그렇게 센다). (있으면, 2026-11-05~) **numbers**(상태 → {숫자 이름: 값}): 숫자 상태(상태에 `number`)의 값을 코드가 정할 때 쓴 숫자와 메인이 대 보기에 적은 숫자. 숫자 상태의 values는 메인이 아니라 코드가 이 숫자로 정한 값(예/아니오/모름)이고, 숫자 씨앗은 숫자가 있는 날만 들어 있다. 성적표가 dir = "sign" 주장(숫자의 부호 쪽)을 시험할 때 이 숫자의 부호를 읽는다 |
@@ -41,3 +41,9 @@
 
 ## 다른 폴더와의 관계
 - 쓰는 코드: `market/daily.py`(매일 실행의 `record`와 장 시작 뒤 단계 `open`), `market/replay.py`(재생). 가상 증권사 줄(order·fill·account의 seq 있는 줄과 broker)은 `market/broker.py`가 만들고 매일 실행이 다른 기록과 함께 한 번에 쓴다(코드가 main에 들어간 뒤 첫 실행 = 갈아타는 날부터). 갈아타기 전 줄은 옛 모양(seq 없음)이고 비교용으로 그대로 남는다(갈아타는 날 옛 장부가 옛 주문을 끝내는 일은 2026-11-10 3회부터 없다). 읽는 코드: `market/checks.py`(성적표), `market/report.py`(일지), `market/research.py`(볼 곳 성적), `market/replay.py report`.
+
+
+## 계좌 기수 (2026-11-17 사용자 결정 — 새 아침 흐름 첫날 1,000만 원에서 다시 출발)
+- 계좌 id `live:hand`·`live:calc`·`baseline:equal_hold`·`baseline:cash` = **1기**. 2기를 여는 날 그 시각의 마지막 평가 줄(account)과 `broker` phase `close`(data.next = 2기 id)로 닫히고, 그 뒤 줄이 붙지 않는다(검산이 막는다). 지우지 않고 비교용으로 남는다.
+- **2기** id = 역할 이름 + `@2`(`live:hand@2` 등): 같은 시각 `broker` start(은행 1,000만 원, 보유 없음)로 열린다. order·fill·broker·account 줄의 칸 모양은 1기와 같다. 블로그 '내 돈 그래프'(다른 저장소)는 1기 이름만 읽어 1기에서 멈춰 보인다 — 2기를 이어 그리려면 그쪽이 `@2`를 읽게 고친다.
+- 예측·채점·돌아보기·뿌리·조사 기록은 계좌와 따로라 기수 없이 이어진다.
