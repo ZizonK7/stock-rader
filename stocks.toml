@@ -139,3 +139,345 @@ name = "HMM"
 market = "KOSPI"
 added = "2026-11-14"
 why = "11-12 3분기 영업이익 1조 3,947억으로 에프앤가이드 전망 평균 8,758억보다 +59.2% — 실적 상회 조각(Q_earnings_beat) 후보"
+
+[[stock]]
+code = "003230"
+name = "삼양식품"
+market = "KOSPI"
+added = "2026-11-17"
+why = "사용자 질문 2026-11-17 — 지켜보기(python -m market.ask)"
+buy = false
+watch = true
+
+[[stock]]
+code = "035720"
+name = "카카오"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 플랫폼·인터넷, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "012330"
+name = "현대모비스"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 자동차 부품, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "032830"
+name = "삼성생명"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 보험, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "086790"
+name = "하나금융지주"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 은행, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "000810"
+name = "삼성화재"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 손해보험, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "017670"
+name = "SK텔레콤"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 통신, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "030200"
+name = "KT"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 통신, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "066570"
+name = "LG전자"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 가전, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "096770"
+name = "SK이노베이션"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 정유·배터리, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "015760"
+name = "한국전력"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 전력 공기업, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "010130"
+name = "고려아연"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 비철금속, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "003490"
+name = "대한항공"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 항공, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "259960"
+name = "크래프톤"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 게임, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "090430"
+name = "아모레퍼시픽"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 화장품, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "097950"
+name = "CJ제일제당"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 음식료, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "003550"
+name = "LG"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 지주회사, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "034730"
+name = "SK"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 지주회사, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "009150"
+name = "삼성전기"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 전자 부품, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "267260"
+name = "HD현대일렉트릭"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 전력 기기, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "042700"
+name = "한미반도체"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 반도체 장비, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "000100"
+name = "유한양행"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 제약, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "042660"
+name = "한화오션"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 조선, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "010140"
+name = "삼성중공업"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 조선, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "033780"
+name = "KT&G"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 담배·음식료, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "003670"
+name = "포스코퓨처엠"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 배터리 소재, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "010950"
+name = "S-Oil"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 정유, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "000720"
+name = "현대건설"
+market = "KOSPI"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 건설, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "196170"
+name = "알테오젠"
+market = "KOSDAQ"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 바이오, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "247540"
+name = "에코프로비엠"
+market = "KOSDAQ"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 배터리 소재, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "086520"
+name = "에코프로"
+market = "KOSDAQ"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 배터리 소재 지주, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "028300"
+name = "HLB"
+market = "KOSDAQ"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 바이오, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "277810"
+name = "레인보우로보틱스"
+market = "KOSDAQ"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 로봇, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "141080"
+name = "리가켐바이오"
+market = "KOSDAQ"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 바이오, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "263750"
+name = "펄어비스"
+market = "KOSDAQ"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 게임, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "000250"
+name = "삼천당제약"
+market = "KOSDAQ"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 제약, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "214450"
+name = "파마리서치"
+market = "KOSDAQ"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 의료 미용, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true
+
+[[stock]]
+code = "145020"
+name = "휴젤"
+market = "KOSDAQ"
+added = "2026-11-17"
+why = "지켜보는 목록(2026-11-17, 잼민이 지시서 p562 — 사용자가 실제 종목을 물어볼 때 답할 바탕): 의료 미용, 코드·이름·시장은 네이버 종목 찾기로 확인"
+buy = false
+watch = true

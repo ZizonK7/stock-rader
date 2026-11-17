@@ -24,6 +24,7 @@ import tomllib
 from pathlib import Path
 
 from . import asks as A
+from . import lessons as LS
 from . import config as C
 from . import fit as F
 from . import pieces as P
@@ -503,8 +504,11 @@ CHECKS = {"piece_direction": piece_direction, "piece_size": piece_size, "account
 
 # ---------- 점검 (audit의 분야 점검) ----------
 def _names_in(text: str) -> list[str]:
-    words = C.ASSET_WORDS + ST.name_words()  # 종목 이름·코드도 조각 문장에 쓰지 않는다(2026-10-29)
-    return [w for w in words if re.search(re.escape(w), text, re.IGNORECASE)]
+    """조각 문장에 나온 대상 이름. 세 대상 낱말은 대소문자 없이, 종목 이름·코드(2026-10-29)는 대소문자를 가리고 영문·숫자 경계로
+    (2026-11-17: 지켜보는 목록에 'SK'·'KT'·'LG' 같은 짧은 영문 이름이 들어와 'risk' 같은 낱말에 걸리지 않게)."""
+    found = [w for w in C.ASSET_WORDS if re.search(re.escape(w), text, re.IGNORECASE)]
+    return found + [w for w in ST.name_words()
+                    if re.search(r"(?<![A-Za-z0-9])" + re.escape(w) + r"(?![A-Za-z0-9])", text)]
 
 
 def measure_revisions(kn) -> list[str]:
@@ -601,6 +605,7 @@ def audit(kn, want: dict[str, list[dict]] | None = None) -> tuple[list[str], lis
     errors += V.check()
     errors += RS.check_places(RS.load_places(), {s.id for s in kn.of("state")})
     errors += A.check(A.load())   # 대화 세션 몫 목록 모양(2026-11-17)
+    errors += LS.check(LS.load())   # 뿌리 목록 씨앗 모양(2026-11-17)
     if want is None:
         try:
             want = F.expected()

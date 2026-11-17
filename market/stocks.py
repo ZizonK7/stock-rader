@@ -9,13 +9,14 @@
 규칙
 - 목록에서 지우지 않는다(기록이 그 코드를 가리킨다). 더 사지 않으려면 `buy = false`와 note.
 - 이름은 사람용이다. 조각 id·문장에는 종목 이름·코드를 쓰지 않는다(audit가 막는다).
-- 시세는 ETF와 같은 네이버 차트에서 받는다. 처음 쓰는 종목은 prepare가 최근 BACKFILL_ROWS줄을 받아 둔다
+- 시세는 네이버 차트에서 받아 이름을 확인하고, 날짜마다 정규장 값(야후)으로 바꾼다(2026-11-17 — 네이버 종목 종가는 시간외 포함). 처음 쓰는 종목은 prepare가 최근 BACKFILL_ROWS줄을 받아 둔다
   (평소 움직임·기저율·시세 상태 계산에 충분한 만큼; 계산 조각 숫자는 종목에 맞추지 않는다).
 - 받은 시세의 종목 이름이 목록 이름과 다르면 저장하지 않는다(코드를 잘못 적은 것을 막는다).
 """
 from __future__ import annotations
 
 import datetime as dt
+import html
 import re
 import sys
 import tomllib
@@ -66,6 +67,8 @@ def check(items: list[dict]) -> list[str]:
             errs.append(f"[종목] {code}: market은 KOSPI/KOSDAQ")
         if "buy" in s and not isinstance(s["buy"], bool):
             errs.append(f"[종목] {code}: buy는 true/false")
+        if s.get("watch") and s.get("buy", True):
+            errs.append(f"[종목] {code}: watch = true(지켜보기만)는 buy = false와 같이 — 사는 후보는 이미 지켜본다")
     return errs
 
 
@@ -83,7 +86,7 @@ NAME = re.compile(r'<chartdata[^>]*\sname="([^"]*)"')
 
 def chart_name(text: str) -> str | None:
     m = NAME.search(text)
-    return m.group(1) if m else None
+    return html.unescape(m.group(1)) if m else None   # 차트 응답은 이름을 HTML로 감싼다('KT&amp;G', 2026-11-17)
 
 
 def _same(a: str, b: str) -> bool:
@@ -91,8 +94,32 @@ def _same(a: str, b: str) -> bool:
     return norm(a) == norm(b)
 
 
-def fetch(code: str, count: int, name: str | None = None):
-    """네이버 차트에서 종목 일봉을 받는다(실패하면 야후). 목록 이름과 받은 이름이 다르면 ValueError."""
+def regular(code: str, rows: list, notes: list | None = None) -> list:
+    """종목 일봉을 정규장(한국거래소 09:00–15:30) 값으로 (2026-11-17, ask:2026-10-31:1).
+    네이버 차트의 종목 일봉은 시가는 정규장 09:00 값이지만 **종가·고가·저가는 시간외(대체거래소 애프터마켓, 20:00까지)를 친
+    값**이다 — 2026-11-17 네이버 실시간 응답의 정규장 전일 종가(삼성전자 196,800)와 차트 종가(195,000)가 달랐고, 야후의 같은
+    날 봉은 정규장 값과 같았다(종목 넷 모두, 시가도 같음). 그래서 날짜마다 야후 봉이 있으면 그것을 쓰고(출처 칸 yahoo),
+    없으면 네이버 봉을 쓰되 notes에 남긴다. 묶음(ETF)은 시간외가 없어 두 출처가 같다 — 여기 오지 않는다."""
+    from . import prices as PR
+    if not rows:
+        return rows
+    start = min(r.date for r in rows) - dt.timedelta(days=3)
+    try:
+        y = {r.date: r for r in PR.fetch_yahoo(code, start, C.ASSETS[code].yahoo_suffix)}
+    except Exception as exc:
+        if notes is not None:
+            notes.append(f"[{code}] 정규장 값(야후)을 못 받아 네이버 값(종가는 시간외 포함)으로 — {type(exc).__name__}")
+        return rows
+    out = [y.get(r.date, r) for r in rows]
+    miss = [r.date.isoformat() for r in rows if r.date not in y]
+    if miss and notes is not None:
+        notes.append(f"[{code}] 정규장 값(야후)에 없는 날 {', '.join(miss[-3:])}{' …' if len(miss) > 3 else ''} — 네이버 값(종가는 시간외 포함)으로")
+    return out
+
+
+def fetch(code: str, count: int, name: str | None = None, notes: list | None = None):
+    """네이버 차트에서 종목 일봉을 받고(이름 확인) 날짜마다 정규장 값으로 바꾼다(`regular`). 네이버가 막히면 야후만.
+    목록 이름과 받은 이름이 다르면 ValueError."""
     from . import prices as PR
     try:
         raw = PR._get(f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0")
@@ -103,7 +130,7 @@ def fetch(code: str, count: int, name: str | None = None):
         rows = PR.parse_naver(text, C.now_kst().isoformat(timespec="seconds"))
         if not rows:
             raise ValueError(f"[{code}] 네이버 차트에 일봉이 없음")
-        return rows
+        return regular(code, rows, notes)
     except ValueError:
         raise
     except Exception as exc:
@@ -115,16 +142,23 @@ def fetch(code: str, count: int, name: str | None = None):
 def update(code: str, folder: Path, now: dt.datetime, name: str | None = None) -> tuple[int, list[str], bool]:
     """시세 파일이 있으면 새 끝난 일봉만 덧붙이고, 없으면 최근 BACKFILL_ROWS줄을 받아 만든다. (덧붙인 수, 경고, 처음 받음)."""
     from . import prices as PR
-    if PR.load(code, folder):
-        n, warns = PR.update(code, folder, now=now, rows=fetch(code, 40, name))
-        return n, warns, False
-    rows = PR.finished(code, fetch(code, BACKFILL_ROWS, name), now)
-    return PR.append(code, rows, folder), [], True
+    notes: list[str] = []
+    old = PR.load(code, folder)
+    if old:
+        last = old[-1].date
+        rows = fetch(code, 40, name, notes)
+        n, warns = PR.update(code, folder, now=now, rows=rows)
+        # 덧붙인 날 중 정규장 값이 아닌 것만 알린다(지난 날의 바꿈 알림은 덧붙이지 않으니 소리만 크다)
+        fresh = {r.date for r in PR.finished(code, rows, now) if r.date > last and r.source != "yahoo"}
+        return n, warns + ([f"[{code}] 오늘 덧붙인 {len(fresh)}줄이 네이버 값(종가는 시간외 포함)"] if fresh else []), False
+    rows = PR.finished(code, fetch(code, BACKFILL_ROWS, name, notes), now)
+    return PR.append(code, rows, folder), notes, True
 
 
 # ---------- 더하기 ----------
-def add(path: Path, code: str, name: str, why: str, market: str = "KOSPI", day: dt.date | None = None) -> str:
-    """목록 끝에 종목을 더한다(이미 있으면 거절). 지난 항목은 고치지 않는다."""
+def add(path: Path, code: str, name: str, why: str, market: str = "KOSPI", day: dt.date | None = None,
+        watch_only: bool = False) -> str:
+    """목록 끝에 종목을 더한다(이미 있으면 거절). 지난 항목은 고치지 않는다. watch_only = 지켜보기만(buy = false, 2026-11-17)."""
     code = code.strip().upper()
     if not C.is_stock(code):
         raise SystemExit(f"'{code}'는 종목 코드 꼴이 아님(6자리, 세 대상 아님)")
@@ -135,7 +169,7 @@ def add(path: Path, code: str, name: str, why: str, market: str = "KOSPI", day: 
     day = day or C.now_kst().date()
     esc = lambda x: x.replace("\\", "\\\\").replace('"', '\\"')
     block = (f'\n[[stock]]\ncode = "{code}"\nname = "{esc(name)}"\nmarket = "{market}"\nadded = "{day.isoformat()}"\n'
-             f'why = "{esc(why)}"\n')
+             f'why = "{esc(why)}"\n' + ("buy = false\nwatch = true\n" if watch_only else ""))
     old = path.read_text(encoding="utf-8") if path.exists() else ""
     path.write_text(old.rstrip("\n") + "\n" + block, encoding="utf-8")
     errs = check(load(path))

@@ -386,11 +386,13 @@ def validate(inp: dict, ctx: dict) -> tuple[list[str], list[str]]:
     held = list(ctx.get("held", []))
     targeted = [a for a, wgt in weights.items() if a in stocks and isinstance(wgt, dict)
                 and isinstance(wgt.get("target"), (int, float)) and wgt["target"] > 0]
-    for a in list(ctx["predictable"]) + sorted(set(held) | set(targeted)):
+    watch = [a for a in ctx.get("watch_today", []) if a in stocks]
+    for a in list(ctx["predictable"]) + sorted(set(held) | set(targeted) | set(watch)):
         for hz in C.ASSETS[a].horizons:
             if (a, hz) not in seen:
                 why = "모르면 p_up = null과 이유" if a in ctx["predictable"] else (
-                    "든 종목은 매일 예측한다" if a in held else "사려는 종목은 기간 셋을 다 예측한다")
+                    "든 종목은 매일 예측한다" if a in held else "사려는 종목은 기간 셋을 다 예측한다" if a in targeted
+                    else "오늘 차례인 지켜보는 종목(2026-11-17) — 기간 셋을 낸다")
                 errs.append(f"hand: {a}:{hz} 예측이 없음 ({why})")
 
     # 목표 비중

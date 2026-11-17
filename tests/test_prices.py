@@ -72,10 +72,15 @@ class AppendOnly(unittest.TestCase):
             folder = Path(d)
             self.assertEqual(PR.append("069500", list(rows[:10]), folder), 10)
             before = (folder / "069500.csv").read_text(encoding="utf-8")
-            changed = [PR.Row(r.date, r.open, r.high, r.low, r.close + 1, r.volume, "naver", "t") for r in rows[5:15]]
+            changed = [PR.Row(r.date, r.open, r.high, r.low, r.close + 1, r.volume, r.source, "t") for r in rows[5:15]]
             n, warns = PR.update("069500", folder, dt.datetime(2026, 3, 1, tzinfo=KST), changed)
             self.assertEqual(n, 5)
             self.assertEqual(len([w for w in warns if "다름" in w]), 5)
+            # 출처가 다른 줄끼리는 견주지 않는다(2026-11-17: 종목은 정규장 값(야후)으로 바꿔 받아 옛 네이버 줄과 늘 다르다)
+            other = [PR.Row(r.date, r.open, r.high, r.low, r.close + 2, r.volume, "yahoo", "t") for r in rows[5:15]]
+            n2, warns2 = PR.update("069500", folder, dt.datetime(2026, 3, 1, tzinfo=KST), other)
+            self.assertEqual(n2, 0)
+            self.assertEqual(len([w for w in warns2 if "저장된 값과 새로 받은 값이 다름" in w]), 0)
             after = (folder / "069500.csv").read_text(encoding="utf-8")
             self.assertTrue(after.startswith(before))
             self.assertEqual(len(PR.load("069500", folder)), 15)

@@ -264,9 +264,17 @@ class DailyStocks(unittest.TestCase):
             self.assertEqual(hr["by_asset"][S1]["S_q_earnings_beat"]["value"], "예")
             hand_wk = next(p for p in preds if p["id"] == f"{d0}:hand:{S1}:5")
             self.assertEqual(hand_wk["readings"]["S_q_earnings_beat"], "예")
-            self.assertEqual([p for p in preds if p["asset"] == S5], [])  # 손대지 않은 종목은 기록하지 않는다
+            # 2026-11-17 지켜보는 종목: 목록의 종목은 손대지 않아도 시세 대 보기·계산기('모름')·기준선 둘을 매일 기록한다
+            # (늘 50% 줄과 참고 칸은 뺀다). 오늘 손 예측 차례(watch_today)면 손 예측과 온전한 줄이 붙는다
+            s5 = [p for p in preds if p["asset"] == S5 and p["run"] == d0.isoformat()]
+            if any(p["predictor"] == "hand" for p in s5):
+                self.assertIn("baseline:half", {p["predictor"] for p in s5})
+            else:
+                self.assertEqual({p["predictor"] for p in s5}, {"calc", "baseline:all"})
+                self.assertTrue(all("analog" not in p for p in s5))
             # 비교군('아니오' 종목)은 대 보기와 계산기('모름')·기준선 줄이 생겨 채점된다(손 예측은 없다)
-            self.assertEqual({p["predictor"] for p in preds if p["asset"] == S2},
+            # (2026-11-17: 지켜보는 종목의 손 예측 차례가 돌아온 날은 손 예측도 붙는다 — 그 줄은 빼고 본다)
+            self.assertEqual({p["predictor"] for p in preds if p["asset"] == S2} - {"hand"},
                              {"calc", "baseline:half", "baseline:base_rate", "baseline:all"})
             self.assertEqual(hr["by_asset"][S2]["S_q_earnings_beat"]["value"], "아니오")
             self.assertEqual(R.check_folder(root.records), [])

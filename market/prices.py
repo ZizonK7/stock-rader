@@ -272,7 +272,8 @@ def update(asset_id: str, folder: Path | None = None, now: dt.datetime | None = 
     warns = []
     for r in got:
         o = old.get(r.date)
-        if o and (abs(o.close - r.close) > 1e-9 or abs(o.open - r.open) > 1e-9):
+        # 같은 출처끼리만 견준다: 종목은 2026-11-17부터 정규장 값(야후)으로 받아, 그 전 네이버 줄(종가에 시간외)과 늘 다르다
+        if o and o.source == r.source and (abs(o.close - r.close) > 1e-9 or abs(o.open - r.open) > 1e-9):
             warns.append(f"[{asset_id}] {r.date} 저장된 값과 새로 받은 값이 다름 (저장 종가 {_fmt(o.close)}, 새 {_fmt(r.close)}) — 고치지 않음")
     last = max(old)
     if got and min(r.date for r in got) > last:

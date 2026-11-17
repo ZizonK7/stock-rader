@@ -47,6 +47,8 @@ FIELDS: dict[str, dict[str, tuple]] = {
     "hand_reading": {"values": (dict,), "why": (dict,), "places": (dict,), "research": (list,)},
     "reading_check": {"target": (str,), "state": (str,), "then": (str,), "now": (str,), "hit": OPT_BOOL,
                       "late": (list,), "reason": (str,)},
+    # 뿌리 묶기(2026-11-17, market/lessons.py): 일요일 주간 결산이 그 주의 '다음엔'을 뿌리에 묶은 한 줄씩
+    "lesson": {"root": (str,), "kind": (str,), "reviews": (list,), "tried": (dict,)},
     # 가상 증권사(2026-11-10, market/broker.py): 주문·체결 밖의 증권사 사건 한 줄씩 — type은 BROKER_TYPES, seq = 계좌 안에서
     # 증권사가 줄을 만든 순서(order·fill·account 줄의 seq와 한 줄로 이어진다)
     "broker": {"account": (str,), "at": (str,), "type": (str,), "data": (dict,), "note": (str,), "seq": (int,)},
@@ -113,6 +115,7 @@ DESCRIBE = {
     "correction": "정정: 고칠 기록 id(target)와 설명. 지난 줄은 고치지 않는다",
     "research": "조사(질문 하나): 대 볼 상태 id(각도 질문·2차 조사면 ''), 각도, 질문, 답 요약, 본 곳마다 결과(찾음/없음/늦음/막힘)·새 곳 여부·링크·날짜, 맡은 에이전트, (2026-11-05~) numbers = 숫자 이름_단위 → 값, as_of = 정보 시각",
     "hand_reading": "손 대 보기(하루 하나): 조사로 대 본 상태 값(예/아니오/일부/모름 또는 값), 상태마다 이유와 쓴 볼 곳, 근거 조사 id, (있으면) by_asset = 종목마다 대 본 상태, numbers = 숫자 상태가 쓴 숫자(상태 → 이름 → 값)",
+    "lesson": "뿌리 묶기(2026-11-17, 일요일): 그 주의 '다음엔'을 묶은 뿌리 id, kind(같음/새 뿌리/충돌), 묶은 돌아보기 id, 해 본 결과 tried(나아짐/모름/나빠짐 수), (새 뿌리·충돌) sentence, (충돌) against·split",
     "reading_check": "대 보기 다시 보기: 지난 손 대 보기의 상태 값을 나중에 알게 된 것으로 다시 봄(맞음/틀림/모름), 판단 뒤에야 정보가 나온 볼 곳(late)",
 }
 
@@ -342,6 +345,9 @@ def check(root: Path = C.ROOT, folders: list[Path] | None = None) -> list[str]:
     return errs
 
 
+SIZE_WARN_MB = 50   # 2026-11-17: 지켜보는 종목 57개를 매일 적으면 예측 기록이 하루 약 0.24MB씩 는다
+
+
 def main(argv: list[str]) -> int:
     if not argv or argv[0] != "check":
         print(__doc__)
@@ -354,6 +360,10 @@ def main(argv: list[str]) -> int:
             print("  -", e)
         return 1
     print("기록 검사 통과")
+    for f in sorted((folders or [C.RECORDS])[0].glob("*.jsonl")):
+        mb = f.stat().st_size / 1e6
+        if mb > SIZE_WARN_MB:   # GitHub은 한 파일 100MB를 넘으면 받지 않는다 — 그 전에 해마다 나누는 일을 연다
+            print(f"경고: {f.name} {mb:.0f}MB > {SIZE_WARN_MB}MB — 100MB 전에 기록을 해마다 나누는 코드가 필요하다(대화 세션 몫으로 연다)")
     return 0
 
 
