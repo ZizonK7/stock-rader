@@ -8,6 +8,7 @@
                                                    오늘 목표 비중으로 남은 주문을 지금 가격에 낸다(팔린 돈으로 사기)
   python -m market.daily report [--force]          reports/<날짜>.md 뼈대(숫자는 기록에서). 일요일엔 주간 결산도
   python -m market.daily report --check            일지에 채우지 않은 자리([[채울 것: …]])가 남았나
+  python -m market.daily report --week             일요일 주간 결산 뼈대만(2026-11-18부터 피드백 정리 실행이 쓴다; 그날부터 report는 매일 일지만)
   python -m market.daily feedback [<feedback.json>] 9시 뒤 피드백 정리: 파일 없이 부르면 틀(out/daily/<날짜>/feedback.json),
                                                    채운 파일을 주면 돌아보기·다시 보기·정정·뿌리 묶기를 덧붙이고 run 줄 feedback:<날짜>
   python -m market.daily wait [HH:MM]              한국 시간 HH:MM(기본 08:40 다시 보기)까지 기다린다 — 한 번에 9분, 남으면 종료 3
@@ -1452,7 +1453,7 @@ def main(argv: list[str]) -> int:
     root, day, _ = when(opt, dt.time(9, 0))
     if "--check" in opt:
         return RP.check(root, day)
-    return RP.write(root, day, force="--force" in opt)
+    return RP.write(root, day, force="--force" in opt, week=True if "--week" in opt else None)
 
 
 def wait_until(t: dt.time, most: float = 540.0) -> int:

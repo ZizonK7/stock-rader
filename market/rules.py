@@ -239,7 +239,7 @@ def sell_tax(asset: str, amount: int, gain: float) -> int:
     kind = C.ASSETS[asset].kind
     if kind == "coin":
         return 0
-    if kind == "stock":
+    if kind == "stock" and asset not in C.LISTED_ETF:   # 목록에 든 국내 상장 ETF(2026-11-17)는 아래 국내 묶음 ETF 규칙
         return math.ceil(amount * value("stock_sell_tax"))
     t = math.ceil(amount * value("etf_sell_tax"))
     f = value("foreign_etf_gain_tax")

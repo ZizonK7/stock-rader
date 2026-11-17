@@ -106,7 +106,15 @@ TRAIT_LABEL = {"all": "모든 대상", "equity": "주식(묶음·종목)", "home
                "single": "한 회사 주식(종목)"}
 
 
+# 목록에 든 국내 상장 ETF(2026-11-17, stocks.toml의 kind = "etf"): 종목처럼 목록·시세·조사·손 예측·장치를 따르되 한 회사가 아니다 —
+# 성질에 single이 없어 한 회사 조각(실적 등)이 걸리지 않고, 팔 때 세금은 국내 묶음 ETF 규칙(rules.sell_tax). stocks.register가 채운다.
+LISTED_ETF: set[str] = set()
+LISTED_ETF_TRAITS = ("equity", "home")
+
+
 def traits(asset: str) -> tuple[str, ...]:
+    if asset in LISTED_ETF:
+        return LISTED_ETF_TRAITS
     return TRAITS.get(asset) or (STOCK_TRAITS if is_stock(asset) else ())
 
 

@@ -43,6 +43,8 @@ def register(path: Path | None = None) -> list[dict]:
         if C.is_stock(code):
             C.STOCK_NAMES[code] = str(s.get("name", code))
             C.STOCK_SUFFIX[code] = ".KQ" if s.get("market") == "KOSDAQ" else ".KS"
+            if s.get("kind") == "etf":   # 목록에 든 국내 상장 ETF(2026-11-17) — 한 회사가 아니다(config.LISTED_ETF)
+                C.LISTED_ETF.add(code)
     return items
 
 
@@ -67,6 +69,8 @@ def check(items: list[dict]) -> list[str]:
             errs.append(f"[종목] {code}: market은 KOSPI/KOSDAQ")
         if "buy" in s and not isinstance(s["buy"], bool):
             errs.append(f"[종목] {code}: buy는 true/false")
+        if s.get("kind", "stock") not in ("stock", "etf"):
+            errs.append(f"[종목] {code}: kind는 stock(없으면 이것)/etf")
     return errs
 
 
@@ -154,7 +158,8 @@ def update(code: str, folder: Path, now: dt.datetime, name: str | None = None) -
 
 
 # ---------- 더하기 ----------
-def add(path: Path, code: str, name: str, why: str, market: str = "KOSPI", day: dt.date | None = None) -> str:
+def add(path: Path, code: str, name: str, why: str, market: str = "KOSPI", day: dt.date | None = None,
+        kind: str = "stock") -> str:
     """목록 끝에 종목을 더한다(이미 있으면 거절). 지난 항목은 고치지 않는다. 목록의 종목은 모두 살 수 있다(2026-11-17 사용자 —
     지켜보기만 하는 목록을 따로 두지 않는다; 살지 말지는 조각으로 정한다)."""
     code = code.strip().upper()
@@ -167,7 +172,7 @@ def add(path: Path, code: str, name: str, why: str, market: str = "KOSPI", day: 
     day = day or C.now_kst().date()
     esc = lambda x: x.replace("\\", "\\\\").replace('"', '\\"')
     block = (f'\n[[stock]]\ncode = "{code}"\nname = "{esc(name)}"\nmarket = "{market}"\nadded = "{day.isoformat()}"\n'
-             f'why = "{esc(why)}"\n')
+             f'why = "{esc(why)}"\n' + (f'kind = "{kind}"\n' if kind != "stock" else ""))
     old = path.read_text(encoding="utf-8") if path.exists() else ""
     path.write_text(old.rstrip("\n") + "\n" + block, encoding="utf-8")
     errs = check(load(path))
@@ -198,7 +203,7 @@ def main(argv: list[str]) -> int:
         return 1 if errs else 0
     if argv[0] == "add" and len(argv) >= 4:
         market = "KOSDAQ" if "--kosdaq" in argv else "KOSPI"
-        code = add(path, argv[1], argv[2], argv[3], market)
+        code = add(path, argv[1], argv[2], argv[3], market, kind="etf" if "--etf" in argv else "stock")
         print(f"더함: {code} {argv[2]} ({market}) → {path}")
         print("시세는 prepare가 받는다. 오늘 바로 쓰려면 python -m market.daily prepare를 한 번 더 돌린다"
               "(input.json은 덮지 않는다 — 새 종목의 손 예측·비중 줄은 직접 더한다).")

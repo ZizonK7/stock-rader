@@ -8,7 +8,7 @@
 - 시간: 매일 07:17 (한국 시간으로 입력 — 예약 설정의 실제 값, 2026-11-10 확인. 처음엔 07:37이었다). 09:05에는 따로 「stock-rader 장 시작 뒤 실행」이 돈다([routine-open-prompt.md](routine-open-prompt.md)).
 - 비용은 줄이지 않는다(사용자 결정). 문제가 되면 사용자가 그만하라고 한다.
 - 모델·effort: **사용자가 예약마다 지정한다**(2026-11-17 "각 실행마다 에이전트 지정해뒀어"). 이 아침 실행의 메인은 **Opus 5.5 extra(xhigh) — 지정한 값**("이런 판단은 고급 모델이 해야 할 것 같아서 opus extra 붙였고"). 실제로 그 effort로 도는지는 실행 기록으로만 확인된다. 하위 에이전트의 모델·effort는 Agent 도구에 직접 준다(4-0).
-- 하루 흐름(2026-11-17 사용자 확정): 07:17 이 실행(조사 → 판단 → 08:40 다시 보기 → **09:00 전 체결**) → 09:05 장 시작 뒤 실행([routine-open-prompt.md](routine-open-prompt.md)) → 09:13 피드백 정리([routine-feedback-prompt.md](routine-feedback-prompt.md), Opus 5.5 xhigh) → 09:41 일지 쓰기([routine-report-prompt.md](routine-report-prompt.md), Opus 5.5 medium) → 10:47 블로그 올리기(Haiku 5.5, 글을 고치지 않음). **이 실행은 돌아보기·뿌리 묶기·일지를 하지 않는다.**
+- 하루 흐름(2026-11-17 사용자 확정): 07:17 이 실행(조사 → 판단 → 08:40 다시 보기 → **09:00 전 체결**) → 09:05 장 시작 뒤 실행([routine-open-prompt.md](routine-open-prompt.md)) → 09:13 피드백 정리([routine-feedback-prompt.md](routine-feedback-prompt.md), Opus 5.5 xhigh — 일요일엔 주간 결산도) → 09:41 일지 쓰기([routine-report-prompt.md](routine-report-prompt.md), Opus 5.5 medium) → 10:47 블로그 올리기(Haiku 5.5, 글을 고치지 않음). **이 실행은 돌아보기·뿌리 묶기·일지를 하지 않는다.**
 
 ---
 

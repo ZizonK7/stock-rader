@@ -344,5 +344,55 @@ class StartsFresh(unittest.TestCase):
             self.assertEqual(R.check_folder(root.records), [])
 
 
+class SundayWeek(unittest.TestCase):
+    """일요일 주간 결산은 피드백 정리 실행이 쓴다(2026-11-17 p564 보완 5): FLOW 뒤 `report`는 매일 일지만, `report --week`는 주간
+    결산만 — 둘 다 그날 피드백 정리 줄 뒤에만. 일요일이 아니면 --week는 거절."""
+
+    def test_week_split(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(C, "FLOW_SINCE", "2025-09-06"):
+            root = TD.make_root(tmp)
+            for d in (dt.date(2025, 9, 4), dt.date(2025, 9, 5)):
+                self.assertEqual(TD.run_day(root, d)[0], 0)
+            for d in (dt.date(2025, 9, 6), dt.date(2025, 9, 7)):          # 토 → 일
+                assert D.prepare(root, d, TD.at(d, 7, 37), fetch=False, ticker=TD.TICK, echo=False) == 0
+                p = root.day_dir(d) / "flow.json"
+                p.write_text(json.dumps(flow_input(root, d), ensure_ascii=False), encoding="utf-8")
+                self.assertEqual(D.record(root, d, TD.at(d, 8, 50), p), 0)
+            sun = dt.date(2025, 9, 7)
+            self.assertEqual(RP.write(root, sun, week=True), 1)                     # 정리 전엔 주간 결산도 없다
+            self.assertEqual(D.feedback(root, sun, TD.at(sun, 9, 15), feedback_input(root, sun)), 0)
+            self.assertEqual(RP.write(root, sun, week=True), 0)                     # 피드백 정리 실행이 쓴다
+            self.assertTrue((root.reports / "2025-09-07-week.md").exists())
+            self.assertFalse((root.reports / "2025-09-07.md").exists())
+            self.assertEqual(RP.write(root, sun), 0)                                # 일지 쓰기 실행: 매일 일지만
+            self.assertTrue((root.reports / "2025-09-07.md").exists())
+            self.assertEqual(RP.write(root, dt.date(2025, 9, 6), week=True), 1)     # 토요일 --week 거절
+
+
+class ListedEtf(unittest.TestCase):
+    """목록에 든 국내 상장 ETF(stocks.toml kind = "etf", 2026-11-17 p564 보완 6): 한 회사가 아니다."""
+
+    def test_rules(self):
+        from market import rules as RU
+        from market import stocks as ST
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(C, "LISTED_ETF", set()):
+            p = Path(tmp) / "stocks.toml"
+            ST.add(p, "005930", "삼성전자", "w", day=DAY)
+            ST.add(p, "491820", "업종 ETF", "w", day=DAY, kind="etf")
+            ST.register(p)
+            self.assertEqual(C.LISTED_ETF, {"491820"})
+            self.assertNotIn("single", C.traits("491820"))
+            self.assertIn("single", C.traits("005930"))
+            self.assertEqual(RU.sell_tax("491820", 1_000_000, 50_000), 0)          # 국내 묶음 ETF 규칙
+            self.assertEqual(RU.sell_tax("005930", 1_000_000, 50_000), 2_000)      # 종목 0.20%
+            self.assertEqual(SC.kind_of("491820"), "sector")
+            self.assertEqual(SC.kind_of("005930"), "stock")
+            self.assertTrue(RP.asset_label("491820").endswith("(ETF)"))
+            bad = Path(tmp) / "bad.toml"
+            bad.write_text('[[stock]]\ncode = "123456"\nname = "x"\nmarket = "KOSPI"\nadded = "2026-11-17"\nwhy = "w"\nkind = "fund"\n',
+                           encoding="utf-8")
+            self.assertTrue(any("kind" in e for e in ST.check(ST.load(bad))))
+
+
 if __name__ == "__main__":
     unittest.main()

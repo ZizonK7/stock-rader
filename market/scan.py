@@ -29,7 +29,8 @@ MAX_FOUND = 10          # 기록 크기: 대상 60개 × 하루
 TEXT_MAX = 300
 # 대상 종류마다 반드시 다루는 kind(찾음 또는 못 찾음). 종목: 그 회사 공시·뉴스·실적(직전 10 거래일 발표와 전망 평균)·전일 수급.
 # 묶음·코인: 간밤 해외 움직임·뉴스·수급(국내 묶음은 외국인 현물·선물, 코인은 거래소·해외 상품 자금)·오늘 일정.
-REQUIRED = {"stock": ("공시", "뉴스", "실적", "수급"), "etf": ("간밤", "뉴스", "수급", "일정"), "coin": ("간밤", "뉴스", "수급", "일정")}
+REQUIRED = {"stock": ("공시", "뉴스", "실적", "수급"), "etf": ("간밤", "뉴스", "수급", "일정"), "coin": ("간밤", "뉴스", "수급", "일정"),
+            "sector": ("간밤", "뉴스", "수급", "일정")}   # sector = 목록에 든 국내 상장 업종 ETF(config.LISTED_ETF, 2026-11-17)
 
 FORM = {
     "asset": "<코드>", "by": "<에이전트: 예 haiku-5.5 high>", "as_of": "<본 정보 가운데 가장 늦은 것의 시각, 예 2026-11-18T07:55+09:00>",
@@ -50,6 +51,11 @@ SOURCES = {
             "뉴스: 이 묶음이 따르는 시장 전체를 움직일 지난 24시간 소식(금리·정책·큰 회사 실적)",
             "수급: 전일 외국인·기관 순매수(코스피 현물, 가능하면 선물) https://finance.naver.com/sise/sise_trans_style.naver",
             "일정: 오늘·내일 발표(경제 지표·중앙은행·큰 실적)와 예상치"],
+    "sector": ["간밤: 이 ETF가 담은 업종과 같은 업종의 해외 종목·지수의 간밤 움직임(등락 %), 원·달러 환율",
+               "뉴스: 이 ETF가 담은 업종의 지난 24시간 소식과 큰 구성 종목의 공시(구성 종목은 운용사 상품 페이지나 "
+               "https://finance.naver.com/item/main.naver?code={code} 에서)",
+               "수급: 전일 이 ETF와 큰 구성 종목의 외국인·기관 순매수 https://finance.naver.com/item/frgn.naver?code={code}",
+               "일정: 오늘·내일 그 업종에 걸린 발표(정책·수주·큰 구성 종목 실적)"],
     "coin": ["간밤: 지난 24시간 가격 흐름(https://api.upbit.com/v1/candles/minutes/60?market=KRW-BTC&count=24), 해외 거래소 값과의 차이",
              "뉴스: 지난 24시간 코인 시장 소식(규제·해킹·큰 보유자)",
              "수급: 해외 현물 상장 상품 자금 흐름(전일), 거래소 입출금 — 못 찾으면 못 찾음",
@@ -58,6 +64,8 @@ SOURCES = {
 
 
 def kind_of(asset: str) -> str:
+    if asset in C.LISTED_ETF:
+        return "sector"
     return "stock" if C.is_stock(asset) else C.ASSETS[asset].kind
 
 

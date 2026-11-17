@@ -15,6 +15,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from . import config as C
+from . import flow as FL
 from . import records as R
 from . import research as RS
 from . import scoring as S
@@ -48,6 +49,8 @@ def units_text(asset: str, units: int) -> str:
 
 def asset_label(asset: str) -> str:
     """표·글 속 이름. 종목은 이름 뒤에 '(종목)'을 붙여 묶음 상품과 구별한다."""
+    if asset in C.LISTED_ETF:   # 목록에 든 국내 상장 ETF(2026-11-17)
+        return f"{C.ASSETS[asset].name}(ETF)"
     return f"{C.ASSETS[asset].name}(종목)" if C.is_stock(asset) else C.ASSETS[asset].name
 
 
@@ -600,16 +603,23 @@ def knowledge_log(repo: Path, since: str, until: str) -> list[str]:
 
 
 # ---------- 파일 ----------
-def write(root, day: dt.date, force: bool = False) -> int:
-    from . import flow as FL
+def write(root, day: dt.date, force: bool = False, week: bool | None = None) -> int:
+    """일지 뼈대. week: None = 예전처럼(매일 일지 + 일요일엔 주간 결산), False = 매일 일지만, True = 주간 결산만.
+    2026-11-18부터(FLOW): 매일 일지는 9시 뒤 일지 쓰기 실행, 일요일 주간 결산은 피드백 정리 실행이 쓴다(p564 보완 5 — 사용자
+    "피드백 정리하던 애가 일요일 결산도 쓰는 걸로 하자") — 명령은 `report`(매일 일지만)와 `report --week`."""
     if FL.active(day) and not any(x["id"] == f"feedback:{day.isoformat()}" for x in R.read(root.records, "run")):
         # 2026-11-17 p564: 글은 9시 뒤 피드백 정리 실행이 끝난 뒤에 쓴다 — '어제 선택이 어땠고 무엇을 배웠나'가 글에 들어간다
         print(f"{day} 피드백 정리 기록(run feedback:{day})이 아직 없다 — 일지는 그 뒤에 만든다. 아무것도 쓰지 않았다")
         return 1
     root.reports.mkdir(parents=True, exist_ok=True)
     made = []
-    targets = [(root.reports / f"{day.isoformat()}.md", lambda: daily(root.records, day))]
-    if day.weekday() == 6:
+    if week is None and FL.active(day):
+        week = False
+    targets = [] if week else [(root.reports / f"{day.isoformat()}.md", lambda: daily(root.records, day))]
+    if week or (week is None and day.weekday() == 6):
+        if day.weekday() != 6:
+            print(f"{day}는 일요일이 아니다 — 주간 결산은 일요일에만")
+            return 1
         targets.append((root.reports / f"{day.isoformat()}-week.md", lambda: weekly(root.records, day, root.places)))
     for path, make in targets:
         if path.exists() and not force:
