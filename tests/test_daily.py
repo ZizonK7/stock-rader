@@ -12,6 +12,7 @@ from market import prices as PR
 from market import records as R
 from market import report as RP
 from market import scoring as S
+from market import versions as V
 from tests import fixtures
 
 TICK = {"KRW-BTC": {"price": 50_000_000.0, "time": "2025-09-02T07:37:00+09:00", "source": "test"}}
@@ -99,7 +100,12 @@ class DailyLoop(unittest.TestCase):
             # 판단 때 가격(TICK)이 있어도 계산기·이전 버전(v5에는 출발점 조각이 살아 있다)에 넘기지 않는다
             self.assertFalse([p for p in recs["prediction"] if any(u.startswith("C_started_move") for u in p.get("used", []))])
             self.assertTrue(all(p["layer"] in ("조각", "기준값", "동전") for p in recs["prediction"] if p["predictor"].startswith("version:")))
-            self.assertLessEqual({"version:v3", "version:v4", "version:v5"}, preds)
+            # 이전 버전: 등록부(versions/versions.toml)에서 active인 것은 모두 있고 쉰 것은 없다 — 피드백 정리가 상한 3을 지키려
+            # 버전을 쉬어도 시험이 따라가게 등록부에서 읽는다(2026-11-18, 그 전엔 v3·v4·v5를 박아 둠)
+            active = {f"version:{v.id}" for v in V.load() if v.active}
+            self.assertTrue(active)
+            self.assertLessEqual(active, preds)
+            self.assertFalse({f"version:{v.id}" for v in V.load() if not v.active} & preds)
             # 예측 기준 = 체결가(결정 E2): 새 줄은 모두 base_kind fill·base_close null, 기준 날짜 = 판단(08:30) 뒤 첫 체결 봉(평일이라 그날)
             self.assertTrue(all(p.get("base_kind") == "fill" and p["base_close"] is None for p in recs["prediction"]))
             self.assertEqual({p["base_date"] for p in recs["prediction"]}, {d.isoformat() for d in days})
