@@ -908,3 +908,13 @@ covers = []
 official = false
 added = 2026-11-18
 note = "2026-11-18 2차 조사가 새로 찾음(종목 코드를 바꿔 씀). 전일 종가·외국인 소진율·추정 PER과 투자자별 순매수가 한 번에 나온다. 전일 종가는 시간외를 친 값일 수 있어 수급 표의 종가와 다르다(2026-11-18 아침 조사 다수가 같은 어긋남을 보고) — 종가는 시세 파일을 쓴다"
+
+[[place]]
+id = "P_coingecko_price"
+name = "CoinGecko 공개 가격 API (비트코인 원화 값·24시간 등락)"
+url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=krw&include_24hr_change=true&include_last_updated_at=true"
+angle = "간밤 반응"
+covers = ["coin_24h_pct"]
+official = false
+added = 2026-11-19
+note = "2026-11-19 간밤 반응 조사가 새로 열어 봄 — 키 없이 열림, 24시간 등락이 거래소마다 1–2% 다를 수 있어 업비트 값과 같이 본다"
