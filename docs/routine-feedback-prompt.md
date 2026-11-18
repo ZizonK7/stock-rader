@@ -129,7 +129,8 @@ python -m market.logic audit          # 오류 0이어야 한다
 python -m unittest discover -s tests -t .
 ```
 - 하나라도 실패하면 고친다. 기록 파일을 손으로 고치지 않는다. audit 오류가 오늘 고친 논리집 때문이면 고침을 되돌리고(떠 둔 버전 파일은 그대로) 돌아보기 reason에 "고치려 했으나 audit 오류로 미룸".
-- 커밋: `git add records knowledge.toml versions places.toml`(일요일엔 `reports/<오늘>-week.md`도) → `git commit -m "피드백 정리 <오늘>: 돌아보기 <n>건, 뿌리 <같음 n·새 n·충돌 n·고침 n·합침 n·내림 n>, 고친 조각 <id 또는 없음>"`(끝에 빈 줄 다음 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`) → `git push origin HEAD:main`. 거절되면 `git pull --rebase origin main` 뒤 다시(다른 실행과 다른 파일이라 부딪히지 않는다). `out/`과 매일 일지(`reports/<오늘>.md`)는 넣지 않는다. 일요일엔 기록을 먼저 올리고(일지 쓰기 실행이 그 줄을 기다린다) 주간 결산은 다 쓴 뒤 한 번 더 올려도 된다.
+- **시험·코드가 실패하는데 오늘 기록·논리집은 맞을 때**(2026-11-18 사용자 결정): 검사를 약하게 하지 않는 작은 고침(예: 시험에 박아 둔 값을 등록부·설정에서 읽게 하기)은 이 실행이 해도 된다 — 그 파일을 커밋에 같이 넣고, 무엇을 왜 고쳤는지 마지막 보고에 적는다(알림을 보내면 알림에도). 검사를 빼거나 느슨하게 하는 고침(시험 지우기·건너뛰기·기대값을 결과에 맞춰 넓히기)은 하지 않는다 — 그때는 오늘 고침을 되돌리고, 되돌릴 수 없으면 대화 세션 몫(`asks`)으로 열고 마지막 보고에 적는다.
+- 커밋: `git add records knowledge.toml versions places.toml`(일요일엔 `reports/<오늘>-week.md`도, 위 규칙대로 고친 시험·코드 파일도) → `git commit -m "피드백 정리 <오늘>: 돌아보기 <n>건, 뿌리 <같음 n·새 n·충돌 n·고침 n·합침 n·내림 n>, 고친 조각 <id 또는 없음>"`(끝에 빈 줄 다음 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`) → `git push origin HEAD:main`. 거절되면 `git pull --rebase origin main` 뒤 다시(다른 실행과 다른 파일이라 부딪히지 않는다). `out/`과 매일 일지(`reports/<오늘>.md`)는 넣지 않는다. 일요일엔 기록을 먼저 올리고(일지 쓰기 실행이 그 줄을 기다린다) 주간 결산은 다 쓴 뒤 한 번 더 올려도 된다.
 
 ## 8. 실패 처리
 | 상황 | 할 일 |
