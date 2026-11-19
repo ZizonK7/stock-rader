@@ -918,3 +918,23 @@ covers = ["coin_24h_pct"]
 official = false
 added = 2026-11-19
 note = "2026-11-19 간밤 반응 조사가 새로 열어 봄 — 키 없이 열림, 24시간 등락이 거래소마다 1–2% 다를 수 있어 업비트 값과 같이 본다"
+
+[[place]]
+id = "P_news_google_en_rss"
+name = "Google 뉴스 RSS 영어판 (미국 지표 발표치·대형주 실적·선거 결과 제목)"
+url = "https://news.google.com/rss/search?q=Philadelphia%20Fed%20manufacturing%20index&hl=en-US&gl=US&ceid=US:en"
+angle = "일정·예상치"
+covers = ["S_q_surprise", "S_q_bigcap_earnings", "S_q_midterm_after"]
+official = false
+added = 2026-11-20
+note = "2026-11-20 일정·예상치 조사가 새로 씀(검색 낱말을 바꿔 씀). 키 없이 열리고 검색 몫을 안 쓴다. 미국 지표 발표치(11-19 필라델피아 연은 6.3 vs 예상 20.0)·엔비디아 실적·중간선거 결과 제목이 나온다 — 제목뿐이라 전망 최저~최고 범위는 없다"
+
+[[place]]
+id = "P_naver_finance_quarter_api"
+name = "네이버 증권 모바일 종목 분기 실적 응답 (JSON, 실제·전망 칸)"
+url = "https://m.stock.naver.com/api/stock/032830/finance/quarter"
+angle = "공시·뉴스"
+covers = ["S_q_earnings_beat"]
+official = false
+added = 2026-11-20
+note = "2026-11-20 공시·뉴스 조사·2차 조사가 씀(종목 코드를 바꿔 씀). 분기마다 매출·영업이익 실제 값과 전망(isConsensus=Y) 칸 — 잠정 발표 뒤에도 그 분기가 전망 칸으로 남아 있는 종목이 많다(2026-11-20 아침 조사 다수). 전망 평균의 출처는 표에 없다"

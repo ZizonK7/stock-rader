@@ -311,8 +311,14 @@ class Devices(unittest.TestCase):
         cands = [w for w in warns if "은퇴 후보" in w]
         self.assertTrue(any("Q_risk_off_level" in w for w in cands), warns)
         self.assertFalse(any("Q_overnight_lead" in w for w in cands))  # 씨앗(세운 날 11-04 뒤 30일)은 경고하지 않는다
-        _, warns = CH.audit(self.kn(TEXT), self.want())
-        self.assertFalse(any("은퇴 후보" in w for w in warns))  # 지금 기록으로는 아직
+        # 30 판단일 전이면 아직 경고하지 않는다. 예전엔 진짜 기록(records/)으로 확인했는데, 2026-11-20 판단으로
+        # 진짜 기록이 30 판단일을 넘어 그 확인이 날짜에 따라 깨졌다 — 같은 성질을 하루 모자란 임시 기록으로 본다.
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            (folder / "run.jsonl").write_text("".join(json.dumps(r) + "\n" for r in runs[:-1]), encoding="utf-8")
+            with mock.patch.object(C, "RECORDS", folder):
+                _, warns = CH.audit(self.kn(TEXT), self.want())
+        self.assertFalse(any("은퇴 후보" in w for w in warns), warns)
 
     def test_start_piece_is_not_counted_in_calc_cap(self):
         start = "".join(f'\n[[hypothesis]]\nid = "C_start{i}"\ntext = "t"\nsource = "s"\nreason = "r"\n'
