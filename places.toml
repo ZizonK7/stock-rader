@@ -938,3 +938,13 @@ covers = ["S_q_earnings_beat"]
 official = false
 added = 2026-11-20
 note = "2026-11-20 공시·뉴스 조사·2차 조사가 씀(종목 코드를 바꿔 씀). 분기마다 매출·영업이익 실제 값과 전망(isConsensus=Y) 칸 — 잠정 발표 뒤에도 그 분기가 전망 칸으로 남아 있는 종목이 많다(2026-11-20 아침 조사 다수). 전망 평균의 출처는 표에 없다"
+
+[[place]]
+id = "P_naver_kpi200_polling"
+name = "네이버 실시간 지수 응답 — 코스피200·코스피 종가와 등락 (JSON)"
+url = "https://polling.finance.naver.com/api/realtime/domestic/index/KPI200"
+angle = "간밤 반응"
+covers = ["S_q_overnight_gap", "kospi200_close_pct"]
+official = false
+added = 2026-11-21
+note = "2026-11-21 간밤 반응 조사가 새로 씀. 키 없이 열리고 코스피200 마감 값·전일 대비가 바로 나온다 — 간밤 격차 대용값(EWY ÷ 국내 지수 전일 등락)의 분모로 쓴다. 야간 선물 값은 없다"
