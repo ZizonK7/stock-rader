@@ -707,7 +707,7 @@ angle = "간밤 반응"
 covers = ["us_large_fut_pct"]
 official = false
 added = 2026-11-04
-note = "확인 전. 같은 API의 다른 기호(^VIX, EWY)는 열렸다(P_yahoo_chart, P_yahoo_ewy) — 선물 기호도 같은 모양이라 넣었다. 429(너무 많은 요청)이면 P_cboe_delayed_api"
+note = "2026-11-22 열림 확인(간밤 반응 조사가 ES=F·NQ=F 1년 일봉과 마지막 체결 11-21 06:59 KST를 받음 — 주말엔 금요일 값에 멈춰 있다). 처음엔 확인 전으로 넣었다(같은 API의 ^VIX·EWY가 열려서). 429(너무 많은 요청)이면 P_cboe_delayed_api"
 
 [[place]]
 id = "P_investing_k200_futures"
@@ -717,7 +717,7 @@ angle = "간밤 반응"
 covers = ["S_q_overnight_gap", "kr_overnight_pct"]
 official = false
 added = 2026-11-04
-note = "확인 전. 같은 사이트의 지수 일별 화면(P_investing_kospi200)은 열렸다. 야간 선물 끝값을 못 찾으면 07시대 통신 기사(P_newsis)가 등락 %를 준다(2026-11-04 '야간선물 +1.72%')"
+note = "2026-11-22 막힘(403). 같은 사이트의 지수 일별 화면(P_investing_kospi200)은 열렸었다. 야간 선물 등락 %는 아침 통신·시황 기사가 준다 — 2026-11-22는 네이버 뉴스 검색(P_naver_news_search, '야간선물' 최신순)의 연합·머니스톰 발췌에서 −6.99%를 찾았다(2026-11-04에도 기사에서 '야간선물 +1.72%')"
 
 [[place]]
 id = "P_econoday"
