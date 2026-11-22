@@ -321,10 +321,10 @@ id = "P_google_news_rss"
 name = "구글 뉴스 RSS 검색 (한국어 기사 제목·발행 시각)"
 url = "https://news.google.com/rss/search?q=%ED%99%98%EC%9C%A8%20when%3A3d&hl=ko&gl=KR&ceid=KR:ko"
 angle = "공시·뉴스"
-covers = ["S_q_rate_up", "S_q_home_currency_weak", "S_q_midterm_after"]
+covers = ["S_q_rate_up", "S_q_home_currency_weak", "S_q_midterm_after", "S_q_stab_fund"]
 official = false
 added = 2026-10-24
-note = "2026-10-24 새로 시도: 검색어를 바꿔 여러 언론의 금통위·환율 마감 기사 제목과 발행 시각을 한 번에 본다. 제목만 보므로 숫자는 다른 곳에서 대조"
+note = "2026-10-24 새로 시도: 검색어를 바꿔 여러 언론의 금통위·환율 마감 기사 제목과 발행 시각을 한 번에 본다. 제목만 보므로 숫자는 다른 곳에서 대조. 2026-11-23: 증시 안정 기금 상태(S_q_stab_fund)도 여기서 찾았다(검색어 증안펀드 — 가동 준비·결정 기사 제목과 시각)"
 
 [[place]]
 id = "P_blockmedia"
@@ -948,3 +948,13 @@ covers = ["S_q_overnight_gap", "kospi200_close_pct"]
 official = false
 added = 2026-11-21
 note = "2026-11-21 간밤 반응 조사가 새로 씀. 키 없이 열리고 코스피200 마감 값·전일 대비가 바로 나온다 — 간밤 격차 대용값(EWY ÷ 국내 지수 전일 등락)의 분모로 쓴다. 야간 선물 값은 없다"
+
+[[place]]
+id = "P_defillama_stables"
+name = "DefiLlama 스테이블코인 공급 API (테더·USDC 발행 잔액, JSON)"
+url = "https://stablecoins.llama.fi/stablecoins"
+angle = "수급"
+covers = ["stable_total_usdbn", "usdt_chg_1w_pct"]
+official = false
+added = 2026-11-23
+note = "2026-11-23 비트코인 2차 조사가 새로 씀. 키 없이 curl로 열리고 종류별 지금 잔액·1주 전·1달 전 값이 한 응답에 있다 — 코인 시장으로 들어올 수 있는 달러 몫의 증감(1주 USDT −0.4%, USDC −0.9%). 이름 붙은 조각의 조건은 아직 아니다"
