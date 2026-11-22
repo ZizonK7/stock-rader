@@ -89,6 +89,7 @@ Claude가 세션 시작 때 읽는 작업 문서다. 매일 도는 예약 실행
 | `asked.toml` | 물어본 종목(`market.ask`가 덧붙임) — 다음 아침 손 예측 차례 맨 앞 |
 | `versions/` | 이전 버전 조각 모음, 매일 같이 채점 ([versions/CLAUDE.md](versions/CLAUDE.md)) |
 | `tests/` | unittest ([tests/CLAUDE.md](tests/CLAUDE.md)) |
+| `.claude/agents/` | 하위 조사 에이전트 정의 `stock-rader-research.md`(도구를 Bash·Read·Write·WebSearch·WebFetch로 묶음 — 원격 도구 없음, 2026-11-22). 이 폴더의 `.md`는 모두 에이전트 정의로 읽혀 CLAUDE.md를 두지 않는다(설명은 이 줄과 decisions.md) |
 | `docs/` | 설계·결정 기록·보고서 문체·재생 결과·**예약 지시문 넷**·작업 보고서(`worklog/`) |
 | `out/` | 매일 실행의 작업 파일(git 제외): `out/daily/<날짜>/briefing.md`·`input.json`·`scan/` |
 
@@ -99,6 +100,7 @@ Claude가 세션 시작 때 읽는 작업 문서다. 매일 도는 예약 실행
 - 한글이 깨지면 `PYTHONIOENCODING=utf-8`.
 
 ## 다음 할 일 (자세한 경위는 decisions.md '다음 할 일')
+- **2026-11-23 아침 실행 확인**(2026-11-22 바꾼 둘): 논리집 검사가 저장소 안 `proviso/`로 돌았나(run notes에 PROVISO 우회가 없나), 하위 에이전트가 `stock-rader-research`로 나갔나·원격 도구 호출이 사라졌나(run notes 한 줄, '에이전트 정의 못 읽음'이면 예약 설정 권한으로 막는 길을 본다).
 0. **새 아침 흐름 첫날(2026-11-18) 확인**: 2기가 열렸나(`broker` start `…@2` 넷, 1기 phase close 넷, `market.broker status`, `records check`), 아침 `timeline`과 record 시각(08:55 전), 대상마다 아침 조사 파일 수·실패 수, 다시 보기 `sent_at`·바꾼 것, `premarket` 줄의 장외 값이 장 전 값으로 찼나(차면 08:40 재료로 정식으로 읽는 코드), 피드백 정리(`feedback:` 줄·`lesson` 줄)·일지·10:47 블로그가 순서대로 돌았나, 새 종목 시세 파일(출처 yahoo), 계산기 줄 `S_comove_market`, 종목 채점 `rel_ret`, 새 조각 id(`Q_rate_up_shift_linked`·`Q_earnings_beat_rel`). 아직 없는 것: '08:40에 바꾼 것이 나았나' 채점.
 1. **열린 대화 세션 몫**(`python -m market.asks`, briefing 맨 위): `ask:2026-10-28:1` 상태 `S_q_event_soon` 창을 한 가지로, `ask:2026-11-17:2` 간밤 격차 질문이 국내 장 움직임을 겹쳐 셈, `ask:2026-11-17:3` 기록 파일 크기(해마다 나누기).
 2. 한 번만 세기 열쇠를 체결가 기준 줄에서는 채점의 `fill_date`로(휴장 다음 날 두 번 세기 막기). 느린 정보 상태를 숫자 상태로 바꿀지. 새 볼 곳 넷이 키 없이 열리는지.

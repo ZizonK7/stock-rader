@@ -67,3 +67,13 @@ what = "PROVISO-Nesy main이 2026-11-21 18:58 KST(커밋 0447979 'clear reposito
 close = "logic.py가 찾을 새 코어 자리(새 PROVISO 버전의 경로·모듈 이름, 또는 고정한 커밋을 꺼내 쓰는 방법)와 메인 피드백 두 파일의 자리가 루트 CLAUDE.md·지시문에 적히고, python -m market.logic validate가 PROVISO_PATH 없이 '문제 없음'을 내면 닫힘"
 closed = "2026-11-22"
 how = "코어를 이 저장소로 옮겼다(사용자 '1번으로 옮기자'): PROVISO-Nesy 08c6c93의 proviso/__init__·schema·score·audit(글자 그대로)과 설명 CLAUDE.md(머리에 옮긴 경위), feedback/main/common.md·stock_rader.md(글자 그대로), 논리집 쌓는 방식 proviso/stacking.md(그곳 domains/agent_usage/CLAUDE.md '따라 할 방식' 절). market/logic.py는 저장소 안 proviso/만 보고(형제 폴더·PROVISO_PATH 걷음, FEEDBACK 자리), lessons.feedback_lines는 proviso/feedback/main을 읽는다. 시험은 코어가 늘 있어 건너뛰지 않는다(tests/test_logic.py CoreInRepo — PROVISO_PATH 없이·엉뚱한 PROVISO_PATH로도 validate '문제 없음'). 루트 CLAUDE.md·지시문 셋(routine-prompt·routine-feedback-prompt)·market/tests CLAUDE.md·design·decisions에 새 자리를 적었다"
+
+[[ask]]
+id = "ask:2026-11-22:2"
+opened = "2026-11-22"
+from = "live:2026-11-22 asks"
+status = "닫힘"
+what = "하위 에이전트(Haiku 5.5 아침 조사)가 지시('mcp__ 도구 부르지 않는다')를 받고도 원격 도구를 부른다: 2026-11-21 셋, 2026-11-22 알린 것만 아홉 번(세션 보관 4·문서 읽기 3·PR 구독 1·저장소 신뢰 확인 1 — 마지막은 사람 확인을 기다리며 멈춰 메인이 멈추고 다시 보냄). 지시 문장만으로는 막히지 않는다"
+close = "아침 조사·조사·다시 보기 에이전트가 Bash·Read·Write만 쓸 수 있게 하는 방법(에이전트 정의의 도구 목록 또는 예약 설정의 권한)이 정해져 지시문에 적히거나, 대화 세션이 그대로 두는 까닭을 asks.toml에 적으면 닫힘"
+closed = "2026-11-22"
+how = "하위 조사 에이전트 정의 .claude/agents/stock-rader-research.md를 두었다(사용자 '1 ㄱㄱ'): tools = Bash, Read, Write, WebSearch, WebFetch — 목록을 적으면 그 밖의 도구·MCP 원격 도구를 물려받지 않는다. 아침 지시문 4-0·다시 보기·조사 넷·2차 조사가 subagent_type stock-rader-research로 보내고, 종류가 목록에 없으면 예전처럼 보내며 run notes에 '에이전트 정의 못 읽음'을 적는다. 시험 tests/test_agents.py. 클라우드에서 먹히는지는 2026-11-23 첫 실행의 run notes로 확인한다(안 먹히면 예약 설정 권한 쪽을 다시 연다). docs/decisions.md 2026-11-22 둘째 절"
