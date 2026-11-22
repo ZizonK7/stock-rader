@@ -9,7 +9,7 @@
 
 
 ## 프로젝트
-실제 돈 없이 Claude가 혼자 가상 투자를 하면서 **논리 조각화**를 시험한다. 상위 프로젝트는 [PROVISO-Nesy](https://github.com/ZizonK7/PROVISO-Nesy)(SELA 구현)다. 그 저장소는 2026-11-10부터 **비공개**다(사용자가 바꿈) — 이 저장소는 그 코어를 읽기만 하고(논리집 검사·시험 일부), 세션·예약 실행에 저장소로 붙어 있어야 받아진다(주소로 그냥 받아 올 수 없다). 없으면 논리집 검사만 건너뛰고 시세·주문·채점·기록·일지는 그대로 돈다. 논리집을 쌓는 방식은 그곳의 `domains/agent_usage/CLAUDE.md`(AI가 사용자의 논리집 쌓는 법을 따라 스스로 쌓기)를 따른다. 지식 양식과 검사 도구도 그곳 코어를 쓴다.
+실제 돈 없이 Claude가 혼자 가상 투자를 하면서 **논리 조각화**를 시험한다. 상위 프로젝트는 [PROVISO-Nesy](https://github.com/ZizonK7/PROVISO-Nesy)(SELA 구현)다. 그 저장소는 2026-11-10부터 **비공개**다(사용자가 바꿈). 이 저장소는 그 코어를 읽기만 했는데(논리집 검사·시험 일부), 그 main이 2026-11-21 비워져 **2026-11-22부터 코어·메인 피드백·쌓는 방식을 이 저장소 `proviso/`로 옮겼다**(아래 '이후 결정' 2026-11-22). 논리집을 쌓는 방식은 그곳의 `domains/agent_usage/CLAUDE.md`(AI가 사용자의 논리집 쌓는 법을 따라 스스로 쌓기)를 따른다. 지식 양식과 검사 도구도 그곳 코어를 쓴다.
 
 ## 사용자 의도 (2026-10-20 대화, 사용자 말 그대로 또는 요지)
 이 저장소에서 판단이 갈릴 때 기준이 되는 말이다. 바뀌면 날짜를 붙여 고친다.
@@ -114,7 +114,7 @@
 - `python -m market.ask <코드|이름> [--dry]` — 물어보면 답하는 명령: 지금 상태·기준선·걸리는 조각과 그 성적·한계를 한 화면에. 목록에 없으면 더하고 `asked.toml`에 적는다(--dry는 쓰지 않음). records에는 쓰지 않는다
 - `python -m unittest discover -s tests -t .` — 시험(30초쯤)
 - `python -m market.records check` — 기록 검사(칸 + git HEAD와 비교 + 가상 증권사 검산: 잔고 다시 계산·체결가 = 실제 봉). 커밋 전에
-- `python -m market.logic validate|check|audit` — 논리집 검사·성적표·점검(PROVISO 코어: 환경변수 `PROVISO_PATH` 또는 형제 폴더 `../PROVISO-Nesy` — 폴더 이름의 대소문자는 가리지 않는다)
+- `python -m market.logic validate|check|audit` — 논리집 검사·성적표·점검(코어: 저장소 안 `proviso/`, 2026-11-22부터 — 그 전엔 환경변수 `PROVISO_PATH` 또는 형제 폴더 `../PROVISO-Nesy`)
 - `python -m market.prices update|show` — 시세 덧붙이기(네트워크, 시간 제한 30초)
 - `python -m market.calc [날짜]` — 그날 07:37 계산기 답 보기(기록하지 않음)
 - `python -m market.fit [--write]` — 조각 숫자를 2026-06-30까지의 시세로 맞추기
@@ -301,3 +301,10 @@
 - 사용자 원문: "ㅇㅇ 그렇게 해."
 - 반영: 시험을 돌리는 두 지시문(아침 `docs/routine-prompt.md` 8, 피드백 정리 `docs/routine-feedback-prompt.md` 7)의 '실패하면 고친다' 아래에 한 줄. 검사를 빼거나 느슨하게 하는 고침은 여전히 안 되고, 그때는 오늘 고침을 되돌리거나 대화 세션 몫으로 연다. 루트 CLAUDE.md에는 넣지 않았다 — 시험을 돌리는 실행이 둘뿐이라 모든 실행이 읽을 내용이 아니다.
 - 같은 대화에서: 루트 CLAUDE.md의 계산 조각 두 줄(확정된 결정·다음 할 일 5)을 피드백 정리 실행이 길게 늘렸던 것을 다시 짧게 했다 — 은퇴의 까닭·v7·ask id는 이 파일 바로 위 절과 `knowledge.toml` note, briefing의 대화 세션 몫에 있다.
+
+### 2026-11-22 · 논리집 검사 코어를 이 저장소로 옮김 (대화 세션, ask:2026-11-22:1 닫음)
+- 경위: PROVISO-Nesy main이 2026-11-21 18:58 KST 커밋 0447979("chore: clear repository for v0.2.0", 351파일 삭제)로 비워져 지금은 `agent_time` 패키지뿐이다. 이 저장소가 읽던 `proviso/`(schema·score·audit), `feedback/main/common.md`·`stock_rader.md`, `domains/agent_usage/CLAUDE.md`가 모두 없어져 `python -m market.logic`이 "PROVISO-Nesy를 찾지 못함"으로 멈추고, briefing 메인 피드백이 "못 읽음" 한 줄이 되고, 시험 21개가 건너뛰어졌다. 2026-11-22 아침·피드백 정리 실행은 비우기 앞 커밋 08c6c93을 그때그때 `git archive`로 꺼내 `PROVISO_PATH`로 버텼다(지시문에 없는 우회).
+- 대화 세션이 고칠 방법 셋(코어를 이 저장소로 옮김 / 고정 커밋에서 꺼내는 길을 코드에 / PROVISO-Nesy에 되살림)을 보였고, 사용자 원문: "1번으로 옮기자."
+- 반영: 08c6c93에서 `proviso/__init__.py`·`schema.py`·`score.py`·`audit.py`(글자 그대로)와 `proviso/CLAUDE.md`(머리에 옮긴 경위), `proviso/feedback/main/common.md`·`stock_rader.md`(글자 그대로), `proviso/stacking.md`(그곳 `domains/agent_usage/CLAUDE.md` '따라 할 방식' 절 — 그 파일은 126KB 대부분이 다른 분야라 통째로 옮기지 않음). `market/logic.py`는 저장소 안 `proviso/`만 본다(`CORE`·`FEEDBACK`, 형제 폴더 찾기·`PROVISO_PATH` 걷음), `lessons.feedback_lines`는 `proviso/feedback/main`을 읽는다. 시험은 코어가 늘 있으므로 건너뛰지 않고(`tests/test_logic.py` `CoreInRepo` — `PROVISO_PATH` 없이·엉뚱한 값으로도 validate '문제 없음'), 옛 `FindCore`(형제 폴더 대소문자)는 지움. 시험 298개 통과(건너뜀 1 — 진짜 기록 갈아타기 뒤).
+- 지시문: 아침 1-2('PROVISO-Nesy 찾기' → '논리집 검사 코어 확인' — 형제 폴더·옛 커밋을 꺼내지 않는다)·1-3(메인 피드백 자리)·8·9, 피드백 정리 2·읽을 것·6·실패 표. 예약에 PROVISO-Nesy 저장소가 붙어 있어도 쓰지 않는다(떼어도 된다 — 사람이 예약 설정에서).
+- 정한 것(대화 세션 판단): 이제 `proviso/`가 원본이고, 예약 실행은 고치지 않는다 — 코어·메인 피드백을 고치는 것은 대화 세션 몫(`asks`로 연다). 옛 지시문의 "잼민이 쪽이 논리집 백서로 옮긴다"는 옮길 곳이 없어져 걷었다. `knowledge.toml` 머리 주석 3줄째("쌓는 방식은 PROVISO-Nesy domains/agent_usage/CLAUDE.md를 따른다")와 `versions/`·`lessons.toml`의 같은 말은 고치지 않았다(논리집 지문·떠 둔 파일을 건드리지 않으려고 — 지금 자리는 `proviso/stacking.md`).

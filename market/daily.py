@@ -781,7 +781,7 @@ def briefing(D: Day, fetched: dict, tick: dict, late: str = "") -> str:
         L_ += LS.brief_lines(roots)
         fb = LS.feedback_lines()
         if fb:
-            L_ += ["", "### 논리집 메인 피드백 (PROVISO-Nesy feedback/main common·stock_rader — 원문은 그쪽)"] + fb
+            L_ += ["", "### 논리집 메인 피드백 (proviso/feedback/main common·stock_rader — 2026-11-22 PROVISO-Nesy 08c6c93에서 옮김)"] + fb
         if LS.is_lesson_day(D.day):
             n = len(LS.due(D.recs["review"], D.recs["lesson"], D.day, []))
             L_.append(f"아직 묶지 않은 '다음엔' {n}건은 9시 뒤 피드백 정리 실행(routine-feedback-prompt.md)이 묶는다 — "

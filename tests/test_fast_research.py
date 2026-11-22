@@ -19,10 +19,7 @@ from market import records as R
 from market import research as RS
 from tests.test_daily import TICK, at, fill, make_root
 
-try:
-    SCHEMA, SCORE, AUDIT = logic.core()
-except SystemExit:
-    SCHEMA = None
+SCHEMA, SCORE, AUDIT = logic.core()   # 코어는 저장소 안 proviso/ (2026-11-22 옮김) — 늘 있어 건너뛰지 않는다
 
 TEXT = C.KNOWLEDGE.read_text(encoding="utf-8")
 
@@ -137,7 +134,6 @@ class SignDirection(unittest.TestCase):
             self.assertTrue(self.judge(Path(d))[0].startswith("반박됨"))
 
 
-@unittest.skipIf(SCHEMA is None, "PROVISO-Nesy를 찾지 못함 (PROVISO_PATH)")
 class NumericAudit(unittest.TestCase):
     def kn(self, text: str):
         with tempfile.TemporaryDirectory() as d:

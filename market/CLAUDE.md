@@ -33,7 +33,7 @@
 | `ask.py` | **물어보면 답하는 명령**(2026-11-17): 코드·이름 → 목록 또는 네이버 종목 찾기, 시세(저장 파일, 없으면 받아서 메모리에만), 시세 상태·같이 움직임·평소 움직임·기준선 둘(1·5·20), 그 종목에 걸리는 조사 조각의 오늘 값과 그 종목·같이 움직임이 같은 쪽 종목에서의 성적(`breakdown.collect`), 지난 손 예측, 한계. 목록에 없으면 더하고(살 수 있다) `asked.toml`에 적는다(--dry는 안 씀). records는 쓰지 않는다 | `python -m market.ask <코드|이름> [--dry]` |
 | `asks.py` | **대화 세션 몫**(2026-11-17): 매일 실행이 입력 `asks`로 연 일(run 줄 `asks` 칸) + 루트 `asks.toml`(대화 세션이 열고 닫음) → 열린 목록. briefing 맨 위에 보임, audit가 `asks.toml` 모양을 검사 | `python -m market.asks` |
 | `checks.py` | 논리집 자동 검사(`account_vs_equal`은 계좌 기마다 따로 재 곱한다 — 2026-11-17)(CHECKS·SOURCE·SEEN_UNTIL, 재생·실측 따로; `layer_vs_baselines` 포함)와 분야 점검(AUDIT: 조각 수 상한 넷, 고정값·출발점 주장 모양, 은퇴 후보 경고 등) | (logic이 부른다) |
-| `logic.py` | PROVISO 코어(schema·score·audit)를 불러 이 논리집을 검사 | `python -m market.logic validate / check / audit` |
+| `logic.py` | 저장소 안의 코어 `proviso/`(schema·score·audit — 2026-11-22 PROVISO-Nesy 08c6c93에서 옮김)를 불러 이 논리집을 검사. 메인 피드백 자리 `FEEDBACK`(`proviso/feedback/main`) | `python -m market.logic validate / check / audit` |
 
 ## 결정과 이유
 - **미래를 못 보게 구조로 막는다**: 계산 함수는 `History`(어떤 시각에 끝난 일봉만 담은 읽기 전용 묶음)나 그 종가 목록만 받는다. 판단 시각 07:37에 ETF는 전날 종가까지(16:00에 끝난 것으로 봄), 코인은 이틀 전 일봉까지(일봉이 다음 날 09:00에 끝남). 재생·매일 실행 모두 view를 새로 만든다. 독 넣기 테스트가 증명한다.
@@ -99,6 +99,6 @@
 - 기본 저장소에서 `daily`에 `--day`/`--at`을 쓰지 못한다(지난 날짜로 예측하지 않는다). 흉내 내기는 `--root <임시 폴더>`(`daily.copy_for_simulation`).
 
 ## 다른 폴더와의 관계
-- 읽음: `data/prices/*.csv`, `knowledge.toml`, `places.toml`, `stocks.toml`, `asks.toml`, `lessons.toml`, `asked.toml`, `versions/`, 논리집의 `feedback/main/common.md`·`stock_rader.md`(briefing), PROVISO-Nesy 코어(`PROVISO_PATH` 또는 형제 폴더 `../PROVISO-Nesy` — 이름의 대소문자 무시; 비공개 저장소라 세션·예약 실행에 붙어 있어야 한다).
+- 읽음: `data/prices/*.csv`, `knowledge.toml`, `places.toml`, `stocks.toml`, `asks.toml`, `lessons.toml`, `asked.toml`, `versions/`, `proviso/`(코어 schema·score·audit과 메인 피드백 `feedback/main/common.md`·`stock_rader.md`(briefing) — 2026-11-22부터 이 저장소 안, 형제 폴더 PROVISO-Nesy·`PROVISO_PATH`는 보지 않는다).
 - 씀: `data/prices/`(prices update, prepare의 종목 시세), `stocks.toml`(stocks add — 끝에 덧붙임), `records/`(재생은 `records/replay/`, 진짜 계좌는 `daily record`와 `daily open`), `reports/`(daily report), `knowledge.toml`의 계산 조각 구역(fit --write), `versions/`(versions save), `out/daily/<날짜>/`(prepare의 중간 파일, git 제외).
 - 시험: `tests/`.

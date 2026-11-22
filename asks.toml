@@ -57,3 +57,13 @@ from = "대화 세션 2026-11-17(지켜보는 종목 57개)"
 status = "열림"
 what = "기록 파일 크기: 지켜보는 종목 57개를 매일 적으면 records/prediction.jsonl이 하루 약 0.24MB(그 전 약 0.08MB)씩 늘어 1년 남짓(약 14달)이면 GitHub 한 파일 한도 100MB에 닿는다(2026-11-17 기준 2.1MB). records check가 50MB에서 경고한다"
 close = "기록을 해마다(또는 달마다) 다른 파일로 나눠 쓰고 읽는 코드(records.read·write·check, git HEAD 견주기, 바깥 블로그 그래프가 읽는 account·order 경로 포함)가 들어가거나, 지켜보는 종목 줄을 줄이는 결정이 적히고 이 파일에 닫힘으로 적힌다"
+
+[[ask]]
+id = "ask:2026-11-22:1"
+opened = "2026-11-22"
+from = "live:2026-11-22 asks"
+status = "닫힘"
+what = "PROVISO-Nesy main이 2026-11-21 18:58 KST(커밋 0447979 'clear repository for v0.2.0') 비워져 proviso/(schema·score·audit 코어)와 feedback/main/common.md·stock_rader.md가 없다 — market/logic.py·lessons.feedback_lines·시험 일부가 찾지 못한다. 2026-11-22 아침 실행은 비우기 앞 커밋 08c6c93을 git archive로 꺼내 PROVISO_PATH로 썼다(읽기만)"
+close = "logic.py가 찾을 새 코어 자리(새 PROVISO 버전의 경로·모듈 이름, 또는 고정한 커밋을 꺼내 쓰는 방법)와 메인 피드백 두 파일의 자리가 루트 CLAUDE.md·지시문에 적히고, python -m market.logic validate가 PROVISO_PATH 없이 '문제 없음'을 내면 닫힘"
+closed = "2026-11-22"
+how = "코어를 이 저장소로 옮겼다(사용자 '1번으로 옮기자'): PROVISO-Nesy 08c6c93의 proviso/__init__·schema·score·audit(글자 그대로)과 설명 CLAUDE.md(머리에 옮긴 경위), feedback/main/common.md·stock_rader.md(글자 그대로), 논리집 쌓는 방식 proviso/stacking.md(그곳 domains/agent_usage/CLAUDE.md '따라 할 방식' 절). market/logic.py는 저장소 안 proviso/만 보고(형제 폴더·PROVISO_PATH 걷음, FEEDBACK 자리), lessons.feedback_lines는 proviso/feedback/main을 읽는다. 시험은 코어가 늘 있어 건너뛰지 않는다(tests/test_logic.py CoreInRepo — PROVISO_PATH 없이·엉뚱한 PROVISO_PATH로도 validate '문제 없음'). 루트 CLAUDE.md·지시문 셋(routine-prompt·routine-feedback-prompt)·market/tests CLAUDE.md·design·decisions에 새 자리를 적었다"

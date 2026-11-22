@@ -228,15 +228,12 @@ def brief_lines(roots: list[dict]) -> list[str]:
 
 
 def feedback_lines() -> list[str]:
-    """논리집(PROVISO-Nesy)의 메인 피드백 두 파일(common·stock_rader)의 줄. 못 찾으면 그 까닭 한 줄."""
+    """메인 피드백 두 파일(proviso/feedback/main의 common·stock_rader)의 줄. 파일이 없으면 그 까닭 한 줄.
+    2026-11-22부터 이 저장소에 있다(PROVISO-Nesy 08c6c93에서 옮김 — 그곳 main은 2026-11-21에 비워졌다)."""
     from . import logic
-    try:
-        base = logic.proviso_path()
-    except SystemExit as exc:
-        return [f"(논리집을 못 찾아 메인 피드백을 못 읽음: {str(exc)[:80]})"]
     out = []
     for name in ("common", "stock_rader"):
-        p = base / "feedback" / "main" / f"{name}.md"
+        p = logic.FEEDBACK / f"{name}.md"
         if not p.exists():
             out.append(f"({p.name} 없음)")
             continue

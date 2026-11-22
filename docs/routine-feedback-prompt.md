@@ -3,7 +3,7 @@
 이 파일의 두 '---' 선 사이 본문이 예약 실행 「stock-rader 피드백 정리」의 지시다. 지시를 바꾸려면 이 파일을 고쳐 main에 push한다. 아침 실행은 [routine-prompt.md](routine-prompt.md), 장 시작 뒤 실행은 [routine-open-prompt.md](routine-open-prompt.md), 일지 쓰기는 [routine-report-prompt.md](routine-report-prompt.md).
 
 - 까닭(2026-11-17 사용자 결정, 잼민이 지시서 p564 보완 1·3): "어제나 이전의 선택들 읽어 보면서 자체 피드백하고 일반화시킬 거 하고 없앨 거 없애고 합칠 거 합치고 있는 거지." "그럼 블로그 발행은 또 다른 친구가 하게 되는 건가? 아니면 걔가 피드백 정리까지 하고 글을 쓰는 걸로 할까" → "그렇게 하자." → "생각해보니까 이런 판단은 고급 모델이 해야 할 같아서 opus extra 붙였고, 피드백도 그 모델로 할까 생각 중이야." "그러면 쓰는 애는 또 opus 5.5 medium이 나을 거 같아서. 그럼 분리하게 되는 거잖아." → 흐름: 아침 판단(09:00 전) → 09:05 장 시작 뒤 → **피드백 정리(이 실행)** → 일지 쓰기 → 블로그 올리기. 오늘 정리한 교훈은 **내일 판단부터** 쓰인다(아침은 전날까지 정리된 뿌리 목록을 읽는다).
-- 예약 설정(만들 것 — 이 파일이 main에 들어간 뒤 잼민이 쪽이 만든다): 이름 「stock-rader 피드백 정리」, 매일 09:13 KST(cron `CRON_TZ=Asia/Seoul 13 9 * * *`), 모델 Opus 5.5, **effort extra(xhigh) — 사용자가 지정한 값**(예약 설정에서 지정한다; 실제로 그렇게 도는지는 실행 기록으로만 확인된다), 환경 「stock-rader」, 실행마다 새 세션, 저장소 `ZizonK7/stock-rader`(main에 push)와 `ZizonK7/PROVISO-Nesy`(논리집 검사용, 형제 폴더).
+- 예약 설정(만들 것 — 이 파일이 main에 들어간 뒤 잼민이 쪽이 만든다): 이름 「stock-rader 피드백 정리」, 매일 09:13 KST(cron `CRON_TZ=Asia/Seoul 13 9 * * *`), 모델 Opus 5.5, **effort extra(xhigh) — 사용자가 지정한 값**(예약 설정에서 지정한다; 실제로 그렇게 도는지는 실행 기록으로만 확인된다), 환경 「stock-rader」, 실행마다 새 세션, 저장소 `ZizonK7/stock-rader`(main에 push). 2026-11-22부터 논리집 검사 코어·메인 피드백이 이 저장소 `proviso/`에 있어 `ZizonK7/PROVISO-Nesy`는 필요 없다(붙어 있어도 쓰지 않는다).
 - 이 실행은 **새 투자 판단을 하지 않는다**(비중·예측은 아침 몫). 돌아보기·대 보기 다시 보기·논리집 고치기(쪼개기)·뿌리 묶기를 하고 `python -m market.daily feedback`으로 기록한다. 매일 일지는 쓰지 않는다(다음 실행 몫) — 대신 글 쓰는 쪽이 읽을 정리 요약(`summary`)을 남긴다. **일요일에는 주간 결산(`reports/<날짜>-week.md`)을 이 실행이 쓴다**(2026-11-17 사용자 "피드백 정리하던 애가 일요일 결산도 쓰는 걸로 하자" — 그 주의 반성·바꾼 것·묶은 뿌리와 그 글을 한 에이전트가 이어서).
 - 꼭 할 단계는 코드가 막는다: 돌아볼 손 예측이 하나라도 빠지면, 아직 묶지 않은 '다음엔'이 뿌리에 없으면, `by`·`summary`가 비면 거절한다. 일지 쓰기는 이 실행이 남긴 run 줄 `feedback:<오늘>`이 없으면 일지를 만들지 않는다.
 
@@ -21,13 +21,13 @@
 
 ## 1. 준비
 1. 시작 시각: `TZ=Asia/Seoul date`.
-2. stock-rader 저장소에서 `git checkout main && git pull --ff-only origin main`. PROVISO-Nesy는 형제 폴더(`../PROVISO-Nesy` 또는 `../proviso-nesy`)에서 `git pull --ff-only` — 없으면 논리집 검사 없이 진행하고 마지막 보고에 적는다(아침 지시문 1-2와 같다).
+2. stock-rader 저장소에서 `git checkout main && git pull --ff-only origin main`. 논리집 검사 코어는 이 저장소 `proviso/`다 — 형제 폴더 PROVISO-Nesy를 찾거나 옛 커밋을 꺼내지 않는다. `python -m market.logic validate`가 "문제 없음"인지 본다(아침 지시문 1-2와 같다).
 3. **아침 판단이 main에 있나**: `records/run.jsonl`에 `"id": "live:<오늘>"` 또는 `"id": "late:<오늘>"`(못 넣음) 줄이 있어야 한다. 없으면 `python -m market.daily wait <지금+3분 HH:MM>` 뒤 `git pull --ff-only origin main`을 되풀이하고, **09:45까지 없으면 아무것도 쓰지 않고** 그 사실만 마지막 보고에 적고 끝낸다(그날 일지도 안 나온다 — 사람이 본다).
 4. 이미 `"id": "feedback:<오늘>"`이 있으면 오늘 정리는 끝났다 — 아무것도 하지 않고 끝낸다.
 5. 틀: `python -m market.daily feedback` → `out/daily/<오늘>/feedback.json`(돌아볼 손 예측과 채점 `reviews[]._info`, 다시 볼 손 대 보기 `reading_checks`, 열린 '다음엔' `_open_next`, 아직 묶지 않은 '다음엔' `_lessons_due`).
 
 ## 2. 읽는다 (어제와 그 전의 선택)
-- 논리집(PROVISO-Nesy)의 `feedback/main/common.md`·`feedback/main/stock_rader.md`를 통째로, 이 저장소의 뿌리 목록 `python -m market.lessons`.
+- 메인 피드백 `proviso/feedback/main/common.md`·`proviso/feedback/main/stock_rader.md`를 통째로(2026-11-22부터 이 저장소), 이 저장소의 뿌리 목록 `python -m market.lessons`.
 - 오늘 아침 판단의 run 줄(`records/run.jsonl`의 `live:<오늘>` — `story`(판단의 요지), `steps.recheck`(08:40에 바꾼 것), `notes`(해 본 '다음엔'), `steps.timeline`), 오늘 채점(`records/score.jsonl`의 `run = <오늘>`), 돌아볼 예측의 그날 예측 줄(`records/prediction.jsonl`의 reason·used·decisive), 그날 조사(`records/research.jsonl`, `records/scan.jsonl`), 최근 일지(`reports/`).
 - 같은 조각이 여러 대상·날에 틀렸으면 `python -m market.breakdown <조각 id>`.
 - `python -m market.logic check`(성적표)와 `python -m market.logic audit`(은퇴 후보 경고).
@@ -93,7 +93,7 @@
 3. **일반화·합침·내림**(묶을 '다음엔'이 없어도 된다 — `reviews: []`): 여러 뿌리가 같은 말의 좁은 꼴이면 넓은 문장으로 `kind = "고침"`(`sentence`·`why`), 같은 뿌리 둘이면 `kind = "합침"`(`into` = 남길 뿌리, `why` — 건수가 옮겨 가고 root는 목록에서 내려간다), 해 본 처방이 나빠짐이 나아짐보다 많거나 조각으로 굳어 더 할 일이 없는 뿌리는 `kind = "내림"`(`why`). '없앤다'는 지난 기록을 지우는 것이 아니라 목록에서 내리고 까닭을 남기는 것이다. 한 뿌리에 한 날 하나만.
 4. **해 본 처방의 결과를 센다**: 묶은 것 가운데(‘그대로’ 돌아보기는 묶지 않으니 그 안의 '→ 해 봄'은 세지 않는다) `지난 다음엔 … → 해 봄`인 돌아보기마다 나아짐(이번엔 맞음·범위 안) / 모름(잡음·결과 전) / 나빠짐을 `tried`에(합이 그 수와 같아야 한다; `→ 안 해 봄`은 세지 않는다).
 5. 입력 `lessons` = [{root, kind, reviews, tried, (새 뿌리·충돌·고침) sentence, (충돌) against·split, (합침) into, (고침·합침·내림) why}]. 묶을 '다음엔'이 없고 고칠 뿌리도 없으면 `lessons: []`. 결과는 `records/lesson.jsonl`에 쌓이고 내일 아침 briefing 뿌리 목록에 보인다(합치거나 내린 뿌리는 빠진다).
-6. 논리집(PROVISO-Nesy)에는 쓰지 않는다 — 이 저장소의 `lessons.toml`·기록이 원본이고, 잼민이 쪽이 논리집 백서로 옮긴다.
+6. 코어 `proviso/`(검사 코드·메인 피드백·쌓는 방식)는 고치지 않는다 — 교훈의 원본은 이 저장소의 `lessons.toml`·기록이고, 메인 피드백 줄을 더하거나 고치는 것은 대화 세션 몫이다(바꿔야 하면 `asks`로 연다). PROVISO-Nesy에도 쓰지 않는다.
 
 ## 5. 대화 세션 몫 (코드·문법이 필요해 오늘 못 하는 것)
 2026-11-17까지는 이런 일을 run `notes`에만 적어 아무도 읽지 않았다(11-06·07·10 '묶음 대비 채점 칸', 11-17 '범위 빼기'). 이제는:
@@ -137,7 +137,7 @@ python -m unittest discover -s tests -t .
 |---|---|
 | 09:45까지 아침 판단 줄이 main에 없음 | 아무것도 쓰지 않고 끝낸다. 마지막 보고에 적는다 |
 | 아침이 '못 넣음'(late:<오늘>) | 그래도 정리한다(돌아볼 예측·묶을 '다음엔'은 있다). 늦은 까닭을 `summary`에 한 줄 |
-| PROVISO-Nesy를 못 찾음 | 논리집 검사 없이 돌아보기·뿌리 묶기만 기록한다. 논리집(knowledge.toml)은 고치지 않는다(검사 없이 고치지 않는다) |
+| `market.logic`이 코어를 못 읽음(`proviso/`가 없거나 깨짐) | 논리집 검사 없이 돌아보기·뿌리 묶기만 기록한다. 논리집(knowledge.toml)은 고치지 않는다(검사 없이 고치지 않는다). PROVISO-Nesy에서 꺼내 오지 않고 `asks`로 연다 |
 | feedback 입력 오류 | 아무것도 안 써졌다. 오류대로 고쳐 다시 |
 | push 실패 | 위 7대로. 그래도 안 되면 `claude/stock-rader-feedback-<오늘>` 브랜치로 push하고 보고 |
 

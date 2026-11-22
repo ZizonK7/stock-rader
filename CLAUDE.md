@@ -3,7 +3,7 @@
 Claude가 세션 시작 때 읽는 작업 문서다. 매일 도는 예약 실행도 모두 이 파일을 읽고 시작하므로 **지금 기준만 짧게** 둔다. 사람용 소개는 [README.md](README.md), 설계는 [docs/design.md](docs/design.md), **사용자 말 원문과 결정마다의 까닭·경위는 [docs/decisions.md](docs/decisions.md)**(2026-11-17까지의 예전 이 파일 전문)에 있다. 다른 문서가 "루트 CLAUDE.md '…' 절"이라고 가리키는데 여기 없는 절은 그 파일의 같은 이름 절이다.
 
 ## 프로젝트
-실제 돈 없이 Claude가 혼자 가상 투자를 하면서 **논리 조각화**를 시험한다. 상위 프로젝트는 [PROVISO-Nesy](https://github.com/ZizonK7/PROVISO-Nesy)(SELA 구현, 2026-11-10부터 **비공개**)다. 이 저장소는 그 코어를 읽기만 하고(논리집 검사·시험 일부), 세션·예약 실행에 저장소로 붙어 있어야 받아진다. 없으면 논리집 검사만 건너뛰고 시세·주문·채점·기록·일지는 그대로 돈다. 논리집 쌓는 방식은 그곳 `domains/agent_usage/CLAUDE.md`를 따르고, 지식 양식과 검사 도구도 그곳 코어를 쓴다.
+실제 돈 없이 Claude가 혼자 가상 투자를 하면서 **논리 조각화**를 시험한다. 상위 프로젝트는 [PROVISO-Nesy](https://github.com/ZizonK7/PROVISO-Nesy)(SELA 구현, 비공개)다. 그 main이 2026-11-21 비워져(0447979), **2026-11-22부터 지식 양식 검사 코어·메인 피드백·논리집 쌓는 방식은 이 저장소 [`proviso/`](proviso/CLAUDE.md)에 있다**(비우기 앞 커밋 08c6c93에서 옮김 — 이제 이곳이 원본, 고치는 것은 대화 세션). PROVISO-Nesy 저장소는 더 필요 없다. 논리집 쌓는 방식은 [proviso/stacking.md](proviso/stacking.md)를 따른다.
 
 ## 사용자 의도 (요지 — 원문과 날짜는 docs/decisions.md '사용자 의도')
 판단이 갈릴 때 기준이다. 바뀌면 여기 한 줄을 고치고 decisions.md '이후 결정'에 원문을 덧붙인다.
@@ -81,6 +81,7 @@ Claude가 세션 시작 때 읽는 작업 문서다. 매일 도는 예약 실행
 | `records/` | 덧붙이기만 하는 기록. `records/*.jsonl` = 진짜 계좌(예약 실행만 씀), `records/replay/` = 재생 원본 ([records/CLAUDE.md](records/CLAUDE.md)) |
 | `reports/` | 매일 일지·일요일 주간 결산 ([reports/CLAUDE.md](reports/CLAUDE.md)) |
 | `knowledge.toml` | 논리집(PROVISO 양식): 목표·상태·근거 문헌·계산 조각·조사 조각(씨앗 포함)·규칙·가설 |
+| `proviso/` | 논리집 검사 코어(`schema`·`score`·`audit`), 메인 피드백 `feedback/main/common.md`·`stock_rader.md`(briefing이 보임), 쌓는 방식 `stacking.md` — 2026-11-22 PROVISO-Nesy 08c6c93에서 옮김 ([proviso/CLAUDE.md](proviso/CLAUDE.md)) |
 | `places.toml` | 볼 곳(조사 출처) 노드. 성적은 기록에서 계산 |
 | `stocks.toml` | 개별 종목 목록(코드·이름·시장·더한 날·왜). 지우지 않고 덧붙인다 |
 | `lessons.toml` | 뿌리 목록 씨앗(교훈 L…·충돌을 가른 조건 C…). 늘어나는 것은 `records/lesson.jsonl` |
@@ -94,7 +95,7 @@ Claude가 세션 시작 때 읽는 작업 문서다. 매일 도는 예약 실행
 - **예약 실행 명령**(지시문이 차례를 정함): `python -m market.daily prepare` → `record <input.json>` → (09:05) `open` → (09:13) `feedback [<feedback.json>]` → (09:41) `report` → `report --check`. 흉내 내기는 `--root <임시 폴더> --day … --at …`(기본 저장소에서는 금지).
 - 읽기 전용 보기: `python -m market.broker status`(계좌·주머니·걸린 주문·검산), `market.quotes [대상…]`(실제 지금 가격), `market.scan`(오늘 아침 조사 표), `market.premarket [코드…]`(장전 값 원문), `market.lessons`(뿌리 목록), `market.asks`(열린 대화 세션 몫), `market.breakdown <조각 id> [--horizon N]`(쪼개기 전 나눠 보기), `market.research places|questions [날짜]`, `market.calc [날짜]`, `market.replay report`, `market.whatif`(지난 결정 다시 대입, 결과는 `out/whatif/`).
 - 고치는 명령: `python -m market.stocks [add <코드> <이름> "<왜>" [--kosdaq]]`, `market.versions [save <id> "<왜>"]`, `market.ask <코드|이름> [--dry]`(한 종목 상태·한계를 한 화면에, 목록에 없으면 더하고 `asked.toml`에), `market.fit [--write]`, `market.prices update|show`.
-- 검사: `python -m unittest discover -s tests -t .`(30초쯤), `python -m market.records check`(기록 칸·git HEAD 비교·가상 증권사 검산, 커밋 전에), `python -m market.logic validate|check|audit`(PROVISO 코어: `PROVISO_PATH` 또는 형제 폴더 `../PROVISO-Nesy`, 대소문자 무관).
+- 검사: `python -m unittest discover -s tests -t .`(30초쯤), `python -m market.records check`(기록 칸·git HEAD 비교·가상 증권사 검산, 커밋 전에), `python -m market.logic validate|check|audit`(코어는 저장소 안 `proviso/` — 형제 폴더·`PROVISO_PATH`는 보지 않는다).
 - 한글이 깨지면 `PYTHONIOENCODING=utf-8`.
 
 ## 다음 할 일 (자세한 경위는 decisions.md '다음 할 일')

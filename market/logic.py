@@ -5,41 +5,23 @@
   python -m market.logic check      성적표 (PROVISO score.report + market/checks.py)
   python -m market.logic audit      점검 (PROVISO audit.report + market/checks.py AUDIT). 오류가 있을 때만 1로 끝난다
 
-PROVISO 코어 명령줄은 자기 저장소의 domains/만 보므로, 코어 함수를 직접 부른다.
-PROVISO 경로: 환경변수 PROVISO_PATH → 형제 폴더 ../PROVISO-Nesy(폴더 이름의 대소문자는 가리지 않는다 — 세션에 따라 proviso-nesy로 받아진다).
-PROVISO-Nesy는 비공개 저장소다(2026-11-10): 키 없이 받아 올 수 없으므로 세션·예약 실행에 저장소로 붙어 있어야 한다.
+코어는 이 저장소의 proviso/에 있다(2026-11-22): PROVISO-Nesy main이 2026-11-21 0447979로 비워져,
+바로 앞 커밋 08c6c93의 schema·score·audit을 글자 그대로 옮겼다(proviso/CLAUDE.md 머리). 형제 폴더·PROVISO_PATH는 더 보지 않는다.
 """
 from __future__ import annotations
 
 import importlib
-import os
 import sys
-from pathlib import Path
 
 from . import config as C
 
-
-def siblings(parent: Path) -> list[Path]:
-    """형제 폴더 가운데 이름이 PROVISO-Nesy인 것(대소문자 무시, 이름 순)."""
-    try:
-        return sorted(p for p in parent.iterdir() if p.is_dir() and p.name.lower() == "proviso-nesy")
-    except OSError:
-        return []
-
-
-def proviso_path() -> Path:
-    env = os.environ.get("PROVISO_PATH")
-    candidates = ([Path(env)] if env else []) + siblings(C.ROOT.parent)
-    for p in candidates:
-        if (p / "proviso" / "schema.py").exists():
-            return p.resolve()
-    raise SystemExit("PROVISO-Nesy를 찾지 못함: 환경변수 PROVISO_PATH를 주거나 형제 폴더 ../PROVISO-Nesy에 둔다 "
-                     "(비공개 저장소 — 세션·예약 실행에 저장소로 붙어 있어야 받아진다)")
+CORE = C.ROOT / "proviso"                 # 코어(schema·score·audit)와 메인 피드백의 자리
+FEEDBACK = CORE / "feedback" / "main"     # 메인 피드백 common.md·stock_rader.md (briefing이 읽는다)
 
 
 def core():
-    """(schema, score, audit) 모듈."""
-    root = str(proviso_path())
+    """(schema, score, audit) 모듈 — 이 저장소의 proviso/."""
+    root = str(C.ROOT)
     if root not in sys.path:
         sys.path.insert(0, root)
     return (importlib.import_module("proviso.schema"), importlib.import_module("proviso.score"),
@@ -66,7 +48,7 @@ def main(argv: list[str]) -> int:
     if argv[0] == "validate":
         errors = schema.validate(kn)
         counts = ", ".join(f"{schema.KIND_LABEL[k]} {len(kn.of(k))}" for k in schema.KINDS)
-        print(f"[market] {counts}, 판정 기록 {len(kn.judgments)} (PROVISO {proviso_path()})")
+        print(f"[market] {counts}, 판정 기록 {len(kn.judgments)} (코어 {CORE.relative_to(C.ROOT).as_posix()}/)")
         if errors:
             print("문제 발견:")
             for e in errors:

@@ -1,5 +1,5 @@
 """논리집 장치 (PROVISO 코어 + market/checks.py AUDIT): 이유 없는 숫자, 판단 전 값만 조건, 범위 폭 상한,
-맞춘 값과 다른 범위, 조각 수 상한, 조각 문장의 대상 이름. PROVISO-Nesy가 없으면 건너뛴다."""
+맞춘 값과 다른 범위, 조각 수 상한, 조각 문장의 대상 이름. 코어는 저장소 안 proviso/(2026-11-22)라 건너뛰지 않는다."""
 import tempfile
 import tomllib
 import unittest
@@ -9,10 +9,7 @@ from market import checks as CH
 from market import config as C
 from market import logic
 
-try:
-    SCHEMA, SCORE, AUDIT = logic.core()
-except SystemExit:
-    SCHEMA = None
+SCHEMA, SCORE, AUDIT = logic.core()   # 코어는 저장소 안 proviso/ (2026-11-22 옮김) — 늘 있어 건너뛰지 않는다
 
 TEXT = C.KNOWLEDGE.read_text(encoding="utf-8")
 
@@ -23,7 +20,6 @@ def fitted_now() -> dict:
     return {h["id"]: h.get("effect", []) for h in raw.get("hypothesis", []) if h.get("claims")}
 
 
-@unittest.skipIf(SCHEMA is None, "PROVISO-Nesy를 찾지 못함 (PROVISO_PATH)")
 class Devices(unittest.TestCase):
     def kn(self, text: str):
         with tempfile.TemporaryDirectory() as d:
@@ -101,18 +97,30 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class FindCore(unittest.TestCase):
-    """PROVISO-Nesy 찾기(2026-11-10: 비공개로 바뀌어 주소로 받아 올 수 없다 — 붙은 저장소의 폴더를 이름의 대소문자와 상관없이 찾는다)."""
+class CoreInRepo(unittest.TestCase):
+    """코어와 메인 피드백은 저장소 안 proviso/에 있다(2026-11-22 — PROVISO-Nesy main이 비워져 08c6c93에서 옮김, ask:2026-11-22:1).
+    형제 폴더·PROVISO_PATH를 보지 않으므로 그것이 없거나 엉뚱해도 같아야 한다."""
 
-    def test_sibling_folder_is_found_whatever_its_letter_case(self):
-        import tempfile
-        from pathlib import Path
-        from market import logic as LG
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "stock-rader").mkdir()
-            (root / "other").mkdir()
-            self.assertEqual(LG.siblings(root), [])
-            (root / "proviso-nesy").mkdir()   # 세션에 따라 소문자로 받아진다
-            self.assertEqual([p.name for p in LG.siblings(root)], ["proviso-nesy"])
-        self.assertEqual(LG.siblings(Path("/없는/폴더")), [])
+    def test_core_modules_come_from_this_repo(self):
+        for mod in (SCHEMA, SCORE, AUDIT):
+            self.assertEqual(Path(mod.__file__).resolve().parent, (C.ROOT / "proviso").resolve(), mod.__name__)
+
+    def test_validate_needs_no_sibling_or_env(self):
+        import os
+        import subprocess
+        import sys
+        env = {k: v for k, v in os.environ.items() if k != "PROVISO_PATH"}
+        env["PYTHONIOENCODING"] = "utf-8"
+        for extra in ({}, {"PROVISO_PATH": str(Path(tempfile.gettempdir()) / "없는-proviso")}):
+            out = subprocess.run([sys.executable, "-m", "market.logic", "validate"], cwd=C.ROOT, env={**env, **extra},
+                                 capture_output=True, text=True, encoding="utf-8", timeout=120)
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertIn("문제 없음", out.stdout)
+
+    def test_main_feedback_lines_are_read_from_this_repo(self):
+        from market import lessons as LS
+        for name in ("common", "stock_rader"):
+            self.assertTrue((logic.FEEDBACK / f"{name}.md").exists(), name)
+        lines = LS.feedback_lines()
+        self.assertTrue(lines)
+        self.assertTrue(all(ln.startswith("- **F") for ln in lines), lines[:3])

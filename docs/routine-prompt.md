@@ -4,7 +4,7 @@
 
 예약 실행 설정에서 미리 해 둘 것 (사람·메인 세션이 한 번):
 - 전용 클라우드 환경 「stock-rader」, 네트워크 **Full**(전체 허용). 처음엔 Custom(시세 3곳만)이었지만 조사가 여러 사이트 페이지를 직접 읽어야 해서 2026-10-21 Full로 바꿨다. 이 환경에는 비밀값이 없다. 블로그 토큰이 있는 「Daily Briefing」 환경은 같이 쓰지 않는다. 2026-10-21 시험 실행에서 시세 3곳·업비트 현재가·두 저장소 함께 받기·GitHub·웹 검색·웹 읽기가 모두 통과했다.
-- 저장소: `ZizonK7/stock-rader`(작업 폴더, 공개)와 `ZizonK7/PROVISO-Nesy`(형제 폴더로 같이 받는다, **비공개** — 2026-11-10 사용자가 바꿈). 둘 다 이 예약에 저장소로 붙어 있어야 한다(비공개 저장소는 키 없이 받아 올 수 없다).
+- 저장소: `ZizonK7/stock-rader`(작업 폴더, 공개). 2026-11-22부터 논리집 검사 코어·메인 피드백이 이 저장소 `proviso/`에 있어 `ZizonK7/PROVISO-Nesy`는 필요 없다(그 main은 2026-11-21 비워졌다 — 예약에 붙어 있어도 쓰지 않는다).
 - 시간: 매일 07:17 (한국 시간으로 입력 — 예약 설정의 실제 값, 2026-11-10 확인. 처음엔 07:37이었다). 09:05에는 따로 「stock-rader 장 시작 뒤 실행」이 돈다([routine-open-prompt.md](routine-open-prompt.md)).
 - 비용은 줄이지 않는다(사용자 결정). 문제가 되면 사용자가 그만하라고 한다.
 - 모델·effort: **사용자가 예약마다 지정한다**(2026-11-17 "각 실행마다 에이전트 지정해뒀어"). 이 아침 실행의 메인은 **Opus 5.5 extra(xhigh) — 지정한 값**("이런 판단은 고급 모델이 해야 할 것 같아서 opus extra 붙였고"). 실제로 그 effort로 도는지는 실행 기록으로만 확인된다. 하위 에이전트의 모델·effort는 Agent 도구에 직접 준다(4-0).
@@ -27,12 +27,9 @@
 
 ## 1. 준비 (저장소 찾기)
 1. 작업 폴더가 stock-rader 저장소인지 본다: `git remote -v`, `git status`. main 브랜치에서 `git pull --ff-only origin main`.
-2. **PROVISO-Nesy 찾기**: 코어(지식 양식 검사)는 형제 폴더 `../PROVISO-Nesy`에서 찾는다(`market/logic.py`). 차례대로:
-   - `ls ..` 로 `PROVISO-Nesy`(또는 `proviso-nesy` — 코드는 폴더 이름의 대소문자를 가리지 않는다)가 있는지 본다. 이 예약에 두 저장소가 붙어 있어 함께 클론되어 형제 폴더로 있다. 있으면 그 폴더에서 `git pull --ff-only`.
-   - 없으면 다른 경로에 있는지 찾아(`find / -maxdepth 3 -iname proviso-nesy -type d 2>/dev/null`) `export PROVISO_PATH=<그 경로>`.
-   - **비공개 저장소라 주소로 직접 받아 오려 하지 않는다**(2026-11-10부터 — 키 없이는 안 되고, 키를 만들거나 적지 않는다). 폴더가 없으면 예약 설정에서 저장소가 빠졌거나 접근 권한이 없는 것이다 — 마지막 보고에 "PROVISO 못 찾음: 예약에 저장소가 붙어 있는지 확인 필요"를 적는다.
-   - 확인: `python -m market.logic validate` 가 "문제 없음"이면 된다. 끝까지 못 찾으면 논리집 검사 없이 진행하고, 커밋 메시지와 run notes에 "PROVISO 못 찾음"을 적는다(기록 쓰기·채점은 PROVISO 없이 돈다).
-3. **논리집의 메인 피드백을 읽는다**(2026-11-17): PROVISO-Nesy의 `feedback/main/common.md`와 `feedback/main/stock_rader.md`를 통째로 읽는다(그 줄들이 briefing '뿌리 목록' 아래에도 나온다). 이 일에서 나온 '이런 상황이면 이렇게 하겠다' 줄이다 — 손 예측·돌아보기 전에 그 순간에 걸리는 줄을 떠올린다. 그리고 이 저장소의 뿌리 목록(`python -m market.lessons`, briefing에도 나옴 — 14일이 지나도 남는 교훈과 충돌을 가른 조건)을 읽는다.
+2. **논리집 검사 코어 확인**(2026-11-22부터): 코어(지식 양식 검사 `schema`·`score`·`audit`)는 이 저장소 `proviso/`에 있다(`market/logic.py` — PROVISO-Nesy main이 2026-11-21 비워져 그 앞 커밋 08c6c93에서 옮김). 형제 폴더 PROVISO-Nesy를 찾거나 받거나, `PROVISO_PATH`를 주거나, 옛 커밋을 `git archive`로 꺼내지 않는다(코드가 보지 않는다).
+   - 확인: `python -m market.logic validate` 가 "문제 없음"이면 된다. 아니면 그 출력을 run notes와 마지막 보고에 적고 진행한다. 코어(`proviso/`)는 이 실행에서 고치지 않는다 — 고쳐야 하면 대화 세션 몫(`asks`)으로 연다.
+3. **논리집의 메인 피드백을 읽는다**(2026-11-17, 자리는 2026-11-22부터 이 저장소): `proviso/feedback/main/common.md`와 `proviso/feedback/main/stock_rader.md`를 통째로 읽는다(그 줄들이 briefing '뿌리 목록' 아래에도 나온다). 이 일에서 나온 '이런 상황이면 이렇게 하겠다' 줄이다 — 손 예측·돌아보기 전에 그 순간에 걸리는 줄을 떠올린다. 그리고 이 저장소의 뿌리 목록(`python -m market.lessons`, briefing에도 나옴 — 14일이 지나도 남는 교훈과 충돌을 가른 조건)을 읽는다.
 4. 한국 시간 확인: `TZ=Asia/Seoul date`. 한글이 깨지면 `export PYTHONIOENCODING=utf-8`.
 5. 시간 기록: 시작 시각을 적어 둔다(마지막 보고에 걸린 시간을 쓴다).
 
@@ -298,7 +295,7 @@ git push origin HEAD:main
 ```
 - **main에 push한다**(예약 실행의 기본은 `claude/` 브랜치지만 이 저장소는 main에 바로 쌓는다 — git 커밋 시각이 "결과 전에 말했다"는 증거다). 커밋 메시지 끝에 빈 줄 다음 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`를 단다(git의 이름·이메일은 환경 기본값 그대로).
 - push가 거절되면(다른 곳에서 main이 바뀜): `git pull --rebase origin main` 후 다시 push. 기록 파일 충돌이 나면 멈추고 notes에 남긴 뒤 `claude/stock-rader-<오늘>` 브랜치로 push하고 마지막 보고에 적는다(사람이 합친다).
-- PROVISO-Nesy는 이 실행에서 고치지 않는다(코어를 바꿔야 하면 마지막 보고에 "PROVISO 변경 필요"로 적는다).
+- 코어 `proviso/`(검사 코드·메인 피드백·쌓는 방식)는 이 실행에서 고치지 않는다(바꿔야 하면 대화 세션 몫 `asks`로 열고 마지막 보고에 적는다).
 
 ## 9. 실패 처리 (한눈에)
 | 상황 | 할 일 |
@@ -308,7 +305,7 @@ git push origin HEAD:main
 | record 출력에 `거절됨` | 다시 내지 않는다. 이유를 읽고 일지 '왜'에 쉬운 말로 한 문장. 목표가 그대로면 내일 계획이 다시 낸다 |
 | `가상 증권사 기록이 어긋나 있다`로 멈춤(prepare·record·open — 지난 기록의 어긋남이든 `증권사 안에서 예외`든) | 아무것도 쓰이지 않았다(종료 코드 1). 기록을 고치지 않는다. 그 출력과 `python -m market.broker status` 출력을 마지막 보고에 그대로 적고 끝낸다(사람이 본다) |
 | briefing에 "오늘은 옛 장부로 돈다" | 갈아타지 못한 날(옛 주문 값을 못 받음, 또는 다시 계산 안에서 예외). 그대로 진행하고 notes에 적는다. 다음 실행이 다시 시도한다. **마지막 보고에 briefing의 그 문장(까닭)을 그대로 적는다** — 이틀 넘게 이어지면 사람이 봐야 한다 |
-| PROVISO-Nesy를 못 찾음 | 1단계 순서대로 찾고, 못 찾으면 논리집 검사 없이 기록·일지만. 논리집은 고치지 않는다(검사 없이 고치지 않는다). 커밋 메시지에 적음 |
+| `market.logic`이 코어를 못 읽음(`proviso/`가 없거나 깨짐) | 받아 온 main이 맞는지 본다(`git status`, `ls proviso`). 그래도 안 되면 논리집 검사 없이 기록만, 논리집은 고치지 않는다(검사 없이 고치지 않는다). PROVISO-Nesy에서 꺼내 오지 않는다. 커밋 메시지·마지막 보고에 적고 대화 세션 몫(`asks`)으로 연다 |
 | 조사 에이전트 하나가 실패·빈손 | 그 각도 질문은 메인이 직접 한 번 찾거나, 대 보기를 "모름"으로. 실패한 것도 research에 '막힘'으로 적는다 |
 | 대상마다 아침 조사 하나가 실패·안 옴 | 한 번 다시 보낸다. 두 번째도 안 되거나 08:15까지 안 오면 그 파일을 `{asset, by: "main", failed: 까닭}`으로 쓴다(4-0 '대상마다 아침 조사' 4) |
 | 다시 보기 에이전트가 08:52까지 안 옴 | 기다리지 않는다. `recheck.agents`에 `returned: false`로 적고 온 것만으로 판단 |
