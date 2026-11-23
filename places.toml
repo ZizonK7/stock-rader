@@ -958,3 +958,23 @@ covers = ["stable_total_usdbn", "usdt_chg_1w_pct"]
 official = false
 added = 2026-11-23
 note = "2026-11-23 비트코인 2차 조사가 새로 씀. 키 없이 curl로 열리고 종류별 지금 잔액·1주 전·1달 전 값이 한 응답에 있다 — 코인 시장으로 들어올 수 있는 달러 몫의 증감(1주 USDT −0.4%, USDC −0.9%). 이름 붙은 조각의 조건은 아직 아니다"
+
+[[place]]
+id = "P_naver_index_kosdaq_integration"
+name = "네이버 증권 코스닥 지수 통합 API (투자자별 순매수, JSON)"
+url = "https://m.stock.naver.com/api/index/KOSDAQ/integration"
+angle = "수급"
+covers = ["kosdaq_foreign_net_krw100m"]
+official = false
+added = 2026-11-24
+note = "2026-11-24 수급 조사가 새로 씀. 코스피 통합 API(P_naver_index_integration)와 같은 꼴로 코스닥 개인·외국인·기관 하루 순매수(단위 표기 없음 — 억 원으로 보임). 코스닥 종목(HLB·알테오젠 등)의 시장 쪽 수급을 따로 볼 때 쓴다"
+
+[[place]]
+id = "P_upbit_candles"
+name = "업비트 1시간 봉 API (비트코인 원화 값, JSON)"
+url = "https://api.upbit.com/v1/candles/minutes/60?market=KRW-BTC&count=25"
+angle = "간밤 반응"
+covers = ["coin_24h_pct"]
+official = true
+added = 2026-11-24
+note = "2026-11-24 간밤 반응 조사가 새로 씀. 키 없이 열리고 지난 24시간 시간봉 종가로 판단 직전 24시간 등락과 급등·급락 시각(11-23 22시 봉 +4%)을 본다. 일봉(09:00 끝)보다 판단 시각에 가깝다"
