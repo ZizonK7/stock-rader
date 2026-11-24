@@ -978,3 +978,33 @@ covers = ["coin_24h_pct"]
 official = true
 added = 2026-11-24
 note = "2026-11-24 간밤 반응 조사가 새로 씀. 키 없이 열리고 지난 24시간 시간봉 종가로 판단 직전 24시간 등락과 급등·급락 시각(11-23 22시 봉 +4%)을 본다. 일봉(09:00 끝)보다 판단 시각에 가깝다"
+
+[[place]]
+id = "P_naver_disclosure_api"
+name = "네이버 증권 종목 공시 목록·본문 API (JSON)"
+url = "https://m.stock.naver.com/api/stock/329180/disclosure?pageSize=10&page=1"
+angle = "공시·뉴스"
+covers = ["S_q_earnings_beat"]
+official = false
+added = 2026-11-25
+note = "2026-11-25 2차 조사(HD현대중공업·SK)가 새로 씀. 키 없이 curl로 열리고 목록의 공시 번호로 본문(…/disclosure/<번호>)까지 열린다 — 11-24 '영업(잠정)실적' 공정공시가 10월 월간 매출·수주 자료(영업이익 '-')임을 본문으로 가렸다. DART가 막힐 때 대신. 주소의 종목 코드를 바꿔 쓴다"
+
+[[place]]
+id = "P_conference_board"
+name = "컨퍼런스보드 소비자신뢰지수 페이지"
+url = "https://www.conference-board.org/topics/consumer-confidence"
+angle = "일정·예상치"
+covers = ["S_q_surprise", "cb_consumer_conf_pt"]
+official = true
+added = 2026-11-25
+note = "2026-11-25 일정·예상치 조사가 새로 씀. 발표 직후 그 달 값과 지난달 값(11월 103.3, 10월 91.9)이 나온다 — 포렉스팩토리에 발표치 칸이 없을 때 대신. 전망 최저~최고 범위는 없다(surprise_z 잣대는 따로, ask:2026-11-20:1)"
+
+[[place]]
+id = "P_naver_kosdaq_trend_api"
+name = "네이버 증권 코스닥 투자자별 매매 날짜별 API (JSON)"
+url = "https://m.stock.naver.com/api/index/KOSDAQ/trend?bizdate=20261124"
+angle = "수급"
+covers = ["kq_foreign_net_krw100m"]
+official = false
+added = 2026-11-25
+note = "2026-11-25 수급 조사가 새로 씀. 코스피 날짜별 API(P_naver_index_trend_api)와 같은 꼴로 bizdate 하루의 코스닥 개인·외국인·기관 순매수. 첫 시도가 자주 빈 응답이라 한 번 더 받는다"
