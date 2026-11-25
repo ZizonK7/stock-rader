@@ -103,13 +103,28 @@ def table_strict(days: list, cond: dict, loss: dict, loss_gap: int = 1, run_gap:
     }
 
 
+def _bits(flags: list[bool]) -> int:
+    m = 0
+    for i, f in enumerate(flags):
+        if f:
+            m |= 1 << i
+    return m
+
+
+def _rot_right(mask: int, k: int, n: int) -> int:
+    """on[(j + k) % n]에 해당하는 비트 마스크 (왼쪽에서 오른쪽으로 k칸 순환 이동)."""
+    low = mask & ((1 << k) - 1)
+    return (mask >> k) | (low << (n - k))
+
+
 def shift_p_vec(on: list[bool], ev: list[bool], min_shift: int = SHIFT_MIN) -> float | None:
     n = len(on)
     if n < 2 * min_shift + 10:
         return None
-    obs = sum(o and l for o, l in zip(on, ev))
+    on_m, ev_m = _bits(on), _bits(ev)
+    obs = (on_m & ev_m).bit_count()
     ks = range(min_shift, n - min_shift)
-    ge = sum(sum(on[(j + k) % n] and ev[j] for j in range(n)) >= obs for k in ks)
+    ge = sum((_rot_right(on_m, k, n) & ev_m).bit_count() >= obs for k in ks)
     return ge / len(ks)
 
 
@@ -631,21 +646,23 @@ def main() -> int:
     ):
         n_s = len(ds_sub)
         ev_s = [loss1[d] for d in ds_sub]
-        tot_ev = sum(ev_s)
-        vecs = {cid: [pc[cid][d] == "예" for d in ds_sub] for cid in cids}
+        ev_m = _bits(ev_s)
+        tot_ev = ev_m.bit_count()
+        masks = {cid: _bits([pc[cid][d] == "예" for d in ds_sub]) for cid in cids}
         ks_s = list(range(SHIFT_MIN, n_s - SHIFT_MIN))
         # Standardized z-score for excess co-occurrence under fixed marginals
-        def zscore(on_v, shift_k=0):
-            m_on = sum(on_v)
+        def zscore(on_m: int, shift_k: int = 0) -> float:
+            m_on = on_m.bit_count()
             if m_on == 0 or m_on == n_s:
                 return -999.0
-            obs = sum(on_v[(j + shift_k) % n_s] and ev_s[j] for j in range(n_s))
+            rot = _rot_right(on_m, shift_k, n_s) if shift_k else on_m
+            obs = (rot & ev_m).bit_count()
             exp = m_on * tot_ev / n_s
             var = m_on * (n_s - m_on) * tot_ev * (n_s - tot_ev) / (n_s * n_s * (n_s - 1))
             return (obs - exp) / math.sqrt(var) if var > 0 else 0.0
 
-        obs_z = {cid: zscore(vecs[cid], 0) for cid in cids}
-        max_z_per_k = [max(zscore(vecs[cid], k) for cid in cids) for k in ks_s]
+        obs_z = {cid: zscore(masks[cid], 0) for cid in cids}
+        max_z_per_k = [max(zscore(masks[cid], k) for cid in cids) for k in ks_s]
         c1_adj_p = sum(mz >= obs_z["C1_vol_rel"] for mz in max_z_per_k) / len(ks_s)
         best_cid = max(cids, key=lambda c: obs_z[c])
         best_adj_p = sum(mz >= obs_z[best_cid] for mz in max_z_per_k) / len(ks_s)
@@ -721,6 +738,105 @@ def main() -> int:
     print(f"  연속 결과(|r_t| 평균) 비교: ON {pct(fmean(abs_on), 3)} vs OFF {pct(fmean(abs_off), 3)} "
           f"(차이 {pct(fmean(abs_on)-fmean(abs_off), 3)}) → 60거래일(3개월) {(fmean(abs_on)-fmean(abs_off))/se_abs_60:.2f}σ, "
           f"225거래일 {(fmean(abs_on)-fmean(abs_off))/se_abs_225:.2f}σ")
+
+    # ------------------------------------------------------------ [R6] 행동으로 옮겼을 때의 결과 (비중 축소 시뮬레이션)
+    print("=" * 100)
+    print("[R6] 행동 시뮬레이션 — C1 켜짐 때 비중을 줄였다면 실제로 나았나 (08:40 판단 → 09:00 시가 체결)")
+    # (A) 실제 체결 기준 open(d) -> open(d+1) 묶음 수익률 (간밤 포함, 일별 동일비중 리밸런싱 기준, 수수료 ETF 0.015%·BTC 0.05%)
+    avg_fee = fmean(C.ASSETS[a].fee for a in TARGETS)  # 0.0002667
+
+    def open_to_open(i: int) -> float | None:
+        if i + 1 >= len(KRX):
+            return None
+        d, nxt = KRX[i], KRX[i + 1]
+        if d not in BY_DATE[COIN] or nxt not in BY_DATE[COIN]:
+            return None
+        rs = [BY_DATE[a][nxt].open / BY_DATE[a][d].open - 1 for a in TARGETS]
+        return fmean(rs)
+
+    o2o = {d: open_to_open(KIDX[d]) for d in pd1}
+    pd_sim_all = [d for d in pd1 if o2o[d] is not None]
+    pd_sim_fit = [d for d in pd_sim_all if d <= C.FIT_UNTIL]
+
+    def sim_strategy(ds: list[dt.date], ret_map: dict[dt.date, float], on_weight: float,
+                     off_weight: float = 1.0, use_fee: bool = True) -> dict:
+        eq = 1.0
+        peak = 1.0
+        mdd = 0.0
+        w_prev = off_weight
+        switches = 0
+        total_fee = 0.0
+        daily = []
+        for d in ds:
+            w = on_weight if c1[d] == "예" else off_weight
+            dw = abs(w - w_prev)
+            if dw > 0:
+                switches += 1
+            fee = dw * avg_fee if use_fee else 0.0
+            total_fee += fee
+            r = w * ret_map[d] - fee
+            eq *= (1 + r)
+            if eq > peak:
+                peak = eq
+            dd = eq / peak - 1
+            if dd < mdd:
+                mdd = dd
+            daily.append(r)
+            w_prev = w
+        yrs = (ds[-1] - ds[0]).days / 365.25
+        cagr = eq ** (1 / yrs) - 1 if yrs > 0 else 0.0
+        ann_vol = pstdev(daily) * math.sqrt(len(ds) / yrs) if yrs > 0 else 0.0
+        sharpe = cagr / ann_vol if ann_vol > 0 else 0.0
+        big_l = sum(x <= th1_10 for x in daily)
+        return {"tot": eq - 1, "cagr": cagr, "mdd": mdd, "vol": ann_vol, "sharpe": sharpe,
+                "sw": switches, "fee": total_fee, "big_l": big_l, "n": len(ds)}
+
+    for label, ds, rmap in (
+        ("과거 전체 5.2년 (open→next open, 실제 보유·간밤 포함)", pd_sim_all, o2o),
+        ("26-07~10 제외 4.9년 (~26-06-30, open→next open)", pd_sim_fit, o2o),
+        ("과거 전체 5.2년 (open→close, 논문과 같은 장중 창)", pd1, r1),
+        ("26-07~10 제외 4.9년 (~26-06-30, open→close)", pd1_fit, r1),
+    ):
+        print(f"  --- {label} (n={len(ds)}) ---")
+        # ON/OFF 구간별 평균·누적 비교
+        on_v = [rmap[d] for d in ds if c1[d] == "예"]
+        off_v = [rmap[d] for d in ds if c1[d] == "아니오"]
+        f_on = len(on_v) / len(ds)
+        print(f"    참고 일별평균: ON {pct(fmean(on_v), 3)}(n={len(on_v)}, 단순합 {pct(sum(on_v), 1)}) "
+              f"vs OFF {pct(fmean(off_v), 3)}(n={len(off_v)}, 단순합 {pct(sum(off_v), 1)})")
+        for nm, w_on, w_off in (
+            ("늘 100% 보유(기준)", 1.0, 1.0),
+            ("C1 켜지면 50% 축소", 0.5, 1.0),
+            (f"비교: 늘 {(1 - 0.5 * f_on):.1%} 고정", 1 - 0.5 * f_on, 1 - 0.5 * f_on),
+            ("C1 켜지면 0%(전액 현금)", 0.0, 1.0),
+            (f"비교: 늘 {(1 - f_on):.1%} 고정", 1 - f_on, 1 - f_on),
+        ):
+            s = sim_strategy(ds, rmap, w_on, w_off, use_fee=True)
+            print(f"    {nm:24s} 누적 {pct(s['tot'], 1):>7} | 연 {pct(s['cagr'], 1):>6} | 최대낙폭 {pct(s['mdd'], 1):>7} "
+                  f"| 연변동 {pct(s['vol'], 1):>6} | 수익/변동 {s['sharpe']:+.2f} | 큰손실일 {s['big_l']:3d} | 전환 {s['sw']:2d}회(수수료 {pct(s['fee'], 2)})")
+
+    # (B) 우리 기록 35일 (손 계좌 하루 수익률 기준)
+    print("  --- 우리 기록 35일 (2026-10-21 ~ 11-24, 손 계좌 하루 수익률 기준; C1은 11-07 1회 전환) ---")
+    for nm, w_on in (("손 계좌 그대로", 1.0), ("C1 켜지면 50% 축소", 0.5), ("C1 켜지면 0%(전액 현금)", 0.0)):
+        eq_v = peak = 1.0
+        mdd = 0.0
+        w_prev = 1.0
+        big_l = 0
+        for d in rec_days:
+            w = w_on if c1_rec[d] == "예" else 1.0
+            fee = abs(w - w_prev) * avg_fee
+            r = w * acc_ret[d] - fee
+            eq_v *= (1 + r)
+            peak = max(peak, eq_v)
+            mdd = min(mdd, eq_v / peak - 1)
+            if r <= th1_10:
+                big_l += 1
+            w_prev = w
+        print(f"    {nm:24s} 35일 누적 {pct(eq_v - 1, 2):>7} | 최대낙폭 {pct(mdd, 2):>7} | 큰손실일 {big_l:2d}일")
+    # 참고: 우리 기록 10-21~11-06(OFF) vs 11-07~11-24(ON) 실제 누적
+    off_rec_cum = math.prod(1 + acc_ret[d] for d in rec_days if c1_rec[d] == "아니오") - 1
+    on_rec_cum = math.prod(1 + acc_ret[d] for d in rec_days if c1_rec[d] == "예") - 1
+    print(f"    (참고) 손 계좌 구간별 복리: 꺼짐 17일(10-21~11-06) {pct(off_rec_cum, 2)}, 켜짐 18일(11-07~11-24) {pct(on_rec_cum, 2)}")
     print("끝.")
     return 0
 
