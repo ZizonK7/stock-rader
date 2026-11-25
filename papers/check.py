@@ -1,11 +1,13 @@
-"""논문 폴더 형식 검사 (author.md 2판·reviewer.md).
+"""논문 폴더 형식 검사 (author.md 2판 · 2.1판·reviewer.md).
 
     python -X utf8 papers/check.py papers/P-0004 [--run] [--review]
 
 본다: theory.md 머리와 절, paper.md 절 이름과 차례, [E#] 표시,
 theory.md 커밋이 evidence.py·paper.md 커밋보다 앞인가, ledger.md의 이번 판 줄.
 --run: evidence.py를 돌려 종료 0인지, 논문의 [E#]가 출력에 다 있는지.
---review: review.md 절 이름과 차례.
+--review: review.md 절 이름과 차례. --run과 함께면 review_check.py도 돌려 [R#] 대조.
+theory.md 머리에 '양식: 2.1' 이상이면 더 본다: theory.md '## 0. 이미 본 것', paper.md·review.md 맨 앞
+'## 사람용 요약', paper.md 0절의 '보조: …'.
 숫자 하나하나가 출력과 같은지는 보지 않는다(심사자가 본다).
 읽기만 한다. 통과면 종료 0, 걸리면 걸린 것을 찍고 종료 1.
 """
@@ -21,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "papers" / "ledger.md"
 
 THEORY_HEAD = ("이론", "판", "교훈")
+OPTIONAL_HEAD = ("양식",)  # 없으면 2.0
 THEORY_SECTIONS = [
     "## 1. 출발점",
     "## 2. 효과",
@@ -48,6 +51,9 @@ PAPER_SECTIONS = [
     "## 13. 양식에 대한 말",
 ]
 REPLY_SECTION = "## 받은 비판에 대한 답"
+# 양식 2.1부터
+SEEN_SECTION = "## 0. 이미 본 것"
+HUMAN_SECTION = "## 사람용 요약"
 REVIEW_SECTIONS = [
     "## 0. 판정",
     "## 1. 다시 계산",
@@ -61,8 +67,10 @@ REVIEW_SECTIONS = [
 ]
 RESULTS = ("버팀", "좁혀짐", "무너짐", "모름")
 MECH_RESULTS = RESULTS + ("열어 둠",)
+AUX_RESULTS = ("버팀", "고침", "무너짐", "모름")
 VERDICTS = ("채택", "고쳐서 다시", "버림")  # "채택 — 효과만"은 "채택"으로 잡힌다
 TAG = re.compile(r"\[E(\d+)\]")
+RTAG = re.compile(r"\[R(\d+)\]")
 
 
 def read(path: Path) -> str:
@@ -72,7 +80,7 @@ def read(path: Path) -> str:
 def head(text: str) -> dict[str, str]:
     got = {}
     for line in text.split("\n"):
-        for key in THEORY_HEAD:
+        for key in THEORY_HEAD + OPTIONAL_HEAD:
             m = re.match(rf"^{key}:\s*(.+?)\s*$", line)
             if m and key not in got:
                 got[key] = m.group(1)
@@ -92,6 +100,14 @@ def sections(text: str, wanted: list[str], name: str, bad: list[str]) -> list[st
             bad.append(f"{name}: 절 차례가 다름 '{s}'")
         at = max(at, i)
     return found
+
+
+def first(found: list[str], title: str, name: str, bad: list[str]) -> None:
+    """title이 맨 앞 절인가."""
+    if title not in found:
+        bad.append(f"{name}: 절 없음 '{title}'")
+    elif found[0] != title:
+        bad.append(f"{name}: '{title}'은 맨 앞에")
 
 
 def section_body(text: str, title: str) -> str:
@@ -134,6 +150,23 @@ def table(text: str, title: str) -> list[list[str]]:
     return rows[1:]  # 머리줄 뺌
 
 
+def run_script(path: Path, bad: list[str]) -> tuple[bool, str]:
+    """저장소 루트에서 돌려 (종료 0인가, 표준 출력)."""
+    try:
+        r = subprocess.run(
+            [sys.executable, "-X", "utf8", str(path.relative_to(ROOT))],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=1800,
+        )
+    except subprocess.TimeoutExpired:
+        bad.append(f"{path.name}: 30분 안에 끝나지 않음")
+        return False, ""
+    if r.returncode != 0:
+        tail = (r.stderr or r.stdout).strip().split("\n")[-1:]
+        bad.append(f"{path.name}: 종료 {r.returncode} {tail}")
+        return False, ""
+    return True, r.stdout
+
+
 def check(folder: Path, run: bool, review: bool) -> list[str]:
     bad: list[str] = []
     paper_id = folder.name
@@ -156,11 +189,18 @@ def check(folder: Path, run: bool, review: bool) -> list[str]:
     version = int(m.group(1)) if m else 0
     if "판" in h and not m:
         bad.append(f"theory.md: 판 꼴이 v1이 아님 ({h['판']})")
-    sections(theory, THEORY_SECTIONS, "theory.md", bad)
+    fm = re.fullmatch(r"(\d+)\.(\d+)", h.get("양식", "2.0"))
+    form = (int(fm.group(1)), int(fm.group(2))) if fm else (2, 0)
+    if "양식" in h and not fm:
+        bad.append(f"theory.md: 양식 꼴이 2.1이 아님 ({h['양식']})")
+    new_form = form >= (2, 1)
+    sections(theory, ([SEEN_SECTION] if new_form else []) + THEORY_SECTIONS, "theory.md", bad)
 
     # paper.md
     paper = read(folder / "paper.md")
     found = sections(paper, PAPER_SECTIONS, "paper.md", bad)
+    if new_form:
+        first(found, HUMAN_SECTION, "paper.md", bad)
     if version >= 2:
         if REPLY_SECTION not in found:
             bad.append(f"paper.md: v{version}인데 절 없음 '{REPLY_SECTION}'")
@@ -171,6 +211,8 @@ def check(folder: Path, run: bool, review: bool) -> list[str]:
         bad.append(f"paper.md 0절: '효과: {' / '.join(RESULTS)}'가 없음")
     if summary and not re.search(rf"메커니즘\s*(\([^)]*\))?\s*[:：]?\s*({'|'.join(MECH_RESULTS)})", summary):
         bad.append(f"paper.md 0절: '메커니즘: {' / '.join(MECH_RESULTS)}'가 없음")
+    if new_form and summary and not re.search(rf"보조[^:：\n]*[:：]\s*({'|'.join(AUX_RESULTS)})", summary):
+        bad.append(f"paper.md 0절: '보조: {' / '.join(AUX_RESULTS)}'가 없음")
     if summary and not any(v in summary for v in VERDICTS):
         bad.append(f"paper.md 0절: 저자 권고({' / '.join(VERDICTS)})가 없음")
     if tid and tid not in summary:
@@ -201,21 +243,11 @@ def check(folder: Path, run: bool, review: bool) -> list[str]:
 
     # 돌려 보기
     if run:
-        try:
-            r = subprocess.run(
-                [sys.executable, "-X", "utf8", str((folder / "evidence.py").relative_to(ROOT))],
-                cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=1800,
-            )
-        except subprocess.TimeoutExpired:
-            bad.append("evidence.py: 30분 안에 끝나지 않음")
-        else:
-            if r.returncode != 0:
-                tail = (r.stderr or r.stdout).strip().split("\n")[-1:]
-                bad.append(f"evidence.py: 종료 {r.returncode} {tail}")
-            else:
-                missing = sorted(tags - set(TAG.findall(r.stdout)), key=int)
-                if missing:
-                    bad.append("paper.md의 [E#] 가운데 출력에 없는 것: " + ", ".join(f"E{t}" for t in missing))
+        ok, out = run_script(folder / "evidence.py", bad)
+        if ok:
+            missing = sorted(tags - set(TAG.findall(out)), key=int)
+            if missing:
+                bad.append("paper.md의 [E#] 가운데 출력에 없는 것: " + ", ".join(f"E{t}" for t in missing))
 
     # 심사서
     if review:
@@ -224,10 +256,19 @@ def check(folder: Path, run: bool, review: bool) -> list[str]:
             bad.append(f"파일 없음: {paper_id}/review.md")
         else:
             text = read(rv)
-            sections(text, REVIEW_SECTIONS, "review.md", bad)
+            rfound = sections(text, REVIEW_SECTIONS, "review.md", bad)
+            if new_form:
+                first(rfound, HUMAN_SECTION, "review.md", bad)
             verdict = section_body(text, REVIEW_SECTIONS[0])
             if verdict and not any(v in verdict for v in VERDICTS):
                 bad.append(f"review.md 0절: 권고({' / '.join(VERDICTS)})가 없음")
+            rc = folder / "review_check.py"
+            if run and rc.exists():
+                ok, out = run_script(rc, bad)
+                if ok:
+                    missing = sorted(set(RTAG.findall(text)) - set(RTAG.findall(out)), key=int)
+                    if missing:
+                        bad.append("review.md의 [R#] 가운데 출력에 없는 것: " + ", ".join(f"R{t}" for t in missing))
     return bad
 
 
