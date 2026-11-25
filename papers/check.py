@@ -61,7 +61,7 @@ REVIEW_SECTIONS = [
 ]
 RESULTS = ("버팀", "좁혀짐", "무너짐", "모름")
 MECH_RESULTS = RESULTS + ("열어 둠",)
-VERDICTS = ("채택", "고쳐서 다시", "버림")
+VERDICTS = ("채택", "고쳐서 다시", "버림")  # "채택 — 효과만"은 "채택"으로 잡힌다
 TAG = re.compile(r"\[E(\d+)\]")
 
 
@@ -169,7 +169,7 @@ def check(folder: Path, run: bool, review: bool) -> list[str]:
     summary = section_body(paper, PAPER_SECTIONS[0])
     if summary and not re.search(rf"효과\s*[:：]?\s*({'|'.join(RESULTS)})", summary):
         bad.append(f"paper.md 0절: '효과: {' / '.join(RESULTS)}'가 없음")
-    if summary and not re.search(rf"메커니즘\s*[:：]?\s*({'|'.join(MECH_RESULTS)})", summary):
+    if summary and not re.search(rf"메커니즘\s*(\([^)]*\))?\s*[:：]?\s*({'|'.join(MECH_RESULTS)})", summary):
         bad.append(f"paper.md 0절: '메커니즘: {' / '.join(MECH_RESULTS)}'가 없음")
     if summary and not any(v in summary for v in VERDICTS):
         bad.append(f"paper.md 0절: 저자 권고({' / '.join(VERDICTS)})가 없음")
