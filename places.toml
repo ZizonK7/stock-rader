@@ -1008,3 +1008,13 @@ covers = ["kq_foreign_net_krw100m"]
 official = false
 added = 2026-11-25
 note = "2026-11-25 수급 조사가 새로 씀. 코스피 날짜별 API(P_naver_index_trend_api)와 같은 꼴로 bizdate 하루의 코스닥 개인·외국인·기관 순매수. 첫 시도가 자주 빈 응답이라 한 번 더 받는다"
+
+[[place]]
+id = "P_bitget_api"
+name = "Bitget 공개 API — 비트코인 무기한 선물 지금 자금조달률 (JSON)"
+url = "https://api.bitget.com/api/v2/mix/market/current-fund-rate?symbol=BTCUSDT&productType=usdt-futures"
+angle = "수급"
+covers = ["coin_funding_pct"]
+official = false
+added = 2026-11-26
+note = "2026-11-26 수급 조사가 새로 씀. 8시간 주기 지금 자금조달률(정산 전 값)이 나온다 — 바이낸스 공개 API가 이 환경에서 지역 제한으로 막혀(같은 날) OKX(P_okx_api)와 견줄 둘째 출처"
