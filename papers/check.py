@@ -22,17 +22,18 @@ LEDGER = ROOT / "papers" / "ledger.md"
 
 THEORY_HEAD = ("이론", "판", "교훈")
 THEORY_SECTIONS = [
-    "## 1. 출발한 피드백",
-    "## 2. 메커니즘",
-    "## 3. 핵심과 보조",
-    "## 4. 예측",
-    "## 5. 경쟁 이론",
-    "## 6. 공격 목록",
-    "## 7. 사례와 재는 법",
+    "## 1. 출발점",
+    "## 2. 효과",
+    "## 3. 메커니즘",
+    "## 4. 핵심과 보조",
+    "## 5. 예측",
+    "## 6. 경쟁 이론",
+    "## 7. 공격 목록",
+    "## 8. 사례와 재는 법",
 ]
 PAPER_SECTIONS = [
     "## 0. 요약",
-    "## 1. 출발한 피드백",
+    "## 1. 출발점",
     "## 2. 이론",
     "## 3. 자료와 재는 법",
     "## 4. 시험",
@@ -46,7 +47,7 @@ PAPER_SECTIONS = [
     "## 12. 다시 계산하는 법",
     "## 13. 양식에 대한 말",
 ]
-REPLY_SECTION = "## 앞 판과 심사에 대한 답"
+REPLY_SECTION = "## 받은 비판에 대한 답"
 REVIEW_SECTIONS = [
     "## 0. 판정",
     "## 1. 다시 계산",
@@ -59,6 +60,7 @@ REVIEW_SECTIONS = [
     "## 8. 양식에 대한 말",
 ]
 RESULTS = ("버팀", "좁혀짐", "무너짐", "모름")
+MECH_RESULTS = RESULTS + ("열어 둠",)
 VERDICTS = ("채택", "고쳐서 다시", "버림")
 TAG = re.compile(r"\[E(\d+)\]")
 
@@ -165,8 +167,10 @@ def check(folder: Path, run: bool, review: bool) -> list[str]:
         elif PAPER_SECTIONS[0] in found and found.index(REPLY_SECTION) > found.index(PAPER_SECTIONS[0]):
             bad.append(f"paper.md: '{REPLY_SECTION}'은 0절 앞에")
     summary = section_body(paper, PAPER_SECTIONS[0])
-    if summary and not any(r in summary for r in RESULTS):
-        bad.append(f"paper.md 0절: 결과({' / '.join(RESULTS)})가 없음")
+    if summary and not re.search(rf"효과\s*[:：]?\s*({'|'.join(RESULTS)})", summary):
+        bad.append(f"paper.md 0절: '효과: {' / '.join(RESULTS)}'가 없음")
+    if summary and not re.search(rf"메커니즘\s*[:：]?\s*({'|'.join(MECH_RESULTS)})", summary):
+        bad.append(f"paper.md 0절: '메커니즘: {' / '.join(MECH_RESULTS)}'가 없음")
     if summary and not any(v in summary for v in VERDICTS):
         bad.append(f"paper.md 0절: 저자 권고({' / '.join(VERDICTS)})가 없음")
     if tid and tid not in summary:
