@@ -431,6 +431,8 @@ def main() -> int:
           + ", ".join(f"w_{h} {w_of(h):.3f}" for h in (1, 5, 7, 20, 28)))
     DAYS = {a: prepare(a, HORIZONS[a], True) for a in TARGETS}
     CELLS = [(a, h) for a in TARGETS for h in HORIZONS[a]]
+    print("  계산기 움직임 곱하기의 가운데 값(조각 · 대상 기간): " + ", ".join(
+        f"{p.id} {NAME.get(e.asset, e.asset)} {e.horizon} ×{e.center:.3f}" for p in PIECES for e in p.effects if e.on == "move" and e.op == "mul"))
     for a, h in CELLS:
         cd = cell_days(DAYS[a], h)
         rs = [d["r"] for d in cd]
@@ -496,6 +498,8 @@ def main() -> int:
         print(f"  {NAME[a]} {h:2d}봉: β− {est[1]:+.3f} ({bm_i[0]:+.2f}, {bm_i[1]:+.2f}) | β+ {est[2]:+.3f} ({bp_i[0]:+.2f}, {bp_i[1]:+.2f})"
               f" | g {est[2] - est[1]:+.3f} ({g_i[0]:+.2f}, {g_i[1]:+.2f}) | w_h {w_of(h):.3f} | 계산기 뺀 나머지 β− {res[1]:+.3f} · β+ {res[2]:+.3f}")
     print(f"  (부트스트랩 {time.time() - tb:.0f}초)")
+    print("  -- 크기: 1봉에서 r = 0.6과 r = 1.7인 날 M 가운데 값의 r = 1 대비 배수(exp(β−·ln 0.6), exp(β+·ln 1.7)): "
+          + ", ".join(f"{NAME[a]} {math.exp(EFF[(a, 1)]['bm'] * math.log(0.6)):.3f} / {math.exp(EFF[(a, 1)]['bp'] * math.log(1.7)):.3f}" for a in TARGETS))
     # 예측 셈
     print("  -- 5절 예측 셈")
     e1 = sum(1 for k, v in EFF.items() if 0 < v["bp"] < 1 and v["bp_i"][0] > 0)
@@ -897,9 +901,9 @@ def main() -> int:
             d = cd[i]
             row = (a, h, d["date"], d["r"], d["h"][h]["M"], d["h"][h]["R"], ex[i], cs[i], gs[i], hand[q], SEEDS.get((a, h, d["date"]), ""))
             REC_ROWS.append(row)
-    print("  -- 날마다(긴 기간은 모두, 짧은 기간은 R4와 계산기·손이 갈린 날과 세운 재료만): 대상 기간 판단일 r M 수익 | R4 계산기 G 손 | 재료")
+    print("  -- 날마다(긴 기간은 모두, 짧은 기간은 R4와 계산기·G·손 가운데 하나라도 갈린 날과 세운 재료만): 대상 기간 판단일 r M 수익 | R4 계산기 G 손 | 재료")
     for (a, h, dd, r_, M_, R_, e_, c_, g_, hd, sd_) in REC_ROWS:
-        if h == LONG[a] or sd_ or e_ != c_ or (hd is not None and e_ != hd):
+        if h == LONG[a] or sd_ or e_ != c_ or e_ != g_ or (hd is not None and e_ != hd):
             print(f"   {NAME[a]} {h:2d} {dd} r {r_:.2f} M {M_:.2f} {R_ * 100:+6.2f}% | {mark[e_]} {mark[c_]} {mark[g_]} {mark[hd]} | {('#' + sd_) if sd_ else ''}")
 
     # ---------- [E16] 행동 — 판단 때 끝난 창만으로
