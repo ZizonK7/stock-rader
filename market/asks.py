@@ -8,7 +8,7 @@
   what = 무엇이 필요한가(근거 날짜·건수), close = 무엇이 되면 닫히나(누가 봐도 확인할 수 있게).
 - **닫는 쪽(대화 세션)**: 저장소 루트 `asks.toml`의 [[ask]]에 같은 id로 status = "닫힘"과 closed(날짜)·how(어떻게 닫았나 — 커밋·
   문서)를 적는다. run 줄보다 먼저 있던 일(옛 메모)이나 대화 세션이 스스로 찾은 일은 asks.toml에 status = "열림"으로 바로 연다.
-- **보이는 곳**: 열린 것은 매일 prepare briefing 맨 위(`daily.briefing`)와 루트 CLAUDE.md '다음 할 일'(대화 세션이 고칠 때 맞춘다).
+- **보이는 곳**: 열린 것은 매일 prepare briefing 맨 위(`daily.briefing`)와 `docs/todo.md`(대화 세션이 고칠 때 맞춘다 — 2026-11-25 루트 CLAUDE.md에서 옮김).
 """
 from __future__ import annotations
 
