@@ -1018,3 +1018,23 @@ covers = ["coin_funding_pct"]
 official = false
 added = 2026-11-26
 note = "2026-11-26 수급 조사가 새로 씀. 8시간 주기 지금 자금조달률(정산 전 값)이 나온다 — 바이낸스 공개 API가 이 환경에서 지역 제한으로 막혀(같은 날) OKX(P_okx_api)와 견줄 둘째 출처"
+
+[[place]]
+id = "P_fidelity_holidays"
+name = "Fidelity 미국 주식시장 휴장·조기 폐장 표 (연말 계절 창의 첫날·끝날)"
+url = "https://www.fidelity.com/learning-center/smart-money/stock-market-holidays"
+angle = "일정·예상치"
+covers = ["S_q_holiday_season", "S_q_event_soon"]
+official = false
+added = 2026-11-27
+note = "2026-11-27 비트코인 2차 조사가 새로 씀. 11-26 추수감사절 휴장·11-27 13시 ET 조기 폐장이 한 표에 나온다. 연말 계절 창 씨앗(S_q_holiday_season)의 날짜를 확인할 곳. 공식 거래소 일정은 아니라 바뀌면 거래소 공지로 대조"
+
+[[place]]
+id = "P_ism_calendar"
+name = "ISM 보고서 발표 일정 (제조업·서비스업 PMI 날짜)"
+url = "https://www.ismworld.org/supply-management-news-and-reports/reports/rob-report-calendar/"
+angle = "일정·예상치"
+covers = ["S_q_event_soon"]
+official = true
+added = 2026-11-27
+note = "2026-11-27 비트코인 2차 조사가 새로 씀. 12월 제조업 PMI 12-01, 서비스업 12-03 — 날짜만 있고 시각(10:00 ET)은 다른 일정표 기준. 예상치는 없다"
