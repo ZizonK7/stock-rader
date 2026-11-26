@@ -54,5 +54,5 @@ Claude가 세션 시작 때 읽는 작업 문서다. 매일 도는 예약 실행
 - 기록: records/(덧붙이기만) · 일지: reports/ · 시세: data/prices/
 - 논리집과 목록: knowledge.toml(논리집) · lessons.toml(뿌리 목록 씨앗, 늘어나는 것은 records/lesson.jsonl) · places.toml(볼 곳) · stocks.toml(종목) · asks.toml(대화 세션 몫) · versions/(이전 버전 조각)
 - 하위 조사 에이전트 정의: .claude/agents/stock-rader-research.md
-- 학회(논문·심사): papers/ — 상위 저장소로 옮길 예정
+- 학회(논문·심사): 비공개 상위 저장소에 둔다(이 저장소에는 두지 않는다)
 - 매일 실행 명령: `python -m market.daily prepare` → `record <input.json>` → (09:05) `open` → (09:13) `feedback` → (09:41) `report` → `report --check`. 그 밖의 명령은 docs/current.md '구조와 명령'.
